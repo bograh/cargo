@@ -18,7 +18,7 @@ func Migrate(ctx context.Context, url string) error {
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 
 	goose.SetBaseFS(migrations)
 	if err := goose.SetDialect("postgres"); err != nil {
