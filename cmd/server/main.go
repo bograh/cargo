@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
 
 	"github.com/bograh/cargo/internal/api"
 	"github.com/bograh/cargo/internal/config"
+	"github.com/bograh/cargo/internal/db"
 )
 
 func main() {
@@ -17,10 +19,21 @@ func main() {
 		slog.Error("invalid configuration", "err", err)
 		os.Exit(1)
 	}
+	ctx := context.Background()
+	if err := db.Migrate(ctx, cfg.DatabaseURL); err != nil {
+		slog.Error("migrations failed", "err", err)
+		os.Exit(1)
+	}
+	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("database unavailable", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
 
-	r := api.NewRouter()
+	srv := api.NewServer(cfg, pool)
 	slog.Info("cargo listening", "addr", cfg.HTTPAddr)
-	if err := http.ListenAndServe(cfg.HTTPAddr, r); err != nil {
+	if err := http.ListenAndServe(cfg.HTTPAddr, srv.Handler()); err != nil {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
 	}
