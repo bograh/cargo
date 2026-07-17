@@ -15,6 +15,17 @@ func NewRouter(s *Server) *chi.Mux {
 	r.Get("/healthz", HealthHandler)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/instance/info", s.getInstanceInfo)
+
+		r.Route("/auth", func(r chi.Router) {
+			r.Group(func(r chi.Router) {
+				r.Use(authRateLimiter())
+				r.Post("/register", s.handleRegister)
+				r.Post("/login", s.handleLogin)
+				r.Post("/refresh", s.handleRefresh)
+			})
+			r.Post("/logout", s.handleLogout)
+			r.With(s.requireAuth).Get("/me", s.handleMe)
+		})
 	})
 	r.Mount("/", webui.Handler())
 	return r
