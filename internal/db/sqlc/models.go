@@ -8,6 +8,50 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Application struct {
+	ID               pgtype.UUID
+	OrgID            pgtype.UUID
+	Name             string
+	Slug             string
+	SourceType       string
+	Builder          string
+	GitRepoUrl       string
+	GitBranch        string
+	ImageRef         string
+	RegistryCredsEnc []byte
+	ExposedPort      int32
+	HealthcheckPath  string
+	AutoDeploy       bool
+	BuildContext     string
+	DockerfilePath   string
+	BuildArgs        []byte
+	KeyVersion       int32
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type Deployment struct {
+	ID         pgtype.UUID
+	AppID      pgtype.UUID
+	Trigger    string
+	Status     string
+	CommitSha  string
+	ImageTag   string
+	Error      string
+	Actor      pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+	StartedAt  pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+}
+
+type EnvVar struct {
+	AppID      pgtype.UUID
+	Key        string
+	ValueEnc   []byte
+	KeyVersion int32
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type InstanceSetting struct {
 	Key       string
 	Value     []byte
