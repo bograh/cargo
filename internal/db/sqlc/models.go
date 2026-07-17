@@ -13,3 +13,49 @@ type InstanceSetting struct {
 	Value     []byte
 	UpdatedAt pgtype.Timestamptz
 }
+
+type Invite struct {
+	ID        pgtype.UUID
+	OrgID     pgtype.UUID
+	TokenHash []byte
+	Role      string
+	ExpiresAt pgtype.Timestamptz
+	CreatedBy pgtype.UUID
+	RevokedAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
+type Membership struct {
+	OrgID     pgtype.UUID
+	UserID    pgtype.UUID
+	Role      string
+	CreatedAt pgtype.Timestamptz
+}
+
+type Organization struct {
+	ID        pgtype.UUID
+	Name      string
+	Slug      string
+	CreatedAt pgtype.Timestamptz
+}
+
+type Session struct {
+	ID               pgtype.UUID
+	UserID           pgtype.UUID
+	FamilyID         pgtype.UUID
+	AccessHash       []byte
+	RefreshHash      []byte
+	AccessExpiresAt  pgtype.Timestamptz
+	RefreshExpiresAt pgtype.Timestamptz
+	RotatedAt        pgtype.Timestamptz
+	RevokedAt        pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+}
+
+type User struct {
+	ID              pgtype.UUID
+	Email           string
+	PasswordHash    string
+	IsInstanceAdmin bool
+	CreatedAt       pgtype.Timestamptz
+}
