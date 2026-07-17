@@ -4,8 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/bograh/cargo/internal/apps"
 	"github.com/bograh/cargo/internal/auth"
 	"github.com/bograh/cargo/internal/config"
+	"github.com/bograh/cargo/internal/crypto"
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/orgs"
 	"github.com/go-chi/chi/v5"
@@ -49,6 +51,18 @@ type AdminStore interface {
 	ListAllOrganizations(ctx context.Context) ([]sqlc.Organization, error)
 }
 
+// AppService is satisfied by *apps.Service.
+type AppService interface {
+	Create(ctx context.Context, orgID, actor pgtype.UUID, in apps.CreateInput) (sqlc.Application, error)
+	List(ctx context.Context, orgID, actor pgtype.UUID) ([]sqlc.Application, error)
+	Get(ctx context.Context, appID, actor pgtype.UUID) (sqlc.Application, error)
+	Update(ctx context.Context, appID, actor pgtype.UUID, in apps.UpdateInput) (sqlc.Application, error)
+	Delete(ctx context.Context, appID, actor pgtype.UUID) error
+	SetEnvVars(ctx context.Context, appID, actor pgtype.UUID, vars map[string]string) error
+	ListEnvKeys(ctx context.Context, appID, actor pgtype.UUID) ([]string, error)
+	DeleteEnvVar(ctx context.Context, appID, actor pgtype.UUID, key string) error
+}
+
 type Server struct {
 	cfg      config.Config
 	pool     *pgxpool.Pool
@@ -56,16 +70,20 @@ type Server struct {
 	auth     AuthService
 	orgs     OrgService
 	admin    AdminStore
+	apps     AppService
 }
 
-// NewServer builds a Server. pool may be nil in tests that stub dependencies.
-func NewServer(cfg config.Config, pool *pgxpool.Pool) *Server {
+// NewServer builds a Server. pool/box may be nil in tests that stub dependencies.
+func NewServer(cfg config.Config, pool *pgxpool.Pool, box *crypto.Box) *Server {
 	s := &Server{cfg: cfg, pool: pool}
 	if pool != nil {
 		s.settings = sqlc.New(pool)
 		s.auth = auth.NewService(pool)
 		s.orgs = orgs.NewService(pool)
 		s.admin = sqlc.New(pool)
+		if box != nil {
+			s.apps = apps.NewService(pool, box)
+		}
 	}
 	return s
 }

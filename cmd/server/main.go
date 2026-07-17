@@ -8,6 +8,7 @@ import (
 
 	"github.com/bograh/cargo/internal/api"
 	"github.com/bograh/cargo/internal/config"
+	"github.com/bograh/cargo/internal/crypto"
 	"github.com/bograh/cargo/internal/db"
 )
 
@@ -31,7 +32,13 @@ func main() {
 	}
 	defer pool.Close()
 
-	srv := api.NewServer(cfg, pool)
+	box, err := crypto.New(cfg.MasterKey)
+	if err != nil {
+		slog.Error("invalid master key", "err", err)
+		os.Exit(1)
+	}
+
+	srv := api.NewServer(cfg, pool, box)
 	slog.Info("cargo listening", "addr", cfg.HTTPAddr)
 	if err := http.ListenAndServe(cfg.HTTPAddr, srv.Handler()); err != nil {
 		slog.Error("server exited", "err", err)

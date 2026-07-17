@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/bograh/cargo/internal/config"
+	"github.com/bograh/cargo/internal/crypto"
 	"github.com/bograh/cargo/internal/db"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -40,8 +42,12 @@ func startServer(t *testing.T) http.Handler {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	box, err := crypto.New(bytes.Repeat([]byte{5}, 32))
+	if err != nil {
+		t.Fatalf("crypto: %v", err)
+	}
 	cfg := config.Config{Env: "development"}
-	return NewServer(cfg, pool).Handler()
+	return NewServer(cfg, pool, box).Handler()
 }
 
 // client carries cookies between requests like a browser.
