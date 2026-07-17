@@ -45,6 +45,12 @@ func NewRouter(s *Server) *chi.Mux {
 			})
 			r.Post("/invites/accept", s.handleAcceptInvite)
 		})
+
+		r.Route("/admin", func(r chi.Router) {
+			r.Use(s.requireAuth, s.requireInstanceAdmin)
+			r.Get("/users", s.handleAdminListUsers)
+			r.Get("/orgs", s.handleAdminListOrgs)
+		})
 	})
 	r.Mount("/", webui.Handler())
 	return r

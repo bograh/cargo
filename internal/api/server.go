@@ -43,12 +43,19 @@ type OrgService interface {
 	AcceptInvite(ctx context.Context, token string, userID pgtype.UUID) (sqlc.Organization, error)
 }
 
+// AdminStore is satisfied by *sqlc.Queries.
+type AdminStore interface {
+	ListUsers(ctx context.Context) ([]sqlc.User, error)
+	ListAllOrganizations(ctx context.Context) ([]sqlc.Organization, error)
+}
+
 type Server struct {
 	cfg      config.Config
 	pool     *pgxpool.Pool
 	settings SettingsStore
 	auth     AuthService
 	orgs     OrgService
+	admin    AdminStore
 }
 
 // NewServer builds a Server. pool may be nil in tests that stub dependencies.
@@ -58,6 +65,7 @@ func NewServer(cfg config.Config, pool *pgxpool.Pool) *Server {
 		s.settings = sqlc.New(pool)
 		s.auth = auth.NewService(pool)
 		s.orgs = orgs.NewService(pool)
+		s.admin = sqlc.New(pool)
 	}
 	return s
 }
