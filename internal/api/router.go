@@ -26,6 +26,21 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Post("/logout", s.handleLogout)
 			r.With(s.requireAuth).Get("/me", s.handleMe)
 		})
+
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAuth)
+			r.Route("/orgs", func(r chi.Router) {
+				r.Post("/", s.handleCreateOrg)
+				r.Get("/", s.handleListOrgs)
+				r.Route("/{orgID}", func(r chi.Router) {
+					r.Get("/", s.handleGetOrg)
+					r.Delete("/", s.handleDeleteOrg)
+					r.Get("/members", s.handleListMembers)
+					r.Patch("/members/{userID}", s.handleUpdateMemberRole)
+					r.Delete("/members/{userID}", s.handleRemoveMember)
+				})
+			})
+		})
 	})
 	r.Mount("/", webui.Handler())
 	return r
