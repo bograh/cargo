@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/bograh/cargo/internal/auth"
-	"github.com/bograh/cargo/internal/orgs"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/bograh/cargo/internal/config"
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/bograh/cargo/internal/orgs"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
