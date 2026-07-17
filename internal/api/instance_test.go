@@ -3,6 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,6 +22,12 @@ func (s stubSettings) GetInstanceSetting(_ context.Context, key string) (sqlc.In
 		return sqlc.InstanceSetting{}, pgx.ErrNoRows
 	}
 	return sqlc.InstanceSetting{Key: key, Value: []byte(v)}, nil
+}
+
+type errSettings struct{ err error }
+
+func (s errSettings) GetInstanceSetting(_ context.Context, _ string) (sqlc.InstanceSetting, error) {
+	return sqlc.InstanceSetting{}, s.err
 }
 
 func TestGetInstanceInfo(t *testing.T) {
@@ -52,6 +61,30 @@ func TestGetInstanceInfoDefaults(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instance/info", nil)
 	r.ServeHTTP(rec, req)
 
+	var body map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["apps_domain_suffix"] != "apps.localhost" {
+		t.Fatalf("default = %q", body["apps_domain_suffix"])
+	}
+}
+
+func TestGetInstanceInfoDefaultsOnStoreError(t *testing.T) {
+	// Silence the expected warn log so test output stays pristine.
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s := &Server{settings: errSettings{err: errors.New("connection refused")}}
+	r := NewRouter(s)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instance/info", nil)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
 	var body map[string]string
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)

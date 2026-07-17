@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -25,10 +26,12 @@ func (s *Server) settingOrDefault(r *http.Request, key, def string) string {
 		return def
 	}
 	if err != nil {
+		slog.Warn("instance setting read failed", "key", key, "err", err)
 		return def
 	}
 	var v string
 	if err := json.Unmarshal(row.Value, &v); err != nil {
+		slog.Warn("instance setting decode failed", "key", key, "err", err)
 		return def
 	}
 	return v
