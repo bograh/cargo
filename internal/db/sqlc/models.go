@@ -44,6 +44,15 @@ type Deployment struct {
 	FinishedAt pgtype.Timestamptz
 }
 
+type Domain struct {
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	Hostname      string
+	Status        string
+	LastCheckedAt pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
 type EnvVar struct {
 	AppID      pgtype.UUID
 	Key        string
