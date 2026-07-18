@@ -29,3 +29,22 @@ func TestAuthOrgsTablesExist(t *testing.T) {
 		}
 	}
 }
+
+func TestGithubInstallationsTableExists(t *testing.T) {
+	url := startPostgres(t)
+	ctx := context.Background()
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	pool, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer pool.Close()
+	var exists bool
+	err = pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT FROM information_schema.tables WHERE table_name = 'github_installations')`).Scan(&exists)
+	if err != nil || !exists {
+		t.Fatalf("github_installations missing: %v", err)
+	}
+}

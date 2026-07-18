@@ -165,6 +165,50 @@ func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID)
 	return items, nil
 }
 
+const listGitAppsByBranch = `-- name: ListGitAppsByBranch :many
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at FROM applications WHERE source_type = 'git' AND git_branch = $1
+`
+
+func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]Application, error) {
+	rows, err := q.db.Query(ctx, listGitAppsByBranch, gitBranch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Application
+	for rows.Next() {
+		var i Application
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.Slug,
+			&i.SourceType,
+			&i.Builder,
+			&i.GitRepoUrl,
+			&i.GitBranch,
+			&i.ImageRef,
+			&i.RegistryCredsEnc,
+			&i.ExposedPort,
+			&i.HealthcheckPath,
+			&i.AutoDeploy,
+			&i.BuildContext,
+			&i.DockerfilePath,
+			&i.BuildArgs,
+			&i.KeyVersion,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateApplication = `-- name: UpdateApplication :one
 UPDATE applications SET
     name = $2, builder = $3, git_branch = $4, image_ref = $5,

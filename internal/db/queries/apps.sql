@@ -23,3 +23,6 @@ RETURNING *;
 
 -- name: DeleteApplication :exec
 DELETE FROM applications WHERE id = $1;
+
+-- name: ListGitAppsByBranch :many
+SELECT * FROM applications WHERE source_type = 'git' AND git_branch = $1;

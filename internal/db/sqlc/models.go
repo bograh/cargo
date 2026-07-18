@@ -52,6 +52,13 @@ type EnvVar struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type GithubInstallation struct {
+	OrgID          pgtype.UUID
+	InstallationID int64
+	AccountLogin   string
+	CreatedAt      pgtype.Timestamptz
+}
+
 type InstanceSetting struct {
 	Key       string
 	Value     []byte
