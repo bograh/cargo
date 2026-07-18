@@ -51,6 +51,9 @@ type Pipeline struct {
 	CloneAuth        func(ctx context.Context, orgID pgtype.UUID, repoURL string) (string, error)
 	DataDir          string
 	AppsDomainSuffix func(ctx context.Context) string
+	// DBEnv returns the injected env vars for an app's managed database
+	// attachments. May be nil, in which case no injection happens.
+	DBEnv func(ctx context.Context, appID pgtype.UUID) (map[string]string, error)
 }
 
 func uuidOf(s string) (pgtype.UUID, error) {
@@ -148,6 +151,22 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	if err != nil {
 		return err
 	}
+	var networks []string
+	if p.DBEnv != nil {
+		dbEnv, err := p.DBEnv(ctx, app.ID)
+		if err != nil {
+			return fmt.Errorf("load database env: %w", err)
+		}
+		if len(dbEnv) > 0 {
+			for k, v := range dbEnv {
+				if _, exists := env[k]; exists {
+					return fmt.Errorf("env var %q collides with a managed database variable", k)
+				}
+				env[k] = v
+			}
+			networks = []string{"cargo-proxy", "cargo-data"}
+		}
+	}
 	domains := []string{app.Slug + "." + p.AppsDomainSuffix(ctx)}
 	custom, err := p.Apps.CustomDomains(ctx, app.ID)
 	if err != nil {
@@ -162,6 +181,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		HealthcheckPath: app.HealthcheckPath,
 		Env:             env,
 		Domains:         domains,
+		Networks:        networks,
 	}
 	return p.Provider.Apply(ctx, spec, logw)
 }

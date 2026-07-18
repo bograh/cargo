@@ -76,6 +76,7 @@ func main() {
 		CloneAuth:        ghSvc.CloneAuth,
 		DataDir:          cfg.DataDir,
 		AppsDomainSuffix: appsDomainSuffix(pool),
+		DBEnv:            dbSvc.EnvFor,
 	}
 	client, err := jobs.NewClient(pool, pipeline, dbSvc)
 	if err != nil {

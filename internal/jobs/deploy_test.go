@@ -270,6 +270,85 @@ func TestPipelineUsesCloneAuth(t *testing.T) {
 	}
 }
 
+func TestPipelineInjectsDBEnv(t *testing.T) {
+	f := setup(t, "image")
+	ctx := context.Background()
+	f.pipeline.DBEnv = func(context.Context, pgtype.UUID) (map[string]string, error) {
+		return map[string]string{"DATABASE_URL": "postgres://x"}, nil
+	}
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	spec := f.provider.specs[0]
+	if spec.Env["DATABASE_URL"] != "postgres://x" {
+		t.Fatalf("env = %+v", spec.Env)
+	}
+	if len(spec.Networks) != 2 || spec.Networks[0] != "cargo-proxy" || spec.Networks[1] != "cargo-data" {
+		t.Fatalf("networks = %v", spec.Networks)
+	}
+}
+
+func TestPipelineWithoutDBEnvLeavesNetworksDefault(t *testing.T) {
+	f := setup(t, "image")
+	ctx := context.Background()
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	spec := f.provider.specs[0]
+	if len(spec.Networks) != 0 {
+		t.Fatalf("networks = %v", spec.Networks)
+	}
+}
+
+func TestPipelineEmptyDBEnvLeavesNetworksDefault(t *testing.T) {
+	f := setup(t, "image")
+	ctx := context.Background()
+	f.pipeline.DBEnv = func(context.Context, pgtype.UUID) (map[string]string, error) {
+		return map[string]string{}, nil
+	}
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	spec := f.provider.specs[0]
+	if len(spec.Networks) != 0 {
+		t.Fatalf("networks = %v", spec.Networks)
+	}
+}
+
+func TestPipelineDBEnvCollisionFailsDeploy(t *testing.T) {
+	f := setup(t, "image")
+	ctx := context.Background()
+	// "KEY" is already set as a user env var in setup().
+	f.pipeline.DBEnv = func(context.Context, pgtype.UUID) (map[string]string, error) {
+		return map[string]string{"KEY": "postgres://x"}, nil
+	}
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err == nil {
+		t.Fatal("expected error on env var collision")
+	} else if !strings.Contains(err.Error(), "KEY") {
+		t.Fatalf("error = %v, want mention of colliding key", err)
+	}
+	got, _ := f.deps.GetRaw(ctx, dep.ID)
+	if got.Status != "failed" {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
 func TestPipelineIncludesCustomDomains(t *testing.T) {
 	f := setup(t, "image")
 	ctx := context.Background()
