@@ -14,6 +14,7 @@ import (
 	"github.com/bograh/cargo/internal/github"
 	"github.com/bograh/cargo/internal/orgs"
 	"github.com/bograh/cargo/internal/reconciler"
+	"github.com/bograh/cargo/internal/settings"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -71,20 +72,30 @@ type AppService interface {
 }
 
 type Server struct {
-	cfg         config.Config
-	pool        *pgxpool.Pool
-	settings    SettingsStore
-	auth        AuthService
-	orgs        OrgService
-	admin       AdminStore
-	apps        AppService
-	deps        DeploymentService
-	enqueue     Enqueuer
-	hub         *events.Hub
-	logPath     func(id string) string
-	provider    reconciler.DeployProvider
-	gh          GitHubService
-	webhookApps WebhookApps
+	cfg              config.Config
+	pool             *pgxpool.Pool
+	settings         SettingsStore
+	auth             AuthService
+	orgs             OrgService
+	admin            AdminStore
+	apps             AppService
+	deps             DeploymentService
+	enqueue          Enqueuer
+	hub              *events.Hub
+	logPath          func(id string) string
+	provider         reconciler.DeployProvider
+	gh               GitHubService
+	webhookApps      WebhookApps
+	instanceSettings InstanceSettings
+}
+
+// InstanceSettings is satisfied by *settings.Service.
+type InstanceSettings interface {
+	Suffix(ctx context.Context) (string, error)
+	SetSuffix(ctx context.Context, suffix string) error
+	SMTP(ctx context.Context) (*settings.SMTPConfig, error)
+	SetSMTP(ctx context.Context, cfg settings.SMTPConfig) error
+	ClearSMTP(ctx context.Context) error
 }
 
 // GitHubService is satisfied by *github.Service.
@@ -141,6 +152,7 @@ func NewServer(cfg config.Config, pool *pgxpool.Pool, box *crypto.Box) *Server {
 		if box != nil {
 			s.apps = apps.NewService(pool, box)
 			s.gh = github.NewService(pool, box)
+			s.instanceSettings = settings.NewService(pool, box)
 		}
 	}
 	return s
