@@ -127,32 +127,32 @@ Deployment records with status machine `queued → building → deploying → li
 
 ---
 
-## Phase 3 — GitHub Integration 🔜
+## Phase 3 — GitHub Integration ✅
 
 *Covers FR-3.1(a) fully, FR-4.1 webhooks, the GitHub parts of FR-7.1.*
 
-### 3.1 GitHub App connection
+### 3.1 GitHub App connection ✅
 Org-scoped GitHub App installation flow (start/callback); installation IDs stored; repo/branch lists fetched live.
 - Admin+ connects a GitHub account/installation to an org from the API
 - `GET /github/repos` and `/branches` list live data for the installation
 - Installation tokens used for clones; never persisted beyond their TTL
 
-### 3.2 Private repo deploys
+### 3.2 Private repo deploys ✅
 - App created from an installation repo+branch clones with an installation token at the exact commit
 - Token failure → clear `failed` deployment with actionable log line
 
-### 3.3 Push-to-deploy webhooks (FR-4.1, NFR-5)
+### 3.3 Push-to-deploy webhooks ✅ (FR-4.1, NFR-5)
 `POST /webhooks/github`, HMAC-validated, respecting the auto-deploy toggle.
 - Push to tracked branch with auto-deploy on → new deployment within seconds
 - Bad HMAC → 401 and no side effects; pushes to other branches ignored
 - Auto-deploy off → webhook recorded but no deployment
 
-### 3.4 GitHub App credentials in instance settings (part of FR-7.1)
+### 3.4 GitHub App credentials in instance settings ✅ (part of FR-7.1)
 - Instance admin sets App ID / private key / webhook secret via API; stored encrypted
 
 ---
 
-## Phase 4 — Domains & SSL ⬜
+## Phase 4 — Domains & SSL 🔜
 
 *Covers FR-5 and the production Traefik topology (NFR-3).*
 

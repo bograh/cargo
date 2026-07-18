@@ -40,12 +40,12 @@ func (w *DeployWorker) Work(ctx context.Context, job *river.Job[DeployArgs]) err
 // Pipeline executes one deployment end to end: clone → build → reconcile →
 // apply → live/failed. All collaborators are injected so tests can fake them.
 type Pipeline struct {
-	Pool             *pgxpool.Pool
-	Apps             *apps.Service
-	Deployments      *deployments.Service
-	Provider         reconciler.DeployProvider
-	NewBuilder       func(name string) builder.Builder
-	Clone            func(ctx context.Context, url, branch, dest string, log io.Writer) (string, error)
+	Pool        *pgxpool.Pool
+	Apps        *apps.Service
+	Deployments *deployments.Service
+	Provider    reconciler.DeployProvider
+	NewBuilder  func(name string) builder.Builder
+	Clone       func(ctx context.Context, url, branch, dest string, log io.Writer) (string, error)
 	// CloneAuth may rewrite a repo URL to embed credentials (e.g. a GitHub
 	// installation token). May be nil. The rewritten URL is never logged.
 	CloneAuth        func(ctx context.Context, orgID pgtype.UUID, repoURL string) (string, error)
