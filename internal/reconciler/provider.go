@@ -112,7 +112,7 @@ func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec,
 			if err == nil {
 				_ = resp.Body.Close()
 				if resp.StatusCode < 500 {
-					fmt.Fprintf(log, "healthcheck ok: %s → %d\n", url, resp.StatusCode)
+					_, _ = fmt.Fprintf(log, "healthcheck ok: %s → %d\n", url, resp.StatusCode)
 					return nil
 				}
 				unreachableOnly = false // reachable but unhealthy — keep gating
@@ -122,7 +122,7 @@ func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec,
 		}
 		// Probe network unreachable but container stable for 15s → accept.
 		if unreachableOnly && !runningSince.IsZero() && time.Since(runningSince) > 15*time.Second {
-			fmt.Fprintln(log, "warning: health probe network unreachable from controlplane; accepting running container")
+			_, _ = fmt.Fprintln(log, "warning: health probe network unreachable from controlplane; accepting running container")
 			return nil
 		}
 		time.Sleep(2 * time.Second)

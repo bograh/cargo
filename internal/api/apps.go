@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/bograh/cargo/internal/apps"
@@ -177,9 +179,22 @@ func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Snapshot identity before the row disappears — teardown needs it.
+	app, err := s.apps.Get(r.Context(), id, userFrom(r.Context()).ID)
+	if err != nil {
+		appError(w, err)
+		return
+	}
 	if err := s.apps.Delete(r.Context(), id, userFrom(r.Context()).ID); err != nil {
 		appError(w, err)
 		return
+	}
+	if s.provider != nil {
+		appID, _ := app.ID.Value()
+		idStr, _ := appID.(string)
+		if err := s.provider.Teardown(r.Context(), idStr, app.Slug, io.Discard); err != nil {
+			slog.Warn("app teardown failed", "app", app.Slug, "err", err)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

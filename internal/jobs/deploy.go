@@ -97,11 +97,11 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 	defer func() { _ = logw.Close() }()
 
 	if err := p.run(ctx, dep, deploymentID, logw); err != nil {
-		fmt.Fprintf(logw, "==> failed: %v\n", err)
+		_, _ = fmt.Fprintf(logw, "==> failed: %v\n", err)
 		_ = p.Deployments.Finish(ctx, depID, "failed", err.Error())
 		return err
 	}
-	fmt.Fprintln(logw, "==> live")
+	_, _ = fmt.Fprintln(logw, "==> live")
 	return p.Deployments.Finish(ctx, depID, "live", "")
 }
 
@@ -113,7 +113,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 
 	imageTag := dep.ImageTag
 	if dep.Trigger == "rollback" {
-		fmt.Fprintf(logw, "==> rollback to image %s (no build)\n", imageTag)
+		_, _ = fmt.Fprintf(logw, "==> rollback to image %s (no build)\n", imageTag)
 	} else {
 		if err := p.Deployments.SetStatus(ctx, dep.ID, "building"); err != nil {
 			return err
@@ -140,7 +140,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	if err := p.Deployments.SetStatus(ctx, dep.ID, "deploying"); err != nil {
 		return err
 	}
-	fmt.Fprintln(logw, "==> deploying")
+	_, _ = fmt.Fprintln(logw, "==> deploying")
 	env, err := p.Apps.DecryptedEnv(ctx, app.ID)
 	if err != nil {
 		return err
@@ -160,7 +160,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 func (p *Pipeline) buildFromGit(ctx context.Context, app sqlc.Application, dep sqlc.Deployment, deploymentID string, logw io.Writer) (string, error) {
 	workDir := filepath.Join(p.DataDir, "builds", deploymentID)
 	defer func() { _ = os.RemoveAll(workDir) }()
-	fmt.Fprintf(logw, "==> cloning %s (%s)\n", app.GitRepoUrl, app.GitBranch)
+	_, _ = fmt.Fprintf(logw, "==> cloning %s (%s)\n", app.GitRepoUrl, app.GitBranch)
 	sha, err := p.Clone(ctx, app.GitRepoUrl, app.GitBranch, workDir, logw)
 	if err != nil {
 		return "", err
@@ -177,7 +177,7 @@ func (p *Pipeline) buildFromGit(ctx context.Context, app sqlc.Application, dep s
 	if name == "" || name == "auto" {
 		name = builder.Detect(filepath.Join(workDir, app.BuildContext), app.DockerfilePath)
 	}
-	fmt.Fprintf(logw, "==> building with %s → %s\n", name, imageTag)
+	_, _ = fmt.Fprintf(logw, "==> building with %s → %s\n", name, imageTag)
 	var buildArgs map[string]string
 	if len(app.BuildArgs) > 0 {
 		if err := json.Unmarshal(app.BuildArgs, &buildArgs); err != nil {
@@ -198,7 +198,7 @@ func (p *Pipeline) registryLogin(ctx context.Context, app sqlc.Application, logw
 	if err != nil || creds == nil {
 		return err
 	}
-	fmt.Fprintf(logw, "==> docker login %s\n", creds.Server)
+	_, _ = fmt.Fprintf(logw, "==> docker login %s\n", creds.Server)
 	cmd := exec.CommandContext(ctx, "docker", "login", creds.Server, "-u", creds.Username, "--password-stdin")
 	cmd.Stdin = strings.NewReader(creds.Password)
 	cmd.Stdout, cmd.Stderr = logw, logw

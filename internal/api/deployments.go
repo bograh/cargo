@@ -167,7 +167,7 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	send := func(line string) {
-		fmt.Fprintf(w, "data: %s\n\n", line)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", line)
 		flusher.Flush()
 	}
 	if f, err := os.Open(s.logPath(idStr)); err == nil {

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,15 +22,24 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 }
 
 // NewClient builds the River client with the deploy queue (build concurrency
-// cap: 2 workers, FR-4.4) and housekeeping.
+// cap: 2 workers, FR-4.4) and a daily retention prune.
 func NewClient(pool *pgxpool.Pool, p *Pipeline) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &DeployWorker{P: p})
+	river.AddWorker(workers, &PruneWorker{Pool: pool, Deps: p.Deployments})
 	return river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
-			"deploy": {MaxWorkers: 2},
+			"deploy":           {MaxWorkers: 2},
+			river.QueueDefault: {MaxWorkers: 2},
 		},
 		Workers: workers,
+		PeriodicJobs: []*river.PeriodicJob{
+			river.NewPeriodicJob(
+				river.PeriodicInterval(24*time.Hour),
+				func() (river.JobArgs, *river.InsertOpts) { return PruneArgs{}, nil },
+				&river.PeriodicJobOpts{RunOnStart: false},
+			),
+		},
 	})
 }
 

@@ -75,48 +75,48 @@ Shareable org invites with role + expiry; token shown once, stored hashed; revoc
 
 ---
 
-## Phase 2 — Deployment Core 🔜
+## Phase 2 — Deployment Core ✅
 
 *The heart of the product: create an app, deploy it, watch logs, roll back. Registry-image and public-git sources; GitHub App auth arrives in Phase 3. Covers FR-3, FR-4 (except webhooks), FR-6.*
 
-### 2.1 Secrets encryption (FR-6.1)
+### 2.1 Secrets encryption ✅ (FR-6.1)
 AES-256-GCM helper keyed by `CARGO_MASTER_KEY`, with key-version column for future rotation.
 - Round-trip seal/open; tampered ciphertext rejected
 - Env var values and registry credentials stored only encrypted; never logged
 
-### 2.2 Applications CRUD (FR-3.1, FR-3.2, FR-3.4, FR-3.5)
+### 2.2 Applications CRUD ✅ (FR-3.1, FR-3.2, FR-3.4, FR-3.5)
 Org-scoped apps: source (`git` public URL + branch | `image` ref), unique slug, exposed port, healthcheck path, auto-deploy toggle, builder override, Dockerfile context/path/build-args, optional encrypted registry credentials.
 - Member+ creates/updates/deletes apps; viewer read-only; non-members 404
 - Slug unique across the instance (it becomes the subdomain)
 - Registry credentials write-only after saving
 - Deleting an app tears down its containers, compose project, logs
 
-### 2.3 Environment variables (FR-6.1–6.3)
+### 2.3 Environment variables ✅ (FR-6.1–6.3)
 Per-app key/value vars, encrypted at rest, write-only after save.
 - Bulk set/delete; GET returns keys only, never values
 - Values land decrypted only in the app's `.env` file (mode 0600) at reconcile
 - Changed vars apply on next deploy
 
-### 2.4 Job queue (NFR-3, NFR-6, FR-4.4)
+### 2.4 Job queue ✅ (NFR-3, NFR-6, FR-4.4)
 River (Postgres-backed, no Redis) embedded in the binary: `deploy` job kind, build concurrency cap (default 2), per-app serialization, backoff retries.
 - Two deploys of different apps run concurrently; two of the same app serialize
 - Transient failure retried with backoff; final failure marks deployment `failed`
 - Queue survives controlplane restart (jobs resume from Postgres)
 
-### 2.5 Builders (FR-3.3, FR-3.4)
+### 2.5 Builders ✅ (FR-3.3, FR-3.4)
 `Builder` interface: shallow git clone → Dockerfile build (BuildKit via docker CLI) or Nixpacks (CLI bundled in image); auto-detection.
 - Repo with Dockerfile → dockerfile builder; without → nixpacks; explicit override respected
 - Image tagged `app-<slug>:<deployment-id>`, kept in local daemon
 - Build args, custom context and Dockerfile path honored
 - All build output streams to the deployment log
 
-### 2.6 Reconciler + Traefik labels (FR-5.1 partially, design §5–6)
+### 2.6 Reconciler + Traefik labels ✅ (FR-5.1 partially, design §5–6)
 Per-app generated Compose project under `<data-dir>/apps/<id>/`: image, `.env` (0600), restart policy, healthcheck, shared `cargo-proxy` network, Traefik labels for `<slug>.<apps-suffix>`. The only package touching Docker, behind a `DeployProvider` interface.
 - `docker compose up -d` applies; healthcheck gate (2 min default) decides live/failed
 - A failed build or failed healthcheck never touches the previously running container's config on the next successful deploy path (FR-4.5)
 - App reachable through Traefik at its auto subdomain once Phase 4 wires the proxy (labels correct now, verified by golden-file tests)
 
-### 2.7 Deployments + live logs (FR-4.1–4.3, FR-4.6)
+### 2.7 Deployments + live logs ✅ (FR-4.1–4.3, FR-4.6)
 Deployment records with status machine `queued → building → deploying → live | failed | cancelled`; one log file per deployment; SSE streaming; one-click rollback reusing a retained image.
 - Manual deploy → deployment visible immediately as `queued`, transitions observable
 - `GET /deployments/:id/logs` (SSE) replays existing log then streams live, <1 s latency
@@ -127,7 +127,7 @@ Deployment records with status machine `queued → building → deploying → li
 
 ---
 
-## Phase 3 — GitHub Integration ⬜
+## Phase 3 — GitHub Integration 🔜
 
 *Covers FR-3.1(a) fully, FR-4.1 webhooks, the GitHub parts of FR-7.1.*
 

@@ -61,11 +61,12 @@ func main() {
 	hub := events.NewHub()
 	appSvc := apps.NewService(pool, box)
 	depSvc := deployments.NewService(pool, hub, cfg.DataDir)
+	provider := reconciler.NewDocker(cfg.DataDir)
 	pipeline := &jobs.Pipeline{
 		Pool:             pool,
 		Apps:             appSvc,
 		Deployments:      depSvc,
-		Provider:         reconciler.NewDocker(cfg.DataDir),
+		Provider:         provider,
 		NewBuilder:       builder.ForName,
 		Clone:            builder.CloneAtBranch,
 		DataDir:          cfg.DataDir,
@@ -87,7 +88,7 @@ func main() {
 	}()
 
 	srv := api.NewServer(cfg, pool, box)
-	srv.WireDeployments(depSvc, &jobs.Enqueuer{Client: client}, hub)
+	srv.WireDeployments(depSvc, &jobs.Enqueuer{Client: client}, hub, provider)
 
 	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: srv.Handler()}
 	go func() {

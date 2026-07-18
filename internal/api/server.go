@@ -12,6 +12,7 @@ import (
 	"github.com/bograh/cargo/internal/deployments"
 	"github.com/bograh/cargo/internal/events"
 	"github.com/bograh/cargo/internal/orgs"
+	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -77,6 +78,7 @@ type Server struct {
 	enqueue  Enqueuer
 	hub      *events.Hub
 	logPath  func(id string) string
+	provider reconciler.DeployProvider
 }
 
 // DeploymentService is satisfied by *deployments.Service.
@@ -93,12 +95,14 @@ type Enqueuer interface {
 	EnqueueDeploy(ctx context.Context, deploymentID string) error
 }
 
-// WireDeployments attaches the deployment service, job enqueuer, and SSE hub.
-func (s *Server) WireDeployments(d *deployments.Service, e Enqueuer, hub *events.Hub) {
+// WireDeployments attaches the deployment service, job enqueuer, SSE hub,
+// and deploy provider (used to tear down containers on app deletion).
+func (s *Server) WireDeployments(d *deployments.Service, e Enqueuer, hub *events.Hub, p reconciler.DeployProvider) {
 	s.deps = d
 	s.enqueue = e
 	s.hub = hub
 	s.logPath = d.LogPath
+	s.provider = p
 }
 
 // NewServer builds a Server. pool/box may be nil in tests that stub dependencies.
