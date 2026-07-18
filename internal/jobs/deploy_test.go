@@ -13,6 +13,7 @@ import (
 	"github.com/bograh/cargo/internal/auth"
 	"github.com/bograh/cargo/internal/builder"
 	"github.com/bograh/cargo/internal/crypto"
+	"github.com/bograh/cargo/internal/databases"
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
 	"github.com/bograh/cargo/internal/events"
@@ -219,7 +220,12 @@ func TestRiverMigrateAndClient(t *testing.T) {
 	if err := Migrate(ctx, f.pipeline.Pool); err != nil {
 		t.Fatalf("river migrate: %v", err)
 	}
-	client, err := NewClient(f.pipeline.Pool, f.pipeline)
+	box, err := crypto.New(bytes.Repeat([]byte{9}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbSvc := databases.NewService(f.pipeline.Pool, box, &fakeDBProvider{}, t.TempDir())
+	client, err := NewClient(f.pipeline.Pool, f.pipeline, dbSvc)
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/bograh/cargo/internal/builder"
 	"github.com/bograh/cargo/internal/config"
 	"github.com/bograh/cargo/internal/crypto"
+	"github.com/bograh/cargo/internal/databases"
 	"github.com/bograh/cargo/internal/db"
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
@@ -63,6 +64,7 @@ func main() {
 	appSvc := apps.NewService(pool, box)
 	depSvc := deployments.NewService(pool, hub, cfg.DataDir)
 	provider := reconciler.NewDocker(cfg.DataDir)
+	dbSvc := databases.NewService(pool, box, provider, cfg.DataDir)
 	ghSvc := github.NewService(pool, box)
 	pipeline := &jobs.Pipeline{
 		Pool:             pool,
@@ -75,7 +77,7 @@ func main() {
 		DataDir:          cfg.DataDir,
 		AppsDomainSuffix: appsDomainSuffix(pool),
 	}
-	client, err := jobs.NewClient(pool, pipeline)
+	client, err := jobs.NewClient(pool, pipeline, dbSvc)
 	if err != nil {
 		slog.Error("job client init failed", "err", err)
 		os.Exit(1)

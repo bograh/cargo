@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/bograh/cargo/internal/databases"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -23,12 +24,13 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 
 // NewClient builds the River client with the deploy queue (build concurrency
 // cap: 2 workers, FR-4.4) and a daily retention prune.
-func NewClient(pool *pgxpool.Pool, p *Pipeline) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &DeployWorker{P: p})
 	river.AddWorker(workers, &PruneWorker{Pool: pool, Deps: p.Deployments})
 	river.AddWorker(workers, &DomainCheckWorker{Pool: pool})
 	river.AddWorker(workers, &HousekeepingWorker{Pool: pool})
+	river.AddWorker(workers, &DBProvisionWorker{Databases: dbSvc})
 	return river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
 			"deploy":           {MaxWorkers: 2},
@@ -63,5 +65,11 @@ type Enqueuer struct {
 func (e *Enqueuer) EnqueueDeploy(ctx context.Context, deploymentID string) error {
 	_, err := e.Client.Insert(ctx, DeployArgs{DeploymentID: deploymentID},
 		&river.InsertOpts{Queue: "deploy"})
+	return err
+}
+
+// EnqueueDBProvision inserts a provision_database job for the given instance.
+func (e *Enqueuer) EnqueueDBProvision(ctx context.Context, instanceID string) error {
+	_, err := e.Client.Insert(ctx, DBProvisionArgs{InstanceID: instanceID}, nil)
 	return err
 }
