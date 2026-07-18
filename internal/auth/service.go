@@ -54,7 +54,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (sqlc.Us
 	if err != nil {
 		return sqlc.User{}, Tokens{}, err
 	}
-	u, err := s.q.CreateUser(ctx, sqlc.CreateUserParams{Email: email, PasswordHash: hash})
+	u, err := s.q.CreateUser(ctx, sqlc.CreateUserParams{Email: email, PasswordHash: pgtype.Text{String: hash, Valid: true}})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

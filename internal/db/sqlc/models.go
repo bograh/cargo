@@ -30,6 +30,15 @@ type Application struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type AuthIdentity struct {
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
+	Issuer    string
+	Subject   string
+	Email     string
+	CreatedAt pgtype.Timestamptz
+}
+
 type Deployment struct {
 	ID         pgtype.UUID
 	AppID      pgtype.UUID
@@ -115,7 +124,7 @@ type Session struct {
 type User struct {
 	ID              pgtype.UUID
 	Email           string
-	PasswordHash    string
+	PasswordHash    pgtype.Text
 	IsInstanceAdmin bool
 	CreatedAt       pgtype.Timestamptz
 }

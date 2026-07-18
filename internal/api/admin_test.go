@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type stubAdmin struct{}
 
 func (stubAdmin) ListUsers(_ context.Context) ([]sqlc.User, error) {
-	return []sqlc.User{{Email: "a@b.co", PasswordHash: "SECRET-HASH"}}, nil
+	return []sqlc.User{{Email: "a@b.co", PasswordHash: pgtype.Text{String: "SECRET-HASH", Valid: true}}}, nil
 }
 func (stubAdmin) ListAllOrganizations(_ context.Context) ([]sqlc.Organization, error) {
 	return []sqlc.Organization{{Name: "Acme", Slug: "acme"}}, nil

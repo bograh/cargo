@@ -16,14 +16,24 @@ type passwordProvider struct {
 	q *sqlc.Queries
 }
 
+// fakeHash is a syntactically valid argon2id encoding used to burn comparable
+// CPU time when there is no real hash to verify against, so unknown emails and
+// SSO-only accounts aren't distinguishable by latency.
+const fakeHash = "$argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 func (p *passwordProvider) Authenticate(ctx context.Context, email, password string) (sqlc.User, error) {
 	u, err := p.q.GetUserByEmail(ctx, email)
 	if err != nil {
 		// Burn comparable time so unknown emails aren't distinguishable by latency.
-		_, _ = VerifyPassword("$argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", password)
+		_, _ = VerifyPassword(fakeHash, password)
 		return sqlc.User{}, ErrInvalidCredentials
 	}
-	ok, err := VerifyPassword(u.PasswordHash, password)
+	if !u.PasswordHash.Valid {
+		// SSO-only account: same burn and error as a wrong password.
+		_, _ = VerifyPassword(fakeHash, password)
+		return sqlc.User{}, ErrInvalidCredentials
+	}
+	ok, err := VerifyPassword(u.PasswordHash.String, password)
 	if err != nil || !ok {
 		return sqlc.User{}, ErrInvalidCredentials
 	}

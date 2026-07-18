@@ -19,7 +19,7 @@ RETURNING id, email, password_hash, is_instance_admin, created_at
 
 type CreateUserParams struct {
 	Email        string
-	PasswordHash string
+	PasswordHash pgtype.Text
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
