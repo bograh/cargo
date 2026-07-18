@@ -1,0 +1,209 @@
+// Package jobs runs Cargo's background work on a River (Postgres-backed)
+// queue: deployments and housekeeping.
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/bograh/cargo/internal/apps"
+	"github.com/bograh/cargo/internal/builder"
+	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/bograh/cargo/internal/deployments"
+	"github.com/bograh/cargo/internal/reconciler"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+)
+
+type DeployArgs struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+func (DeployArgs) Kind() string { return "deploy" }
+
+type DeployWorker struct {
+	river.WorkerDefaults[DeployArgs]
+	P *Pipeline
+}
+
+func (w *DeployWorker) Work(ctx context.Context, job *river.Job[DeployArgs]) error {
+	return w.P.Run(ctx, job.Args.DeploymentID)
+}
+
+// Pipeline executes one deployment end to end: clone → build → reconcile →
+// apply → live/failed. All collaborators are injected so tests can fake them.
+type Pipeline struct {
+	Pool             *pgxpool.Pool
+	Apps             *apps.Service
+	Deployments      *deployments.Service
+	Provider         reconciler.DeployProvider
+	NewBuilder       func(name string) builder.Builder
+	Clone            func(ctx context.Context, url, branch, dest string, log io.Writer) (string, error)
+	DataDir          string
+	AppsDomainSuffix func(ctx context.Context) string
+}
+
+func uuidOf(s string) (pgtype.UUID, error) {
+	var id pgtype.UUID
+	err := id.Scan(s)
+	return id, err
+}
+
+func uuidStr(id pgtype.UUID) string {
+	v, _ := id.Value()
+	s, _ := v.(string)
+	return s
+}
+
+func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
+	depID, err := uuidOf(deploymentID)
+	if err != nil {
+		return fmt.Errorf("bad deployment id %q: %w", deploymentID, err)
+	}
+	dep, err := p.Deployments.GetRaw(ctx, depID)
+	if err != nil {
+		return err
+	}
+	switch dep.Status {
+	case "live", "failed", "cancelled":
+		return nil // terminal — nothing to do (e.g. duplicate retry)
+	}
+
+	// Serialize deploys per app (FR-4.4).
+	conn, err := p.Pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	appIDStr := uuidStr(dep.AppID)
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(hashtext($1))", appIDStr); err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock(hashtext($1))", appIDStr)
+	}()
+
+	logw, err := p.Deployments.LogWriter(deploymentID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = logw.Close() }()
+
+	if err := p.run(ctx, dep, deploymentID, logw); err != nil {
+		fmt.Fprintf(logw, "==> failed: %v\n", err)
+		_ = p.Deployments.Finish(ctx, depID, "failed", err.Error())
+		return err
+	}
+	fmt.Fprintln(logw, "==> live")
+	return p.Deployments.Finish(ctx, depID, "live", "")
+}
+
+func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer) error {
+	app, err := p.Apps.GetRaw(ctx, dep.AppID)
+	if err != nil {
+		return fmt.Errorf("load app: %w", err)
+	}
+
+	imageTag := dep.ImageTag
+	if dep.Trigger == "rollback" {
+		fmt.Fprintf(logw, "==> rollback to image %s (no build)\n", imageTag)
+	} else {
+		if err := p.Deployments.SetStatus(ctx, dep.ID, "building"); err != nil {
+			return err
+		}
+		switch app.SourceType {
+		case "git":
+			imageTag, err = p.buildFromGit(ctx, app, dep, deploymentID, logw)
+			if err != nil {
+				return err
+			}
+		case "image":
+			imageTag = app.ImageRef
+			if err := p.registryLogin(ctx, app, logw); err != nil {
+				return err
+			}
+			if err := p.Deployments.SetBuildInfo(ctx, dep.ID, "", imageTag); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown source type %q", app.SourceType)
+		}
+	}
+
+	if err := p.Deployments.SetStatus(ctx, dep.ID, "deploying"); err != nil {
+		return err
+	}
+	fmt.Fprintln(logw, "==> deploying")
+	env, err := p.Apps.DecryptedEnv(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	spec := reconciler.Spec{
+		AppID:           uuidStr(app.ID),
+		Slug:            app.Slug,
+		Image:           imageTag,
+		Port:            app.ExposedPort,
+		HealthcheckPath: app.HealthcheckPath,
+		Env:             env,
+		Domains:         []string{app.Slug + "." + p.AppsDomainSuffix(ctx)},
+	}
+	return p.Provider.Apply(ctx, spec, logw)
+}
+
+func (p *Pipeline) buildFromGit(ctx context.Context, app sqlc.Application, dep sqlc.Deployment, deploymentID string, logw io.Writer) (string, error) {
+	workDir := filepath.Join(p.DataDir, "builds", deploymentID)
+	defer func() { _ = os.RemoveAll(workDir) }()
+	fmt.Fprintf(logw, "==> cloning %s (%s)\n", app.GitRepoUrl, app.GitBranch)
+	sha, err := p.Clone(ctx, app.GitRepoUrl, app.GitBranch, workDir, logw)
+	if err != nil {
+		return "", err
+	}
+	short := strings.ReplaceAll(deploymentID, "-", "")
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	imageTag := fmt.Sprintf("app-%s:%s", app.Slug, short)
+	if err := p.Deployments.SetBuildInfo(ctx, dep.ID, sha, imageTag); err != nil {
+		return "", err
+	}
+	name := app.Builder
+	if name == "" || name == "auto" {
+		name = builder.Detect(filepath.Join(workDir, app.BuildContext), app.DockerfilePath)
+	}
+	fmt.Fprintf(logw, "==> building with %s → %s\n", name, imageTag)
+	var buildArgs map[string]string
+	if len(app.BuildArgs) > 0 {
+		if err := json.Unmarshal(app.BuildArgs, &buildArgs); err != nil {
+			return "", fmt.Errorf("build args: %w", err)
+		}
+	}
+	b := p.NewBuilder(name)
+	err = b.Build(ctx, builder.Input{
+		WorkDir: workDir, ImageTag: imageTag, ContextPath: app.BuildContext,
+		DockerfilePath: app.DockerfilePath, BuildArgs: buildArgs, Log: logw,
+	})
+	return imageTag, err
+}
+
+// registryLogin authenticates the local docker daemon for private image pulls.
+func (p *Pipeline) registryLogin(ctx context.Context, app sqlc.Application, logw io.Writer) error {
+	creds, err := p.Apps.DecryptedRegistryCreds(ctx, app)
+	if err != nil || creds == nil {
+		return err
+	}
+	fmt.Fprintf(logw, "==> docker login %s\n", creds.Server)
+	cmd := exec.CommandContext(ctx, "docker", "login", creds.Server, "-u", creds.Username, "--password-stdin")
+	cmd.Stdin = strings.NewReader(creds.Password)
+	cmd.Stdout, cmd.Stderr = logw, logw
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker login: %w", err)
+	}
+	return nil
+}

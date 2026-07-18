@@ -297,6 +297,15 @@ func (s *Service) DeleteEnvVar(ctx context.Context, appID, actor pgtype.UUID, ke
 	return s.q.DeleteEnvVar(ctx, sqlc.DeleteEnvVarParams{AppID: app.ID, Key: key})
 }
 
+// GetRaw is pipeline-facing: no actor check.
+func (s *Service) GetRaw(ctx context.Context, appID pgtype.UUID) (sqlc.Application, error) {
+	app, err := s.q.GetApplication(ctx, appID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sqlc.Application{}, ErrNotFound
+	}
+	return app, err
+}
+
 // DecryptedEnv is pipeline-facing: no actor check.
 func (s *Service) DecryptedEnv(ctx context.Context, appID pgtype.UUID) (map[string]string, error) {
 	rows, err := s.q.ListEnvVars(ctx, appID)

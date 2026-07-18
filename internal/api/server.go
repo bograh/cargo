@@ -9,6 +9,8 @@ import (
 	"github.com/bograh/cargo/internal/config"
 	"github.com/bograh/cargo/internal/crypto"
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/bograh/cargo/internal/deployments"
+	"github.com/bograh/cargo/internal/events"
 	"github.com/bograh/cargo/internal/orgs"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -71,6 +73,32 @@ type Server struct {
 	orgs     OrgService
 	admin    AdminStore
 	apps     AppService
+	deps     DeploymentService
+	enqueue  Enqueuer
+	hub      *events.Hub
+	logPath  func(id string) string
+}
+
+// DeploymentService is satisfied by *deployments.Service.
+type DeploymentService interface {
+	Create(ctx context.Context, appID, actor pgtype.UUID, trigger string) (sqlc.Deployment, error)
+	Rollback(ctx context.Context, appID, actor, targetID pgtype.UUID) (sqlc.Deployment, error)
+	List(ctx context.Context, appID, actor pgtype.UUID) ([]sqlc.Deployment, error)
+	Get(ctx context.Context, deploymentID, actor pgtype.UUID) (sqlc.Deployment, error)
+	Finish(ctx context.Context, id pgtype.UUID, status, errMsg string) error
+}
+
+// Enqueuer inserts deploy jobs; satisfied by *jobs.Enqueuer.
+type Enqueuer interface {
+	EnqueueDeploy(ctx context.Context, deploymentID string) error
+}
+
+// WireDeployments attaches the deployment service, job enqueuer, and SSE hub.
+func (s *Server) WireDeployments(d *deployments.Service, e Enqueuer, hub *events.Hub) {
+	s.deps = d
+	s.enqueue = e
+	s.hub = hub
+	s.logPath = d.LogPath
 }
 
 // NewServer builds a Server. pool/box may be nil in tests that stub dependencies.
