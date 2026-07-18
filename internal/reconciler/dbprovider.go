@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var _ DatabaseProvider = (*Docker)(nil)
+
 // dbDir returns the per-instance project directory for a managed database.
 func (d *Docker) dbDir(instanceID string) string {
 	return filepath.Join(d.dataDir, "databases", instanceID)
@@ -65,8 +67,9 @@ func (d *Docker) waitDBReady(ctx context.Context, spec DBSpec, log io.Writer) er
 		var err error
 		switch spec.Engine {
 		case "redis":
-			_, err = d.ExecDB(ctx, spec.InstanceID, spec.Engine, "",
-				"redis-cli", "-a", spec.AdminPass, "--no-auth-warning", "PING")
+			_, err = d.execDBWithEnv(ctx, spec.InstanceID, "",
+				map[string]string{"REDISCLI_AUTH": spec.AdminPass},
+				"redis-cli", "--no-auth-warning", "PING")
 		default:
 			_, err = d.ExecDB(ctx, spec.InstanceID, spec.Engine, "",
 				"pg_isready", "-U", "postgres")
@@ -83,9 +86,28 @@ func (d *Docker) waitDBReady(ctx context.Context, spec DBSpec, log io.Writer) er
 // stdin, and returns combined stdout.
 func (d *Docker) ExecDB(ctx context.Context, instanceID, engine string, stdin string, args ...string) (string, error) {
 	_ = engine
+	return d.execDBWithEnv(ctx, instanceID, stdin, nil, args...)
+}
+
+// execDBWithEnv runs a command inside the running db container, optionally
+// forwarding host-process environment variables into the container via
+// `docker compose exec -e KEY`. The values themselves are never placed on
+// the docker CLI argv (host- or container-side) — they are read by docker
+// from the calling process's own environment, so they never appear in any
+// process list.
+func (d *Docker) execDBWithEnv(ctx context.Context, instanceID, stdin string, env map[string]string, args ...string) (string, error) {
 	composePath := filepath.Join(d.dbDir(instanceID), "compose.yaml")
-	full := append([]string{"compose", "-f", composePath, "exec", "-T", "db"}, args...)
-	return execCaptured(ctx, stdin, "docker", full...)
+	full := []string{"compose", "-f", composePath, "exec", "-T"}
+	extraEnv := make([]string, 0, len(env))
+	for k := range env {
+		full = append(full, "-e", k)
+	}
+	for k, v := range env {
+		extraEnv = append(extraEnv, k+"="+v)
+	}
+	full = append(full, "db")
+	full = append(full, args...)
+	return execCaptured(ctx, stdin, extraEnv, "docker", full...)
 }
 
 // SnapshotDB writes a point-in-time snapshot of the instance to destPath
@@ -94,31 +116,38 @@ func (d *Docker) SnapshotDB(ctx context.Context, instanceID, engine, adminPass, 
 	composePath := filepath.Join(d.dbDir(instanceID), "compose.yaml")
 	switch engine {
 	case "redis":
-		before, err := d.ExecDB(ctx, instanceID, engine, "",
-			"redis-cli", "-a", adminPass, "--no-auth-warning", "LASTSAVE")
+		redisEnv := map[string]string{"REDISCLI_AUTH": adminPass}
+		before, err := d.execDBWithEnv(ctx, instanceID, "", redisEnv,
+			"redis-cli", "--no-auth-warning", "LASTSAVE")
 		if err != nil {
 			return err
 		}
-		if _, err := d.ExecDB(ctx, instanceID, engine, "",
-			"redis-cli", "-a", adminPass, "--no-auth-warning", "BGSAVE"); err != nil {
+		if _, err := d.execDBWithEnv(ctx, instanceID, "", redisEnv,
+			"redis-cli", "--no-auth-warning", "BGSAVE"); err != nil {
 			return err
 		}
 		deadline := time.Now().Add(10 * time.Second)
+		saved := false
 		for time.Now().Before(deadline) {
-			after, err := d.ExecDB(ctx, instanceID, engine, "",
-				"redis-cli", "-a", adminPass, "--no-auth-warning", "LASTSAVE")
+			after, err := d.execDBWithEnv(ctx, instanceID, "", redisEnv,
+				"redis-cli", "--no-auth-warning", "LASTSAVE")
 			if err == nil && strings.TrimSpace(after) != strings.TrimSpace(before) {
+				saved = true
 				break
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
+		if !saved {
+			return fmt.Errorf("redis snapshot: BGSAVE did not complete within 10s")
+		}
 		return run(ctx, os.Stderr, "docker", "compose", "-f", composePath, "cp",
 			"db:/data/dump.rdb", destPath+".rdb")
 	default:
-		out, err := d.ExecDB(ctx, instanceID, engine, "",
+		out, errOut, err := execCapturedSplit(ctx, "", nil, "docker",
+			"compose", "-f", composePath, "exec", "-T", "db",
 			"pg_dumpall", "--clean", "-U", "postgres")
 		if err != nil {
-			return err
+			return fmt.Errorf("pg_dumpall: %w: %s", err, errOut)
 		}
 		return os.WriteFile(destPath+".sql", []byte(out), 0o600)
 	}
@@ -139,11 +168,16 @@ func (d *Docker) TeardownDB(ctx context.Context, instanceID string, log io.Write
 
 // execCaptured runs name+args, feeding stdinData to the process's stdin
 // when non-empty, and returns combined stdout+stderr trimmed of trailing
-// whitespace.
-func execCaptured(ctx context.Context, stdinData string, name string, args ...string) (string, error) {
+// whitespace. extraEnv entries (KEY=VALUE) are appended to the child
+// process's environment (inherited from os.Environ()) — never placed on
+// argv — so secrets passed this way never show up in process listings.
+func execCaptured(ctx context.Context, stdinData string, extraEnv []string, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if stdinData != "" {
 		cmd.Stdin = strings.NewReader(stdinData)
+	}
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
 	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -153,4 +187,25 @@ func execCaptured(ctx context.Context, stdinData string, name string, args ...st
 		return "", fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, buf.String())
 	}
 	return strings.TrimSpace(buf.String()), nil
+}
+
+// execCapturedSplit runs name+args like execCaptured, but keeps stdout and
+// stderr separate so callers that persist stdout verbatim (e.g. a pg_dumpall
+// SQL dump) don't get it corrupted by interleaved stderr NOTICEs/warnings.
+func execCapturedSplit(ctx context.Context, stdinData string, extraEnv []string, name string, args ...string) (stdout string, stderr string, err error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	if stdinData != "" {
+		cmd.Stdin = strings.NewReader(stdinData)
+	}
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	runErr := cmd.Run()
+	if runErr != nil {
+		return "", errBuf.String(), fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), runErr)
+	}
+	return outBuf.String(), errBuf.String(), nil
 }
