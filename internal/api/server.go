@@ -65,6 +65,9 @@ type AppService interface {
 	SetEnvVars(ctx context.Context, appID, actor pgtype.UUID, vars map[string]string) error
 	ListEnvKeys(ctx context.Context, appID, actor pgtype.UUID) ([]string, error)
 	DeleteEnvVar(ctx context.Context, appID, actor pgtype.UUID, key string) error
+	AddDomain(ctx context.Context, appID, actor pgtype.UUID, hostname, appsSuffix string) (sqlc.Domain, error)
+	ListDomains(ctx context.Context, appID, actor pgtype.UUID) ([]sqlc.Domain, error)
+	RemoveDomain(ctx context.Context, appID, actor, domainID pgtype.UUID) error
 }
 
 type Server struct {

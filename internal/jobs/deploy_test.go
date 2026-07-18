@@ -263,3 +263,22 @@ func TestPipelineUsesCloneAuth(t *testing.T) {
 		t.Fatal("installation token leaked into deployment log")
 	}
 }
+
+func TestPipelineIncludesCustomDomains(t *testing.T) {
+	f := setup(t, "image")
+	ctx := context.Background()
+	if _, err := f.appSvc.AddDomain(ctx, f.app.ID, f.owner, "api.example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	spec := f.provider.specs[0]
+	if len(spec.Domains) != 2 || spec.Domains[1] != "api.example.com" {
+		t.Fatalf("domains = %v", spec.Domains)
+	}
+}

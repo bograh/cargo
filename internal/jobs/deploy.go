@@ -148,6 +148,12 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	if err != nil {
 		return err
 	}
+	domains := []string{app.Slug + "." + p.AppsDomainSuffix(ctx)}
+	custom, err := p.Apps.CustomDomains(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	domains = append(domains, custom...)
 	spec := reconciler.Spec{
 		AppID:           uuidStr(app.ID),
 		Slug:            app.Slug,
@@ -155,7 +161,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		Port:            app.ExposedPort,
 		HealthcheckPath: app.HealthcheckPath,
 		Env:             env,
-		Domains:         []string{app.Slug + "." + p.AppsDomainSuffix(ctx)},
+		Domains:         domains,
 	}
 	return p.Provider.Apply(ctx, spec, logw)
 }
