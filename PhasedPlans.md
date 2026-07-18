@@ -152,27 +152,27 @@ Org-scoped GitHub App installation flow (start/callback); installation IDs store
 
 ---
 
-## Phase 4 — Domains & SSL 🔜
+## Phase 4 — Domains & SSL ✅
 
 *Covers FR-5 and the production Traefik topology (NFR-3).*
 
-### 4.1 Traefik v3 in the stack
+### 4.1 Traefik v3 in the stack ✅ (deploy/docker-compose.yml)
 Traefik joins the compose stack as the only container publishing 80/443; controlplane UI routed via the same label mechanism (dogfooded).
 - Platform UI reachable at its domain through Traefik; 80→443 redirect
 - App containers never publish host ports
 
-### 4.2 Automatic SSL (FR-5.3)
+### 4.2 Automatic SSL ✅ (FR-5.3; dns01 via compose overlay)
 Two install-time modes: wildcard DNS-01 (provider API token) or per-domain HTTP-01.
 - Wildcard mode: one cert covers `*.apps.<domain>`; new apps HTTPS-ready instantly
 - HTTP-01 mode: cert issued on first valid request per domain
 - `acme.json` persisted across restarts/upgrades
 
-### 4.3 Custom domains (FR-5.2)
+### 4.3 Custom domains ✅ (FR-5.2; applied on next deploy)
 Attach/remove custom domains per app; applied on next reconcile; always HTTP-01.
 - Admin+ attaches a domain; router `Host()` rule includes it after reconcile
 - Removing a domain stops routing it
 
-### 4.4 Domain status checks (FR-5.4)
+### 4.4 Domain status checks ✅ (FR-5.4; every 10 min)
 Periodic job checks DNS resolution + HTTPS response per domain.
 - Each domain shows `active / pending / misconfigured`, refreshed on a schedule
 - Wrong DNS target → `misconfigured` with the observed A record in details
@@ -212,7 +212,7 @@ Periodic job checks DNS resolution + HTTPS response per domain.
 
 ---
 
-## Phase 6 — Instance Settings & Operations ⬜
+## Phase 6 — Instance Settings & Operations 🔜
 
 *Backend for FR-7.1 plus operational hardening. (Small; can merge into Phase 5 if convenient.)*
 

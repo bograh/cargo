@@ -5,10 +5,11 @@ import { api } from "../lib/api";
 import type { App } from "../lib/types";
 import { Badge, EmptyState, PageTitle, Spinner } from "../components/ui";
 import { DeploymentsTab } from "../components/DeploymentsTab";
+import { DomainsTab } from "../components/DomainsTab";
 import { EnvTab } from "../components/EnvTab";
 import { SettingsTab } from "../components/SettingsTab";
 
-const TABS = ["Overview", "Deployments", "Environment", "Settings"] as const;
+const TABS = ["Overview", "Deployments", "Environment", "Domains", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 export function useApp(appId: string | undefined) {
@@ -86,6 +87,7 @@ export default function AppDetail() {
       {tab === "Overview" && <Overview app={app} />}
       {tab === "Deployments" && <DeploymentsTab app={app} />}
       {tab === "Environment" && <EnvTab app={app} />}
+      {tab === "Domains" && <DomainsTab app={app} />}
       {tab === "Settings" && <SettingsTab app={app} />}
     </div>
   );
