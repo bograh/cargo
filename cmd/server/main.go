@@ -19,6 +19,7 @@ import (
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
 	"github.com/bograh/cargo/internal/events"
+	"github.com/bograh/cargo/internal/github"
 	"github.com/bograh/cargo/internal/jobs"
 	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/jackc/pgx/v5"
@@ -62,6 +63,7 @@ func main() {
 	appSvc := apps.NewService(pool, box)
 	depSvc := deployments.NewService(pool, hub, cfg.DataDir)
 	provider := reconciler.NewDocker(cfg.DataDir)
+	ghSvc := github.NewService(pool, box)
 	pipeline := &jobs.Pipeline{
 		Pool:             pool,
 		Apps:             appSvc,
@@ -69,6 +71,7 @@ func main() {
 		Provider:         provider,
 		NewBuilder:       builder.ForName,
 		Clone:            builder.CloneAtBranch,
+		CloneAuth:        ghSvc.CloneAuth,
 		DataDir:          cfg.DataDir,
 		AppsDomainSuffix: appsDomainSuffix(pool),
 	}

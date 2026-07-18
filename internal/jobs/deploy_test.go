@@ -232,3 +232,34 @@ func TestRiverMigrateAndClient(t *testing.T) {
 		t.Fatalf("enqueue: %v", err)
 	}
 }
+
+func TestPipelineUsesCloneAuth(t *testing.T) {
+	f := setup(t, "git")
+	ctx := context.Background()
+	var clonedURL string
+	f.pipeline.CloneAuth = func(_ context.Context, _ pgtype.UUID, repoURL string) (string, error) {
+		return "https://x-access-token:SECRET-TOKEN@github.com/acme/api.git", nil
+	}
+	baseClone := f.pipeline.Clone
+	f.pipeline.Clone = func(ctx context.Context, url, branch, dest string, log io.Writer) (string, error) {
+		clonedURL = url
+		return baseClone(ctx, url, branch, dest, log)
+	}
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(clonedURL, "x-access-token:SECRET-TOKEN") {
+		t.Fatalf("clone url = %q", clonedURL)
+	}
+	data, err := os.ReadFile(f.deps.LogPath(uuidString(t, dep.ID)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "SECRET-TOKEN") {
+		t.Fatal("installation token leaked into deployment log")
+	}
+}

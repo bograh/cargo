@@ -46,6 +46,9 @@ type Pipeline struct {
 	Provider         reconciler.DeployProvider
 	NewBuilder       func(name string) builder.Builder
 	Clone            func(ctx context.Context, url, branch, dest string, log io.Writer) (string, error)
+	// CloneAuth may rewrite a repo URL to embed credentials (e.g. a GitHub
+	// installation token). May be nil. The rewritten URL is never logged.
+	CloneAuth        func(ctx context.Context, orgID pgtype.UUID, repoURL string) (string, error)
 	DataDir          string
 	AppsDomainSuffix func(ctx context.Context) string
 }
@@ -161,7 +164,15 @@ func (p *Pipeline) buildFromGit(ctx context.Context, app sqlc.Application, dep s
 	workDir := filepath.Join(p.DataDir, "builds", deploymentID)
 	defer func() { _ = os.RemoveAll(workDir) }()
 	_, _ = fmt.Fprintf(logw, "==> cloning %s (%s)\n", app.GitRepoUrl, app.GitBranch)
-	sha, err := p.Clone(ctx, app.GitRepoUrl, app.GitBranch, workDir, logw)
+	cloneURL := app.GitRepoUrl
+	if p.CloneAuth != nil {
+		authed, err := p.CloneAuth(ctx, app.OrgID, app.GitRepoUrl)
+		if err != nil {
+			return "", fmt.Errorf("clone auth: %w", err)
+		}
+		cloneURL = authed
+	}
+	sha, err := p.Clone(ctx, cloneURL, app.GitBranch, workDir, logw)
 	if err != nil {
 		return "", err
 	}
