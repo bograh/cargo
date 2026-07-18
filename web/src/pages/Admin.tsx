@@ -217,6 +217,106 @@ function GithubAppForm() {
   );
 }
 
+interface OIDCStatus {
+  configured: boolean;
+  issuer_url: string;
+  client_id: string;
+}
+
+function OIDCForm() {
+  const qc = useQueryClient();
+  const { data: status } = useQuery({
+    queryKey: ["admin", "oidc"],
+    queryFn: () => api<OIDCStatus>("/admin/settings/oidc"),
+  });
+  const [issuerUrl, setIssuerUrl] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [error, setError] = useState("");
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ["admin", "oidc"] });
+  const save = useMutation({
+    mutationFn: () =>
+      put("/admin/settings/oidc", {
+        issuer_url: issuerUrl,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+    onSuccess: () => {
+      setClientSecret("");
+      setError("");
+      invalidate();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "save failed"),
+  });
+  const clear = useMutation({
+    mutationFn: () => del("/admin/settings/oidc"),
+    onSuccess: invalidate,
+    onError: (err) => setError(err instanceof Error ? err.message : "clear failed"),
+  });
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    save.mutate();
+  }
+
+  return (
+    <Card>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="font-semibold">SSO (OIDC)</h2>
+        {status?.configured ? (
+          <span className="flex items-center gap-2">
+            <Badge color="green">configured — {status.issuer_url}</Badge>
+            <Button type="button" variant="secondary" onClick={() => clear.mutate()}>
+              Clear
+            </Button>
+          </span>
+        ) : (
+          <Badge color="gray">not configured</Badge>
+        )}
+      </div>
+      <p className="mb-4 text-xs text-slate-500">
+        Register a confidential OIDC client at your identity provider with redirect URI{" "}
+        <code>{window.location.origin}/api/v1/auth/oidc/callback</code>. The client secret is stored
+        encrypted and never shown again.
+      </p>
+      <form onSubmit={submit} className="space-y-3">
+        <div>
+          <Label htmlFor="oidc-issuer">Issuer URL</Label>
+          <Input
+            id="oidc-issuer"
+            placeholder="https://idp.example.com/realms/cargo"
+            value={issuerUrl}
+            onChange={(e) => setIssuerUrl(e.target.value)}
+            required
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="oidc-client-id">Client ID</Label>
+            <Input id="oidc-client-id" value={clientId} onChange={(e) => setClientId(e.target.value)} required />
+          </div>
+          <div>
+            <Label htmlFor="oidc-client-secret">Client secret</Label>
+            <Input
+              id="oidc-client-secret"
+              type="password"
+              placeholder="write-only"
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+              required
+            />
+          </div>
+        </div>
+        <FieldError message={error} />
+        <Button type="submit" disabled={save.isPending}>
+          Save OIDC
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
 interface AdminOrg {
   id: string;
   name: string;
@@ -260,6 +360,7 @@ export default function Admin() {
       <PageTitle>Instance administration</PageTitle>
       <InstanceSettingsCard />
       <GithubAppForm />
+      <OIDCForm />
       <Card>
         <h2 className="mb-3 font-semibold">Users</h2>
         <ul className="space-y-2 text-sm">
