@@ -2,6 +2,8 @@
 
 Roadmap from empty repo to full PRD scope. Phases 0–7 deliver **v1**; Phases 8–9 are the PRD's Phase 2/3. Each phase is independently shippable and ends with the platform in a working state.
 
+**v1 complete 2026-07-18** — Phases 0–7 shipped.
+
 Status legend: ✅ done · 🔜 next · ⬜ not started
 
 Source documents: [PRD.md](PRD.md) · [design spec](docs/superpowers/specs/2026-07-17-cargo-design.md)
@@ -226,24 +228,24 @@ Periodic job checks DNS resolution + HTTPS response per domain.
 
 ---
 
-## Phase 7 — Installation & Packaging 🔜
+## Phase 7 — Installation & Packaging ✅
 
-*Covers FR-8, NFR-1, NFR-8. v1 ships at the end of this phase.*
+*Plan: `docs/superpowers/plans/2026-07-18-cargo-m8-install.md` (complete). Covers FR-8, NFR-1, NFR-8. v1 shipped at the end of this phase.*
 
-### 7.1 Production compose + install script (FR-8.1)
+### 7.1 Production compose + install script ✅ (FR-8.1)
 `install.sh`: dependency checks → prompts (platform domain, apps suffix, ACME email, optional DNS token, optional SMTP) → generates master key + DB password into mode-0600 `.env` → `docker compose up -d`.
-- Bare Ubuntu VM with Docker → reachable platform in ≤10 min, one command (NFR-1)
-- Script warns to back up the master key; refuses to run without Docker/compose
-- Exactly 3 platform containers: controlplane, Postgres, Traefik (NFR-3)
+- ✅ Bare Ubuntu VM with Docker → reachable platform in ≤10 min, one command (NFR-1)
+- ✅ Script warns to back up the master key; refuses to run without Docker/compose
+- ✅ Exactly 3 platform containers: controlplane, Postgres, Traefik (NFR-3)
 
-### 7.2 Upgrade path (FR-1.4 admin story, NFR-8)
-- `docker compose pull && up -d` upgrades; migrations run automatically
-- Running user apps unaffected by a platform upgrade
-- UI downtime during upgrade ≤2 min
+### 7.2 Upgrade path ✅ (FR-1.4 admin story, NFR-8)
+- ✅ `docker compose pull && up -d` upgrades; migrations run automatically
+- ✅ Running user apps unaffected by a platform upgrade
+- ✅ UI downtime during upgrade ≤2 min
 
-### 7.3 Docs + E2E smoke
-- README: prerequisites (DNS records, ports 80/443), install, upgrade, backup
-- Smoke script: installs the platform and deploys a sample app end-to-end
+### 7.3 Docs + E2E smoke ✅
+- ✅ README: prerequisites (DNS records, ports 80/443), install, upgrade, backup
+- ✅ Smoke script (`scripts/smoke.sh`): installs the platform and deploys a sample app end-to-end
 
 ---
 
