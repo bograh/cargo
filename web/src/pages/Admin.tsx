@@ -1,10 +1,126 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate } from "react-router-dom";
-import { api, put } from "../lib/api";
+import { api, del, put } from "../lib/api";
 import { useAuth } from "../auth";
 import type { User } from "../lib/types";
 import { Badge, Button, Card, FieldError, Input, Label, PageTitle, Spinner } from "../components/ui";
+
+interface InstanceSettings {
+  apps_domain_suffix: string;
+  smtp: { configured: boolean; host?: string; port?: number; username?: string; from?: string };
+}
+
+function InstanceSettingsCard() {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["admin", "settings"],
+    queryFn: () => api<InstanceSettings>("/admin/settings"),
+  });
+  const [suffix, setSuffix] = useState("");
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState("587");
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPass, setSmtpPass] = useState("");
+  const [smtpFrom, setSmtpFrom] = useState("");
+  const [error, setError] = useState("");
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["admin", "settings"] });
+    void qc.invalidateQueries({ queryKey: ["instance-info"] });
+  };
+  const onError = (err: unknown) => setError(err instanceof Error ? err.message : "save failed");
+
+  const saveSuffix = useMutation({
+    mutationFn: () => put("/admin/settings/apps-domain-suffix", { suffix }),
+    onSuccess: () => {
+      setSuffix("");
+      setError("");
+      invalidate();
+    },
+    onError,
+  });
+  const saveSmtp = useMutation({
+    mutationFn: () =>
+      put("/admin/settings/smtp", {
+        host: smtpHost,
+        port: Number(smtpPort),
+        username: smtpUser,
+        password: smtpPass,
+        from: smtpFrom,
+      }),
+    onSuccess: () => {
+      setSmtpPass("");
+      setError("");
+      invalidate();
+    },
+    onError,
+  });
+  const clearSmtp = useMutation({
+    mutationFn: () => del("/admin/settings/smtp"),
+    onSuccess: invalidate,
+    onError,
+  });
+
+  return (
+    <Card>
+      <h2 className="mb-3 font-semibold">Instance settings</h2>
+      <div className="space-y-6">
+        <form
+          className="flex items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (suffix.trim()) saveSuffix.mutate();
+          }}
+        >
+          <div className="flex-1">
+            <Label htmlFor="suffix">
+              Apps domain suffix — currently <code className="text-slate-300">{data?.apps_domain_suffix}</code>
+            </Label>
+            <Input id="suffix" placeholder="apps.example.com" value={suffix} onChange={(e) => setSuffix(e.target.value)} />
+          </div>
+          <Button type="submit" disabled={saveSuffix.isPending || !suffix.trim()}>
+            Save suffix
+          </Button>
+        </form>
+        <p className="-mt-4 text-xs text-slate-500">Applies to new deployments; existing app URLs are unchanged.</p>
+
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveSmtp.mutate();
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <Label className="mb-0">SMTP (optional)</Label>
+            {data?.smtp.configured ? (
+              <span className="flex items-center gap-2">
+                <Badge color="green">configured — {data.smtp.host}:{data.smtp.port}</Badge>
+                <Button type="button" variant="secondary" onClick={() => clearSmtp.mutate()}>
+                  Clear
+                </Button>
+              </span>
+            ) : (
+              <Badge color="gray">not configured</Badge>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Input aria-label="smtp host" placeholder="smtp.example.com" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} />
+            <Input aria-label="smtp port" type="number" placeholder="587" value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} />
+            <Input aria-label="smtp username" placeholder="username" value={smtpUser} onChange={(e) => setSmtpUser(e.target.value)} />
+            <Input aria-label="smtp password" type="password" placeholder="password (write-only)" value={smtpPass} onChange={(e) => setSmtpPass(e.target.value)} />
+            <Input aria-label="smtp from" placeholder="cargo@example.com" value={smtpFrom} onChange={(e) => setSmtpFrom(e.target.value)} className="col-span-2" />
+          </div>
+          <Button type="submit" disabled={saveSmtp.isPending || !smtpHost.trim()}>
+            Save SMTP
+          </Button>
+        </form>
+        <FieldError message={error} />
+      </div>
+    </Card>
+  );
+}
 
 interface GithubAppStatus {
   configured: boolean;
@@ -108,7 +224,7 @@ interface AdminOrg {
 }
 
 export default function Admin() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const isAdmin = !!user?.is_instance_admin;
   const { data: users, isLoading } = useQuery({
     queryKey: ["admin", "users"],
@@ -121,6 +237,13 @@ export default function Admin() {
     enabled: isAdmin,
   });
 
+  if (loading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Spinner />
+      </div>
+    );
+  }
   if (!isAdmin) {
     return <Navigate to="/" replace />;
   }
@@ -135,6 +258,7 @@ export default function Admin() {
   return (
     <div className="space-y-8">
       <PageTitle>Instance administration</PageTitle>
+      <InstanceSettingsCard />
       <GithubAppForm />
       <Card>
         <h2 className="mb-3 font-semibold">Users</h2>

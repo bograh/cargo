@@ -212,21 +212,21 @@ Periodic job checks DNS resolution + HTTPS response per domain.
 
 ---
 
-## Phase 6 — Instance Settings & Operations 🔜
+## Phase 6 — Instance Settings & Operations ✅
 
 *Backend for FR-7.1 plus operational hardening. (Small; can merge into Phase 5 if convenient.)*
 
-### 6.1 Instance settings write API (FR-7.1)
+### 6.1 Instance settings write API ✅ (FR-7.1)
 - Instance admin updates apps-domain suffix, SMTP config; secrets stored encrypted
 - Changed suffix applies to newly created apps; existing domains unchanged
 
-### 6.2 Housekeeping jobs (design §10)
+### 6.2 Housekeeping jobs ✅ (design §10)
 - Daily prune keeps last N (default 5) images + logs per app
 - Expired sessions/invites purged
 
 ---
 
-## Phase 7 — Installation & Packaging ⬜
+## Phase 7 — Installation & Packaging 🔜
 
 *Covers FR-8, NFR-1, NFR-8. v1 ships at the end of this phase.*
 
