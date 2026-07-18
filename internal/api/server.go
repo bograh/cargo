@@ -11,6 +11,7 @@ import (
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
 	"github.com/bograh/cargo/internal/events"
+	"github.com/bograh/cargo/internal/github"
 	"github.com/bograh/cargo/internal/orgs"
 	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/go-chi/chi/v5"
@@ -67,23 +68,43 @@ type AppService interface {
 }
 
 type Server struct {
-	cfg      config.Config
-	pool     *pgxpool.Pool
-	settings SettingsStore
-	auth     AuthService
-	orgs     OrgService
-	admin    AdminStore
-	apps     AppService
-	deps     DeploymentService
-	enqueue  Enqueuer
-	hub      *events.Hub
-	logPath  func(id string) string
-	provider reconciler.DeployProvider
+	cfg         config.Config
+	pool        *pgxpool.Pool
+	settings    SettingsStore
+	auth        AuthService
+	orgs        OrgService
+	admin       AdminStore
+	apps        AppService
+	deps        DeploymentService
+	enqueue     Enqueuer
+	hub         *events.Hub
+	logPath     func(id string) string
+	provider    reconciler.DeployProvider
+	gh          GitHubService
+	webhookApps WebhookApps
+}
+
+// GitHubService is satisfied by *github.Service.
+type GitHubService interface {
+	AppStatus(ctx context.Context) (configured bool, slug string, appID int64, err error)
+	SaveApp(ctx context.Context, cfg github.AppConfig) error
+	WebhookSecret(ctx context.Context) (string, error)
+	InstallURL(ctx context.Context, state string) (string, error)
+	OrgStatus(ctx context.Context, orgID pgtype.UUID) (connected bool, accountLogin string, err error)
+	ConnectOrg(ctx context.Context, orgID pgtype.UUID, installationID int64) error
+	Repos(ctx context.Context, orgID pgtype.UUID) ([]github.Repo, error)
+	Branches(ctx context.Context, orgID pgtype.UUID, fullName string) ([]string, error)
+}
+
+// WebhookApps is satisfied by *sqlc.Queries.
+type WebhookApps interface {
+	ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]sqlc.Application, error)
 }
 
 // DeploymentService is satisfied by *deployments.Service.
 type DeploymentService interface {
 	Create(ctx context.Context, appID, actor pgtype.UUID, trigger string) (sqlc.Deployment, error)
+	CreateSystem(ctx context.Context, appID pgtype.UUID, trigger string) (sqlc.Deployment, error)
 	Rollback(ctx context.Context, appID, actor, targetID pgtype.UUID) (sqlc.Deployment, error)
 	List(ctx context.Context, appID, actor pgtype.UUID) ([]sqlc.Deployment, error)
 	Get(ctx context.Context, deploymentID, actor pgtype.UUID) (sqlc.Deployment, error)
@@ -113,8 +134,10 @@ func NewServer(cfg config.Config, pool *pgxpool.Pool, box *crypto.Box) *Server {
 		s.auth = auth.NewService(pool)
 		s.orgs = orgs.NewService(pool)
 		s.admin = sqlc.New(pool)
+		s.webhookApps = sqlc.New(pool)
 		if box != nil {
 			s.apps = apps.NewService(pool, box)
+			s.gh = github.NewService(pool, box)
 		}
 	}
 	return s

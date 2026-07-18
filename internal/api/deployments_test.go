@@ -32,6 +32,9 @@ func (s stubDeps) Get(_ context.Context, _, _ pgtype.UUID) (sqlc.Deployment, err
 	return s.dep, s.err
 }
 func (s stubDeps) Finish(_ context.Context, _ pgtype.UUID, _, _ string) error { return nil }
+func (s stubDeps) CreateSystem(_ context.Context, _ pgtype.UUID, _ string) (sqlc.Deployment, error) {
+	return s.dep, s.err
+}
 
 type recordingEnqueuer struct {
 	ids []string

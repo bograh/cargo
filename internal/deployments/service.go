@@ -72,6 +72,14 @@ func (s *Service) Create(ctx context.Context, appID, actor pgtype.UUID, trigger 
 	})
 }
 
+// CreateSystem creates a deployment with no acting user (webhook trigger).
+func (s *Service) CreateSystem(ctx context.Context, appID pgtype.UUID, trigger string) (sqlc.Deployment, error) {
+	if trigger != "webhook" {
+		return sqlc.Deployment{}, ErrBadTransition
+	}
+	return s.q.CreateDeployment(ctx, sqlc.CreateDeploymentParams{AppID: appID, Trigger: trigger})
+}
+
 // Rollback creates a new deployment reusing the target's image tag (FR-4.6).
 func (s *Service) Rollback(ctx context.Context, appID, actor, targetID pgtype.UUID) (sqlc.Deployment, error) {
 	app, err := s.appFor(ctx, appID, actor, "member")

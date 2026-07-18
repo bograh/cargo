@@ -43,6 +43,9 @@ func NewRouter(s *Server) *chi.Mux {
 					r.Delete("/invites/{inviteID}", s.handleRevokeInvite)
 					r.Post("/apps", s.handleCreateApp)
 					r.Get("/apps", s.handleListApps)
+					r.Get("/github", s.handleOrgGithubStatus)
+					r.Get("/github/repos", s.handleGithubRepos)
+					r.Get("/github/repos/{owner}/{repo}/branches", s.handleGithubBranches)
 				})
 			})
 			r.Route("/apps/{appID}", func(r chi.Router) {
@@ -61,13 +64,18 @@ func NewRouter(s *Server) *chi.Mux {
 				r.Get("/logs", s.handleDeploymentLogs)
 			})
 			r.Post("/invites/accept", s.handleAcceptInvite)
+			r.Get("/github/setup", s.handleGithubSetup)
 		})
 
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(s.requireAuth, s.requireInstanceAdmin)
 			r.Get("/users", s.handleAdminListUsers)
 			r.Get("/orgs", s.handleAdminListOrgs)
+			r.Get("/settings/github-app", s.handleGetGithubApp)
+			r.Put("/settings/github-app", s.handlePutGithubApp)
 		})
+
+		r.Post("/webhooks/github", s.handleGithubWebhook)
 	})
 	r.Mount("/", webui.Handler())
 	return r
