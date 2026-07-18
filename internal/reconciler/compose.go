@@ -8,12 +8,20 @@ import (
 
 // GenerateCompose renders the per-app compose file. Output is fully
 // controlled (no user YAML), so plain string building is safe.
+//
+// Domains[0] is the auto subdomain: its router uses the websecure
+// entrypoint's default TLS configuration (per-domain HTTP-01 or the
+// wildcard cert, chosen at install). Remaining domains are custom and get
+// a second router pinned to the HTTP-01 resolver `le` (FR-5.3).
 func GenerateCompose(spec Spec) string {
 	var b strings.Builder
 	router := "app-" + spec.Slug
-	hosts := make([]string, 0, len(spec.Domains))
-	for _, d := range spec.Domains {
-		hosts = append(hosts, fmt.Sprintf("Host(`%s`)", d))
+	hostRule := func(domains []string) string {
+		hosts := make([]string, 0, len(domains))
+		for _, d := range domains {
+			hosts = append(hosts, fmt.Sprintf("Host(`%s`)", d))
+		}
+		return strings.Join(hosts, " || ")
 	}
 	fmt.Fprintf(&b, "name: cargo-app-%s\n", spec.Slug)
 	b.WriteString("services:\n")
@@ -24,9 +32,17 @@ func GenerateCompose(spec Spec) string {
 	b.WriteString("    networks:\n      - cargo-proxy\n")
 	b.WriteString("    labels:\n")
 	b.WriteString("      - traefik.enable=true\n")
-	fmt.Fprintf(&b, "      - traefik.http.routers.%s.rule=%s\n", router, strings.Join(hosts, " || "))
+	fmt.Fprintf(&b, "      - traefik.http.routers.%s.rule=%s\n", router, hostRule(spec.Domains[:1]))
 	fmt.Fprintf(&b, "      - traefik.http.routers.%s.entrypoints=websecure\n", router)
 	fmt.Fprintf(&b, "      - traefik.http.routers.%s.tls=true\n", router)
+	fmt.Fprintf(&b, "      - traefik.http.routers.%s.service=%s\n", router, router)
+	if len(spec.Domains) > 1 {
+		custom := router + "-custom"
+		fmt.Fprintf(&b, "      - traefik.http.routers.%s.rule=%s\n", custom, hostRule(spec.Domains[1:]))
+		fmt.Fprintf(&b, "      - traefik.http.routers.%s.entrypoints=websecure\n", custom)
+		fmt.Fprintf(&b, "      - traefik.http.routers.%s.tls.certresolver=le\n", custom)
+		fmt.Fprintf(&b, "      - traefik.http.routers.%s.service=%s\n", custom, router)
+	}
 	fmt.Fprintf(&b, "      - traefik.http.services.%s.loadbalancer.server.port=%d\n", router, spec.Port)
 	b.WriteString("networks:\n  cargo-proxy:\n    external: true\n")
 	return b.String()

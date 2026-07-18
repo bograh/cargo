@@ -1,0 +1,31 @@
+# Wildcard DNS-01 overlay (recommended mode, FR-5.3). Use as:
+#   docker compose -f docker-compose.yml -f docker-compose.dns01.yml up -d
+# Requires CARGO_DNS_PROVIDER (a Traefik ACME DNS provider name) plus the
+# provider's credential env vars in .env (e.g. CF_DNS_API_TOKEN for
+# cloudflare). Auto subdomains are covered by one wildcard certificate;
+# custom domains keep per-domain HTTP-01 via their pinned resolver.
+
+services:
+  traefik:
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=cargo-proxy
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${CARGO_ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/acme/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.ledns.acme.email=${CARGO_ACME_EMAIL}
+      - --certificatesresolvers.ledns.acme.storage=/acme/acme-dns.json
+      - --certificatesresolvers.ledns.acme.dnschallenge.provider=${CARGO_DNS_PROVIDER}
+      - --entrypoints.websecure.http.tls.certresolver=ledns
+      - --entrypoints.websecure.http.tls.domains[0].main=${CARGO_APPS_SUFFIX}
+      - --entrypoints.websecure.http.tls.domains[0].sans=*.${CARGO_APPS_SUFFIX}
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}

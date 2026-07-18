@@ -18,9 +18,14 @@ services:
       - cargo-proxy
     labels:
       - traefik.enable=true
-      - traefik.http.routers.app-my-api.rule=Host(` + "`my-api.apps.example.com`" + `) || Host(` + "`api.example.com`" + `)
+      - traefik.http.routers.app-my-api.rule=Host(` + "`my-api.apps.example.com`" + `)
       - traefik.http.routers.app-my-api.entrypoints=websecure
       - traefik.http.routers.app-my-api.tls=true
+      - traefik.http.routers.app-my-api.service=app-my-api
+      - traefik.http.routers.app-my-api-custom.rule=Host(` + "`api.example.com`" + `)
+      - traefik.http.routers.app-my-api-custom.entrypoints=websecure
+      - traefik.http.routers.app-my-api-custom.tls.certresolver=le
+      - traefik.http.routers.app-my-api-custom.service=app-my-api
       - traefik.http.services.app-my-api.loadbalancer.server.port=3000
 networks:
   cargo-proxy:
