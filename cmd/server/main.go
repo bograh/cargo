@@ -94,7 +94,9 @@ func main() {
 	}()
 
 	srv := api.NewServer(cfg, pool, box)
-	srv.WireDeployments(depSvc, &jobs.Enqueuer{Client: client}, hub, provider)
+	enqueuer := &jobs.Enqueuer{Client: client}
+	srv.WireDeployments(depSvc, enqueuer, hub, provider)
+	srv.WireDatabases(dbSvc)
 
 	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: srv.Handler()}
 	go func() {

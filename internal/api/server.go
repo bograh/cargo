@@ -8,6 +8,7 @@ import (
 	"github.com/bograh/cargo/internal/auth"
 	"github.com/bograh/cargo/internal/config"
 	"github.com/bograh/cargo/internal/crypto"
+	"github.com/bograh/cargo/internal/databases"
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
 	"github.com/bograh/cargo/internal/events"
@@ -92,6 +93,7 @@ type Server struct {
 	admin            AdminStore
 	apps             AppService
 	deps             DeploymentService
+	databases        DatabaseService
 	enqueue          Enqueuer
 	hub              *events.Hub
 	logPath          func(id string) string
@@ -101,6 +103,21 @@ type Server struct {
 	instanceSettings InstanceSettings
 	box              *crypto.Box
 	oidc             OIDCService
+}
+
+// DatabaseService is satisfied by *databases.Service.
+type DatabaseService interface {
+	Create(ctx context.Context, orgID, actor pgtype.UUID, in databases.CreateInput) (sqlc.DatabaseInstance, error)
+	List(ctx context.Context, orgID, actor pgtype.UUID) ([]databases.InstanceSummary, error)
+	Get(ctx context.Context, id, actor pgtype.UUID) (databases.Detail, error)
+	Delete(ctx context.Context, id, actor pgtype.UUID) error
+	Attach(ctx context.Context, instanceID, appID, actor pgtype.UUID) (string, sqlc.DatabaseAttachment, error)
+	Detach(ctx context.Context, instanceID, appID, actor pgtype.UUID) error
+	Snapshot(ctx context.Context, id, actor pgtype.UUID) (string, error)
+	ListSnapshots(ctx context.Context, id, actor pgtype.UUID) ([]databases.SnapshotInfo, error)
+	SnapshotPath(ctx context.Context, id, actor pgtype.UUID, name string) (string, error)
+	DeleteSnapshot(ctx context.Context, id, actor pgtype.UUID, name string) error
+	LogPath(id string) string
 }
 
 // InstanceSettings is satisfied by *settings.Service.
@@ -139,9 +156,10 @@ type DeploymentService interface {
 	Finish(ctx context.Context, id pgtype.UUID, status, errMsg string) error
 }
 
-// Enqueuer inserts deploy jobs; satisfied by *jobs.Enqueuer.
+// Enqueuer inserts deploy/db-provision jobs; satisfied by *jobs.Enqueuer.
 type Enqueuer interface {
 	EnqueueDeploy(ctx context.Context, deploymentID string) error
+	EnqueueDBProvision(ctx context.Context, instanceID string) error
 }
 
 // WireDeployments attaches the deployment service, job enqueuer, SSE hub,
@@ -152,6 +170,11 @@ func (s *Server) WireDeployments(d *deployments.Service, e Enqueuer, hub *events
 	s.hub = hub
 	s.logPath = d.LogPath
 	s.provider = p
+}
+
+// WireDatabases attaches the managed-databases service.
+func (s *Server) WireDatabases(d DatabaseService) {
+	s.databases = d
 }
 
 // NewServer builds a Server. pool/box may be nil in tests that stub dependencies.
