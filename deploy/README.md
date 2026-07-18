@@ -12,10 +12,11 @@
 
 ```bash
 cd deploy
-cp .env.example .env   # created by install.sh in a later phase; keys documented in docker-compose.yml
-chmod 600 .env
-docker compose up -d
+./install.sh   # prompts, generates secrets into .env, docker compose up -d
 ```
+
+Manual alternative: create `.env` yourself (keys documented in
+docker-compose.yml), `chmod 600 .env`, then `docker compose up -d`.
 
 First registered account becomes the instance admin.
 
