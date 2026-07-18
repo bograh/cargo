@@ -179,34 +179,34 @@ Periodic job checks DNS resolution + HTTPS response per domain.
 
 ---
 
-## Phase 5 — Frontend ⬜
+## Phase 5 — Frontend ✅
 
 *The full SPA over the Phase 1–4 APIs. React Router, TanStack Query, shadcn/ui. Covers the UI side of every FR plus FR-6.2.*
 
-### 5.1 Auth pages & session handling
+### 5.1 Auth pages & session handling ✅
 - Register/login forms with field-level validation errors from the API envelope
 - Silent refresh on 401 then retry; logout clears state
 - First-user registration lands on "create your first organization"
 
-### 5.2 Org dashboard & switcher
+### 5.2 Org dashboard & switcher ✅
 - App cards with status; org switcher for multi-org users (FR-2 user stories)
 - Org settings: members list, role changes, invite creation with copyable link
 - Viewers see everything read-only; mutation controls hidden *and* API-rejected
 
-### 5.3 New App wizard
+### 5.3 New App wizard ✅ (git-URL/image sources; GitHub repo picker lands with Phase 3)
 - Source step (GitHub repo+branch picker / image ref) → builder auto-detected with override → port, healthcheck, env vars → Deploy
 - ≤5 clicks from "New App" to first deployment for the GitHub path (NFR-2)
 
-### 5.4 App detail: Deployments + live log viewer
+### 5.4 App detail: Deployments + live log viewer ✅
 - Tabs: Overview, Deployments, Environment, Domains, Settings
 - Deployment list with status badges; log viewer streams SSE live, auto-scroll, replay for past deployments
 - Rollback button on any previous successful deployment with confirm
 
-### 5.5 Environment & Domains tabs
+### 5.5 Environment & Domains tabs ✅ (env editor done; Domains tab lands with Phase 4)
 - Env editor: keys visible, values write-only after save (FR-6.2)
 - Domains tab: auto subdomain shown, custom domain add/remove, live status chip
 
-### 5.6 Instance admin area
+### 5.6 Instance admin area ✅ (listings done; settings form lands with Phase 6)
 - Settings form: apps-domain suffix, SMTP, GitHub App creds (FR-7.1)
 - All-orgs and all-users listings (admin only)
 
