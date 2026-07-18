@@ -42,7 +42,7 @@ var roleRank = map[string]int{"viewer": 0, "member": 1, "admin": 2, "owner": 3}
 const maxRedisDBs = 16
 
 var (
-	nameRe    = regexp.MustCompile(`^[a-z][a-z0-9-]{1,38}[a-z0-9]$`)
+	nameRe    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 	versionRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 )
 

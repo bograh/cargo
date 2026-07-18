@@ -7,6 +7,7 @@ import (
 
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -120,50 +121,80 @@ REVOKE CONNECT ON DATABASE %[1]s FROM PUBLIC;
 }
 
 func (s *Service) attachRedisACL(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID, slug string) (string, sqlc.DatabaseAttachment, error) {
-	idx, err := s.nextIndex(ctx, inst.ID)
-	if err != nil {
-		return "", sqlc.DatabaseAttachment{}, err
-	}
 	name := dbIdent(slug)
 	pass, err := genPassword()
 	if err != nil {
-		return "", sqlc.DatabaseAttachment{}, err
-	}
-	// Restrict the user to a single logical db: -select drops SELECT on all
-	// indexes, +select|<idx> re-grants only its own. It cannot AUTH as, or
-	// read the keyspace of, any other user's index.
-	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "redis", "",
-		"redis-cli", "--no-auth-warning", "ACL", "SETUSER", name,
-		"on", ">"+pass, "allkeys", "allchannels",
-		"+@all", "-@admin", "-acl", "-select", fmt.Sprintf("+select|%d", idx)); err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
 	secret, err := s.sealSecret(pass)
 	if err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
-	url := fmt.Sprintf("redis://%s:%s@%s:6379/%d", name, pass, dbHost(inst), idx)
-	att, err := s.q.CreateDatabaseAttachment(ctx, sqlc.CreateDatabaseAttachmentParams{
-		InstanceID: inst.ID, AppID: appID,
-		AclUser: txt(name), DbIndex: i4(idx), Secret: secret,
+	// Reserve the index in the DB first (the partial unique index makes
+	// concurrent pickers collide), then create the ACL user for the reserved
+	// index; on any failure the reservation row is deleted. This closes the
+	// pick-then-insert race and guarantees the ACL user matches the stored
+	// index even across retries.
+	att, idx, err := s.reserveIndex(ctx, inst.ID, sqlc.CreateDatabaseAttachmentParams{
+		InstanceID: inst.ID, AppID: appID, AclUser: txt(name), Secret: secret,
 	})
-	return url, att, err
-}
-
-func (s *Service) attachRedisShared(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID) (string, sqlc.DatabaseAttachment, error) {
-	idx, err := s.nextIndex(ctx, inst.ID)
 	if err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
+	// Restrict the user to a single logical db: -select drops SELECT on all
+	// indexes, +select|<idx> re-grants only its own. It cannot AUTH as, or
+	// read the keyspace of, any other user's index. -@dangerous keeps
+	// FLUSHALL/SWAPDB/etc. away (SET/GET are not in @dangerous). The password
+	// is fed via stdin, never on argv.
+	cmd := fmt.Sprintf("ACL SETUSER %s on >%s allkeys allchannels +@all -@admin -@dangerous -acl -select +select|%d\n",
+		name, pass, idx)
+	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "redis", cmd,
+		"redis-cli", "--no-auth-warning"); err != nil {
+		_ = s.q.DeleteDatabaseAttachment(ctx, att.ID)
+		return "", sqlc.DatabaseAttachment{}, err
+	}
+	url := fmt.Sprintf("redis://%s:%s@%s:6379/%d", name, pass, dbHost(inst), idx)
+	return url, att, nil
+}
+
+func (s *Service) attachRedisShared(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID) (string, sqlc.DatabaseAttachment, error) {
 	adminPass, err := s.openSecret(inst.AdminSecret)
 	if err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
-	url := fmt.Sprintf("redis://:%s@%s:6379/%d", adminPass, dbHost(inst), idx)
-	att, err := s.q.CreateDatabaseAttachment(ctx, sqlc.CreateDatabaseAttachmentParams{
-		InstanceID: inst.ID, AppID: appID, DbIndex: i4(idx),
+	att, idx, err := s.reserveIndex(ctx, inst.ID, sqlc.CreateDatabaseAttachmentParams{
+		InstanceID: inst.ID, AppID: appID,
 	})
-	return url, att, err
+	if err != nil {
+		return "", sqlc.DatabaseAttachment{}, err
+	}
+	url := fmt.Sprintf("redis://:%s@%s:6379/%d", adminPass, dbHost(inst), idx)
+	return url, att, nil
+}
+
+// reserveIndex picks a free logical db index and inserts the attachment row
+// with it, retrying on the partial-unique-index conflict (concurrent pickers).
+// params.DbIndex is set by this function.
+func (s *Service) reserveIndex(ctx context.Context, instanceID pgtype.UUID, params sqlc.CreateDatabaseAttachmentParams) (sqlc.DatabaseAttachment, int32, error) {
+	const attempts = 3
+	for i := 0; i < attempts; i++ {
+		idx, err := s.nextIndex(ctx, instanceID)
+		if err != nil {
+			return sqlc.DatabaseAttachment{}, 0, err
+		}
+		params.DbIndex = i4(idx)
+		att, err := s.q.CreateDatabaseAttachment(ctx, params)
+		if err == nil {
+			return att, idx, nil
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" &&
+			pgErr.ConstraintName == "database_attachments_instance_db_index" {
+			continue // index was taken concurrently; re-pick
+		}
+		return sqlc.DatabaseAttachment{}, 0, err
+	}
+	return sqlc.DatabaseAttachment{}, 0, fmt.Errorf("%w: could not allocate a free redis database index", ErrConflict)
 }
 
 func (s *Service) nextIndex(ctx context.Context, instanceID pgtype.UUID) (int32, error) {

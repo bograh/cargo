@@ -26,6 +26,12 @@ CREATE TABLE database_attachments (
     UNIQUE (instance_id, app_id)
 );
 
+-- Prevent two attachments on the same instance from taking the same logical
+-- redis db index (concurrent allocation race).
+CREATE UNIQUE INDEX database_attachments_instance_db_index
+    ON database_attachments (instance_id, db_index) WHERE db_index IS NOT NULL;
+
 -- +goose Down
+DROP INDEX database_attachments_instance_db_index;
 DROP TABLE database_attachments;
 DROP TABLE database_instances;
