@@ -12,6 +12,7 @@ import (
 	"github.com/bograh/cargo/internal/deployments"
 	"github.com/bograh/cargo/internal/events"
 	"github.com/bograh/cargo/internal/github"
+	"github.com/bograh/cargo/internal/oidc"
 	"github.com/bograh/cargo/internal/orgs"
 	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/bograh/cargo/internal/settings"
@@ -32,6 +33,17 @@ type AuthService interface {
 	Refresh(ctx context.Context, refreshToken string) (auth.Tokens, error)
 	Logout(ctx context.Context, accessToken string) error
 	UserForAccessToken(ctx context.Context, accessToken string) (sqlc.User, error)
+	IssueSession(ctx context.Context, userID pgtype.UUID) (auth.Tokens, error)
+}
+
+// OIDCService is satisfied by *oidc.Service.
+type OIDCService interface {
+	Configured(ctx context.Context) (bool, error)
+	PublicConfig(ctx context.Context) (issuerURL, clientID string, configured bool, err error)
+	SetConfig(ctx context.Context, cfg settings.OIDCConfig) error
+	ClearConfig(ctx context.Context) error
+	StartURL(ctx context.Context, redirectURL, state, nonce string) (string, error)
+	ResolveCallback(ctx context.Context, redirectURL, code, wantNonce string) (sqlc.User, error)
 }
 
 // OrgService is satisfied by *orgs.Service.
@@ -87,6 +99,8 @@ type Server struct {
 	gh               GitHubService
 	webhookApps      WebhookApps
 	instanceSettings InstanceSettings
+	box              *crypto.Box
+	oidc             OIDCService
 }
 
 // InstanceSettings is satisfied by *settings.Service.
@@ -142,7 +156,7 @@ func (s *Server) WireDeployments(d *deployments.Service, e Enqueuer, hub *events
 
 // NewServer builds a Server. pool/box may be nil in tests that stub dependencies.
 func NewServer(cfg config.Config, pool *pgxpool.Pool, box *crypto.Box) *Server {
-	s := &Server{cfg: cfg, pool: pool}
+	s := &Server{cfg: cfg, pool: pool, box: box}
 	if pool != nil {
 		s.settings = sqlc.New(pool)
 		s.auth = auth.NewService(pool)
@@ -153,6 +167,7 @@ func NewServer(cfg config.Config, pool *pgxpool.Pool, box *crypto.Box) *Server {
 			s.apps = apps.NewService(pool, box)
 			s.gh = github.NewService(pool, box)
 			s.instanceSettings = settings.NewService(pool, box)
+			s.oidc = oidc.NewService(pool, settings.NewService(pool, box))
 		}
 	}
 	return s

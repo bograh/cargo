@@ -128,6 +128,12 @@ func (s *Service) UserForAccessToken(ctx context.Context, accessToken string) (s
 	return u, err
 }
 
+// IssueSession creates a fresh session for an already-authenticated user —
+// the exact path Login uses. Callers (OIDC) must have verified identity first.
+func (s *Service) IssueSession(ctx context.Context, userID pgtype.UUID) (Tokens, error) {
+	return s.newSession(ctx, userID)
+}
+
 func (s *Service) newSession(ctx context.Context, userID pgtype.UUID) (Tokens, error) {
 	var family pgtype.UUID
 	if err := family.Scan(uuid.NewString()); err != nil {

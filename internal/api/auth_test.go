@@ -11,6 +11,7 @@ import (
 
 	"github.com/bograh/cargo/internal/auth"
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type stubAuth struct {
@@ -29,6 +30,9 @@ func (s stubAuth) Refresh(_ context.Context, _ string) (auth.Tokens, error) {
 	return s.tokens, s.err
 }
 func (s stubAuth) Logout(_ context.Context, _ string) error { return s.err }
+func (s stubAuth) IssueSession(_ context.Context, _ pgtype.UUID) (auth.Tokens, error) {
+	return s.tokens, s.err
+}
 func (s stubAuth) UserForAccessToken(_ context.Context, tok string) (sqlc.User, error) {
 	if s.err != nil || tok == "" {
 		return sqlc.User{}, auth.ErrUnauthenticated
