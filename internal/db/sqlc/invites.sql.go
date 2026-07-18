@@ -100,6 +100,20 @@ func (q *Queries) ListInvitesForOrg(ctx context.Context, orgID pgtype.UUID) ([]I
 	return items, nil
 }
 
+const purgeInvites = `-- name: PurgeInvites :execrows
+DELETE FROM invites
+WHERE expires_at < now() - interval '7 days'
+   OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '7 days')
+`
+
+func (q *Queries) PurgeInvites(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeInvites)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeInvite = `-- name: RevokeInvite :exec
 UPDATE invites SET revoked_at = now() WHERE id = $1 AND org_id = $2
 `

@@ -14,3 +14,8 @@ UPDATE sessions SET rotated_at = now() WHERE id = $1;
 
 -- name: RevokeSessionFamily :exec
 UPDATE sessions SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL;
+
+-- name: PurgeSessions :execrows
+DELETE FROM sessions
+WHERE refresh_expires_at < now()
+   OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '24 hours');

@@ -28,6 +28,7 @@ func NewClient(pool *pgxpool.Pool, p *Pipeline) (*river.Client[pgx.Tx], error) {
 	river.AddWorker(workers, &DeployWorker{P: p})
 	river.AddWorker(workers, &PruneWorker{Pool: pool, Deps: p.Deployments})
 	river.AddWorker(workers, &DomainCheckWorker{Pool: pool})
+	river.AddWorker(workers, &HousekeepingWorker{Pool: pool})
 	return river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
 			"deploy":           {MaxWorkers: 2},
@@ -43,6 +44,11 @@ func NewClient(pool *pgxpool.Pool, p *Pipeline) (*river.Client[pgx.Tx], error) {
 			river.NewPeriodicJob(
 				river.PeriodicInterval(10*time.Minute),
 				func() (river.JobArgs, *river.InsertOpts) { return DomainCheckArgs{}, nil },
+				&river.PeriodicJobOpts{RunOnStart: true},
+			),
+			river.NewPeriodicJob(
+				river.PeriodicInterval(24*time.Hour),
+				func() (river.JobArgs, *river.InsertOpts) { return HousekeepingArgs{}, nil },
 				&river.PeriodicJobOpts{RunOnStart: true},
 			),
 		},

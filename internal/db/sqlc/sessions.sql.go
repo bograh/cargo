@@ -104,6 +104,20 @@ func (q *Queries) MarkSessionRotated(ctx context.Context, id pgtype.UUID) error 
 	return err
 }
 
+const purgeSessions = `-- name: PurgeSessions :execrows
+DELETE FROM sessions
+WHERE refresh_expires_at < now()
+   OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '24 hours')
+`
+
+func (q *Queries) PurgeSessions(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeSessionFamily = `-- name: RevokeSessionFamily :exec
 UPDATE sessions SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL
 `
