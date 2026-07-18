@@ -251,22 +251,32 @@ Periodic job checks DNS resolution + HTTPS response per domain.
 
 ## Phase 8 — PRD "Phase 2" ⬜
 
-### 8.1 Managed databases (Postgres, Redis first)
+*Execution order agreed 2026-07-18: 8.2 → 8.1 → 8.3. Each feature gets its own spec → plan → ship cycle.*
+
+### 8.1 Managed databases (Postgres, Redis first) ⬜
 - One-click provision of a managed Postgres/Redis per org; connection string injected as env vars; backed by the same per-app compose model
 
-### 8.2 OIDC login
-- OIDC provider implements the existing `AuthProvider` interface; no caller refactor
-- Instance admin configures issuer/client from settings
+*(Acceptance criteria to be detailed when the feature is specced.)*
 
-### 8.3 docker-compose app source
+### 8.2 OIDC login 🔜
+*Spec: `docs/superpowers/specs/2026-07-18-cargo-oidc-design.md` (2026-07-18). Milestone m9.*
+- Admin configures OIDC (issuer, client ID, secret) from the UI; secret stored encrypted, never returned by any GET
+- "Sign in with SSO" appears only when configured; full authorization-code flow yields a standard Cargo session
+- Verified-email linking attaches SSO to an existing account; new SSO users provision automatically; first-ever user via SSO is instance admin
+- Unverified-email and tampered-state logins rejected with a generic UI error
+- Password login unchanged and always available
+
+### 8.3 docker-compose app source ⬜
 - Users deploy a repo containing their own compose file; Cargo layers networking/labels
 
-*(Acceptance criteria to be detailed when the phase is specced.)*
+*(Acceptance criteria to be detailed when the feature is specced.)*
 
 ## Phase 9 — PRD "Phase 3" ⬜
+
+*Execution order agreed 2026-07-18: 9.2 → 9.1 → 9.3.*
 
 ### 9.1 Multi-server (Docker-over-SSH) — remote hosts as deploy targets
 ### 9.2 Zero-downtime blue/green deploys — removes FR-4.7's known limitation
 ### 9.3 Metrics & monitoring dashboards
 
-*(To be specced after v1 ships.)*
+*(Each feature to be specced in its own cycle, in the order above.)*
