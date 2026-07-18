@@ -39,6 +39,31 @@ type AuthIdentity struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type DatabaseAttachment struct {
+	ID         pgtype.UUID
+	InstanceID pgtype.UUID
+	AppID      pgtype.UUID
+	DbName     pgtype.Text
+	RoleName   pgtype.Text
+	AclUser    pgtype.Text
+	DbIndex    pgtype.Int4
+	Secret     []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+type DatabaseInstance struct {
+	ID          pgtype.UUID
+	OrgID       pgtype.UUID
+	Name        string
+	Engine      string
+	Version     string
+	RedisMode   pgtype.Text
+	HostPort    pgtype.Int4
+	Status      string
+	AdminSecret []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
 type Deployment struct {
 	ID         pgtype.UUID
 	AppID      pgtype.UUID
