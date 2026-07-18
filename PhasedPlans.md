@@ -251,15 +251,15 @@ Periodic job checks DNS resolution + HTTPS response per domain.
 
 ## Phase 8 — PRD "Phase 2" ⬜
 
-*Execution order agreed 2026-07-18: 8.2 → 8.1 → 8.3. Each feature gets its own spec → plan → ship cycle.*
+*Execution order agreed 2026-07-18: 8.2 → 8.1 → 8.3. Each feature gets its own spec → plan → ship cycle. 8.2 shipped 2026-07-18.*
 
 ### 8.1 Managed databases (Postgres, Redis first) ⬜
 - One-click provision of a managed Postgres/Redis per org; connection string injected as env vars; backed by the same per-app compose model
 
 *(Acceptance criteria to be detailed when the feature is specced.)*
 
-### 8.2 OIDC login 🔜
-*Spec: `docs/superpowers/specs/2026-07-18-cargo-oidc-design.md` (2026-07-18). Milestone m9.*
+### 8.2 OIDC login ✅
+*Spec: `docs/superpowers/specs/2026-07-18-cargo-oidc-design.md` · Plan: `docs/superpowers/plans/2026-07-18-cargo-m9-oidc.md` (complete). Milestone m9.*
 - Admin configures OIDC (issuer, client ID, secret) from the UI; secret stored encrypted, never returned by any GET
 - "Sign in with SSO" appears only when configured; full authorization-code flow yields a standard Cargo session
 - Verified-email linking attaches SSO to an existing account; new SSO users provision automatically; first-ever user via SSO is instance admin

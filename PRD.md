@@ -132,7 +132,6 @@ Existing self-hosted options (Dokploy, Coolify) prove the model but come with th
 
 - Managed databases (Postgres/Redis/MySQL/Mongo) — Phase 2
 - User-supplied docker-compose app source — Phase 2
-- OIDC/SSO login — Phase 2 (interface already in place)
 - Multi-server / remote Docker hosts — Phase 3
 - Zero-downtime (blue/green) deployments — Phase 3
 - Kubernetes target — future, behind `DeployProvider`
