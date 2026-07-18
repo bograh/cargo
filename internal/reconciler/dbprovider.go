@@ -27,14 +27,25 @@ func (d *Docker) ensureDataNetwork(ctx context.Context, log io.Writer) {
 // ProvisionDB writes the compose project for a managed database instance,
 // starts it, and waits for it to become ready.
 func (d *Docker) ProvisionDB(ctx context.Context, spec DBSpec, log io.Writer) error {
+	// The project directory is 0700 so only the cargo server's own host user
+	// can traverse/read it — that's what protects the secrets on the host.
+	// Files inside it are 0644: the official images run as a non-root,
+	// non-host uid (e.g. redis drops to uid 999), so the file itself must be
+	// world-readable for the container to open it; the 0700 directory is
+	// what keeps other host users out, not the file mode. MkdirAll doesn't
+	// tighten permissions on an already-existing directory, so Chmod
+	// explicitly.
 	dir := d.dbDir(spec.InstanceID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
 	envVars := map[string]string{"POSTGRES_PASSWORD": spec.AdminPass}
 	if spec.Engine == "redis" {
 		conf := fmt.Sprintf("requirepass %s\n", spec.AdminPass)
-		if err := os.WriteFile(filepath.Join(dir, "redis.conf"), []byte(conf), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "redis.conf"), []byte(conf), 0o644); err != nil {
 			return err
 		}
 		envVars = map[string]string{"REDISCLI_AUTH": spec.AdminPass}
@@ -43,7 +54,7 @@ func (d *Docker) ProvisionDB(ctx context.Context, spec DBSpec, log io.Writer) er
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o644); err != nil {
 		return err
 	}
 	composePath := filepath.Join(dir, "compose.yaml")
