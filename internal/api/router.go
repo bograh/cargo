@@ -52,6 +52,13 @@ func NewRouter(s *Server) *chi.Mux {
 				r.Get("/env", s.handleListEnvKeys)
 				r.Put("/env", s.handleSetEnvVars)
 				r.Delete("/env/{key}", s.handleDeleteEnvVar)
+				r.Post("/deploy", s.handleDeploy)
+				r.Post("/rollback", s.handleRollback)
+				r.Get("/deployments", s.handleListDeployments)
+			})
+			r.Route("/deployments/{deploymentID}", func(r chi.Router) {
+				r.Get("/", s.handleGetDeployment)
+				r.Get("/logs", s.handleDeploymentLogs)
 			})
 			r.Post("/invites/accept", s.handleAcceptInvite)
 		})
