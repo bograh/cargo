@@ -145,6 +145,7 @@ services:
   db:
     image: redis:7
     container_name: cargo-db-xyz789
+    env_file: .env
     command: ["redis-server", "/etc/cargo/redis.conf"]
     restart: unless-stopped
     networks:

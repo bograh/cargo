@@ -31,20 +31,20 @@ func (d *Docker) ProvisionDB(ctx context.Context, spec DBSpec, log io.Writer) er
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	switch spec.Engine {
-	case "redis":
+	envVars := map[string]string{"POSTGRES_PASSWORD": spec.AdminPass}
+	if spec.Engine == "redis" {
 		conf := fmt.Sprintf("requirepass %s\n", spec.AdminPass)
 		if err := os.WriteFile(filepath.Join(dir, "redis.conf"), []byte(conf), 0o600); err != nil {
 			return err
 		}
-	default:
-		envContent, err := generateEnvFile(map[string]string{"POSTGRES_PASSWORD": spec.AdminPass})
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
-			return err
-		}
+		envVars = map[string]string{"REDISCLI_AUTH": spec.AdminPass}
+	}
+	envContent, err := generateEnvFile(envVars)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
+		return err
 	}
 	composePath := filepath.Join(dir, "compose.yaml")
 	if err := os.WriteFile(composePath, []byte(GenerateDBCompose(spec)), 0o644); err != nil {
@@ -67,8 +67,7 @@ func (d *Docker) waitDBReady(ctx context.Context, spec DBSpec, log io.Writer) er
 		var err error
 		switch spec.Engine {
 		case "redis":
-			_, err = d.execDBWithEnv(ctx, spec.InstanceID, "",
-				map[string]string{"REDISCLI_AUTH": spec.AdminPass},
+			_, err = d.ExecDB(ctx, spec.InstanceID, spec.Engine, "",
 				"redis-cli", "--no-auth-warning", "PING")
 		default:
 			_, err = d.ExecDB(ctx, spec.InstanceID, spec.Engine, "",
@@ -83,53 +82,37 @@ func (d *Docker) waitDBReady(ctx context.Context, spec DBSpec, log io.Writer) er
 }
 
 // ExecDB runs a command inside the running db container, optionally feeding
-// stdin, and returns combined stdout.
+// stdin, and returns combined stdout. Secrets needed by the command (e.g.
+// REDISCLI_AUTH) are supplied via the instance's env_file, written once by
+// ProvisionDB — never placed on argv or forwarded from the host process.
 func (d *Docker) ExecDB(ctx context.Context, instanceID, engine string, stdin string, args ...string) (string, error) {
 	_ = engine
-	return d.execDBWithEnv(ctx, instanceID, stdin, nil, args...)
-}
-
-// execDBWithEnv runs a command inside the running db container, optionally
-// forwarding host-process environment variables into the container via
-// `docker compose exec -e KEY`. The values themselves are never placed on
-// the docker CLI argv (host- or container-side) — they are read by docker
-// from the calling process's own environment, so they never appear in any
-// process list.
-func (d *Docker) execDBWithEnv(ctx context.Context, instanceID, stdin string, env map[string]string, args ...string) (string, error) {
 	composePath := filepath.Join(d.dbDir(instanceID), "compose.yaml")
-	full := []string{"compose", "-f", composePath, "exec", "-T"}
-	extraEnv := make([]string, 0, len(env))
-	for k := range env {
-		full = append(full, "-e", k)
-	}
-	for k, v := range env {
-		extraEnv = append(extraEnv, k+"="+v)
-	}
-	full = append(full, "db")
+	full := []string{"compose", "-f", composePath, "exec", "-T", "db"}
 	full = append(full, args...)
-	return execCaptured(ctx, stdin, extraEnv, "docker", full...)
+	return execCaptured(ctx, stdin, nil, "docker", full...)
 }
 
 // SnapshotDB writes a point-in-time snapshot of the instance to destPath
 // (".sql" appended for postgres, ".rdb" for redis).
 func (d *Docker) SnapshotDB(ctx context.Context, instanceID, engine, adminPass, destPath string) error {
+	_ = adminPass // auth is supplied via the instance's env_file (see ProvisionDB), not passed here
 	composePath := filepath.Join(d.dbDir(instanceID), "compose.yaml")
 	switch engine {
 	case "redis":
-		redisEnv := map[string]string{"REDISCLI_AUTH": adminPass}
-		before, err := d.execDBWithEnv(ctx, instanceID, "", redisEnv,
+		before, err := d.ExecDB(ctx, instanceID, engine, "",
 			"redis-cli", "--no-auth-warning", "LASTSAVE")
 		if err != nil {
 			return err
 		}
-		if _, err := d.execDBWithEnv(ctx, instanceID, "", redisEnv,
+		if _, err := d.ExecDB(ctx, instanceID, engine, "",
 			"redis-cli", "--no-auth-warning", "BGSAVE"); err != nil {
 			return err
 		}
 		deadline := time.Now().Add(10 * time.Second)
 		saved := false
 		for time.Now().Before(deadline) {
-			after, err := d.execDBWithEnv(ctx, instanceID, "", redisEnv,
+			after, err := d.ExecDB(ctx, instanceID, engine, "",
 				"redis-cli", "--no-auth-warning", "LASTSAVE")
 			if err == nil && strings.TrimSpace(after) != strings.TrimSpace(before) {
 				saved = true

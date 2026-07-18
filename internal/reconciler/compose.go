@@ -70,11 +70,10 @@ func GenerateDBCompose(spec DBSpec) string {
 	b.WriteString("  db:\n")
 	fmt.Fprintf(&b, "    image: %s:%s\n", spec.Engine, spec.Version)
 	fmt.Fprintf(&b, "    container_name: %s\n", name)
+	b.WriteString("    env_file: .env\n")
 	switch spec.Engine {
 	case "redis":
 		b.WriteString("    command: [\"redis-server\", \"/etc/cargo/redis.conf\"]\n")
-	default:
-		b.WriteString("    env_file: .env\n")
 	}
 	b.WriteString("    restart: unless-stopped\n")
 	b.WriteString("    networks:\n      - cargo-data\n")
