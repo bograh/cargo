@@ -30,3 +30,22 @@ test("image mode creates app then deploys", async () => {
   expect(create?.body).toMatchObject({ name: "api", source_type: "image", image_ref: "nginx:alpine" });
   expect(calls.some((c) => c.path === "/apps/app-1/deploy")).toBe(true);
 });
+
+test("git mode shows repo picker when org is connected", async () => {
+  mockApi({
+    "GET /auth/me": { status: 200, body: { id: "u1", email: "a@b.co", is_instance_admin: false } },
+    "GET /orgs/org-1/github": { status: 200, body: { configured: true, connected: true, account_login: "acme" } },
+    "GET /orgs/org-1/github/repos": {
+      status: 200,
+      body: [{ full_name: "acme/api", clone_url: "https://github.com/acme/api.git", default_branch: "main" }],
+    },
+  });
+  renderPage(<NewApp />, { path: "/orgs/:orgId/apps/new", route: "/orgs/org-1/apps/new" });
+
+  expect(await screen.findByLabelText(/github repository/i)).toBeInTheDocument();
+  await screen.findByRole("option", { name: "acme/api" });
+  await userEvent.selectOptions(screen.getByLabelText(/github repository/i), "acme/api");
+  expect((screen.getByLabelText(/or repository url/i) as HTMLInputElement).value).toBe(
+    "https://github.com/acme/api.git",
+  );
+});

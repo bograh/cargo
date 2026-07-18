@@ -9,6 +9,46 @@ import { Badge, Button, Card, PageTitle, Select, Spinner } from "../components/u
 
 const ROLES = ["owner", "admin", "member", "viewer"];
 
+interface GithubStatus {
+  configured: boolean;
+  connected: boolean;
+  account_login: string;
+  install_url?: string;
+}
+
+function GithubCard({ orgId, isAdmin }: { orgId: string; isAdmin: boolean }) {
+  const { data } = useQuery({
+    queryKey: ["github", orgId],
+    queryFn: () => api<GithubStatus>(`/orgs/${orgId}/github`),
+  });
+  if (!data) return null;
+  return (
+    <Card>
+      <h2 className="mb-2 font-semibold">GitHub</h2>
+      {!data.configured ? (
+        <p className="text-sm text-slate-500">
+          The instance admin has not configured a GitHub App yet. Private-repo deploys and push-to-deploy
+          are unavailable until then.
+        </p>
+      ) : data.connected ? (
+        <p className="text-sm text-slate-300">
+          Connected to <Badge color="green">{data.account_login || "GitHub"}</Badge> — private repos and
+          push-to-deploy are active.
+        </p>
+      ) : isAdmin && data.install_url ? (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-slate-400">Install the GitHub App to deploy private repos.</p>
+          <a href={data.install_url}>
+            <Button>Install GitHub App</Button>
+          </a>
+        </div>
+      ) : (
+        <p className="text-sm text-slate-500">Not connected. Ask an org admin to install the GitHub App.</p>
+      )}
+    </Card>
+  );
+}
+
 export default function OrgSettings() {
   const { orgId } = useParams();
   const { user } = useAuth();
@@ -178,6 +218,8 @@ export default function OrgSettings() {
           )}
         </Card>
       )}
+
+      <GithubCard orgId={orgId!} isAdmin={isAdmin} />
 
       {role === "owner" && (
         <Card className="border-red-900">

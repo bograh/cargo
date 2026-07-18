@@ -1,9 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
-import { post, put } from "../lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, post, put } from "../lib/api";
 import type { App, Deployment } from "../lib/types";
 import { Button, Card, FieldError, Input, Label, PageTitle, Select } from "../components/ui";
+
+interface GithubRepo {
+  full_name: string;
+  clone_url: string;
+  default_branch: string;
+}
 
 interface EnvRow {
   key: string;
@@ -27,6 +33,33 @@ export default function NewApp() {
   const [envRows, setEnvRows] = useState<EnvRow[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [selectedRepo, setSelectedRepo] = useState("");
+
+  const { data: gh } = useQuery({
+    queryKey: ["github", orgId],
+    queryFn: () => api<{ connected: boolean }>(`/orgs/${orgId}/github`),
+  });
+  const connected = !!gh?.connected;
+  const { data: repos } = useQuery({
+    queryKey: ["github-repos", orgId],
+    queryFn: () => api<GithubRepo[]>(`/orgs/${orgId}/github/repos`),
+    enabled: connected && sourceType === "git",
+  });
+  const { data: branches } = useQuery({
+    queryKey: ["github-branches", orgId, selectedRepo],
+    queryFn: () => api<string[]>(`/orgs/${orgId}/github/repos/${selectedRepo}/branches`),
+    enabled: connected && !!selectedRepo,
+  });
+
+  function pickRepo(fullName: string) {
+    setSelectedRepo(fullName);
+    const repo = repos?.find((r) => r.full_name === fullName);
+    if (repo) {
+      setGitRepoURL(repo.clone_url);
+      setGitBranch(repo.default_branch);
+      if (!name) setName(fullName.split("/")[1] ?? "");
+    }
+  }
 
   function setEnvRow(i: number, patch: Partial<EnvRow>) {
     setEnvRows((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
@@ -89,8 +122,26 @@ export default function NewApp() {
           </div>
           {sourceType === "git" ? (
             <>
+              {connected && (
+                <div>
+                  <Label htmlFor="gh-repo">GitHub repository</Label>
+                  <Select
+                    id="gh-repo"
+                    className="w-full"
+                    value={selectedRepo}
+                    onChange={(e) => pickRepo(e.target.value)}
+                  >
+                    <option value="">Choose from connected account…</option>
+                    {repos?.map((r) => (
+                      <option key={r.full_name} value={r.full_name}>
+                        {r.full_name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
               <div>
-                <Label htmlFor="repo">Repository URL (public)</Label>
+                <Label htmlFor="repo">{connected ? "…or repository URL" : "Repository URL (public)"}</Label>
                 <Input
                   id="repo"
                   value={gitRepoURL}
@@ -102,7 +153,22 @@ export default function NewApp() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="branch">Branch</Label>
-                  <Input id="branch" value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} required />
+                  {connected && selectedRepo && branches ? (
+                    <Select
+                      id="branch"
+                      className="w-full"
+                      value={gitBranch}
+                      onChange={(e) => setGitBranch(e.target.value)}
+                    >
+                      {branches.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </Select>
+                  ) : (
+                    <Input id="branch" value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} required />
+                  )}
                 </div>
                 <div>
                   <Label htmlFor="builder">Builder</Label>
