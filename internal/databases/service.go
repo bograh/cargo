@@ -237,7 +237,7 @@ func (s *Service) Create(ctx context.Context, orgID, actor pgtype.UUID, in Creat
 	if err != nil {
 		return sqlc.DatabaseInstance{}, err
 	}
-	if roleRank[role] < roleRank["member"] {
+	if roleRank[role] < roleRank["admin"] {
 		return sqlc.DatabaseInstance{}, ErrForbidden
 	}
 	if err := validateCreate(in); err != nil {

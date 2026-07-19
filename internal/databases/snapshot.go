@@ -16,8 +16,11 @@ func (s *Service) snapshotDir(id string) string {
 }
 
 // Snapshot writes a point-in-time backup and returns the created file name.
+// The whole snapshot surface is admin-gated: a postgres snapshot is a
+// pg_dumpall that includes role password hashes, so it must not be reachable
+// by ordinary members.
 func (s *Service) Snapshot(ctx context.Context, id, actor pgtype.UUID) (string, error) {
-	inst, err := s.instFor(ctx, id, actor, "member")
+	inst, err := s.instFor(ctx, id, actor, "admin")
 	if err != nil {
 		return "", err
 	}
@@ -43,7 +46,7 @@ func (s *Service) Snapshot(ctx context.Context, id, actor pgtype.UUID) (string, 
 
 // ListSnapshots lists on-disk snapshots for the instance, newest first.
 func (s *Service) ListSnapshots(ctx context.Context, id, actor pgtype.UUID) ([]SnapshotInfo, error) {
-	inst, err := s.instFor(ctx, id, actor, "viewer")
+	inst, err := s.instFor(ctx, id, actor, "admin")
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +86,7 @@ func (s *Service) SnapshotPath(ctx context.Context, id, actor pgtype.UUID, name 
 
 // DeleteSnapshot removes a snapshot file after validating it is a real entry.
 func (s *Service) DeleteSnapshot(ctx context.Context, id, actor pgtype.UUID, name string) error {
-	inst, err := s.instFor(ctx, id, actor, "member")
+	inst, err := s.instFor(ctx, id, actor, "admin")
 	if err != nil {
 		return err
 	}

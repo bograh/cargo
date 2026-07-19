@@ -15,7 +15,7 @@ import (
 // records the attachment. Returns the connection URL (host = the instance's
 // stable container name) and the row.
 func (s *Service) Attach(ctx context.Context, instanceID, appID, actor pgtype.UUID) (string, sqlc.DatabaseAttachment, error) {
-	inst, err := s.instFor(ctx, instanceID, actor, "member")
+	inst, err := s.instFor(ctx, instanceID, actor, "admin")
 	if err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
@@ -146,7 +146,13 @@ func (s *Service) attachRedisACL(ctx context.Context, inst sqlc.DatabaseInstance
 	// read the keyspace of, any other user's index. -@dangerous keeps
 	// FLUSHALL/SWAPDB/etc. away (SET/GET are not in @dangerous). The password
 	// is fed via stdin, never on argv.
-	cmd := fmt.Sprintf("ACL SETUSER %s on >%s allkeys allchannels +@all -@admin -@dangerous -acl -select +select|%d\n",
+	//
+	// resetchannels denies ALL pub/sub channel access: redis pub/sub channels
+	// are global (not scoped to the logical db index), so granting channels
+	// here would let acl-mode tenants PUBLISH/SUBSCRIBE across each other's
+	// channels. acl mode is therefore intentionally key-isolated with NO
+	// pub/sub; use shared mode if an app needs pub/sub.
+	cmd := fmt.Sprintf("ACL SETUSER %s on >%s allkeys resetchannels +@all -@admin -@dangerous -acl -select +select|%d\n",
 		name, pass, idx)
 	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "redis", cmd,
 		"redis-cli", "--no-auth-warning"); err != nil {
@@ -214,7 +220,7 @@ func (s *Service) nextIndex(ctx context.Context, instanceID pgtype.UUID) (int32,
 // Detach removes the app's credential from the instance and deletes the row.
 // For postgres the database is kept (data survives); only the role is dropped.
 func (s *Service) Detach(ctx context.Context, instanceID, appID, actor pgtype.UUID) error {
-	inst, err := s.instFor(ctx, instanceID, actor, "member")
+	inst, err := s.instFor(ctx, instanceID, actor, "admin")
 	if err != nil {
 		return err
 	}
