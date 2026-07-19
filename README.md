@@ -60,7 +60,7 @@ Serves the platform on http://localhost:8080 without Traefik/SSL. Backend tests:
 
 Each organization can provision managed Postgres (16/17) and Redis (7) instances directly from the UI. Apps attach to an instance to get per-app, isolated credentials — attaching injects `DATABASE_URL` (Postgres) or `REDIS_URL` (Redis) into the app's environment at deploy time. One attachment per engine per app.
 
-Instance volumes live under `<dataDir>/databases/<id>`; manual snapshots (`pg_dumpall --clean` for Postgres, `SAVE` for Redis) are written to `<dataDir>/db-backups/<id>/` and downloadable from the UI; provisioning logs land in `<dataDir>/db-logs/`.
+Instance volumes live under `<dataDir>/databases/<id>`; manual snapshots (`pg_dumpall --clean` for Postgres, `BGSAVE` + `LASTSAVE` copy of `dump.rdb` for Redis) are written to `<dataDir>/db-backups/<id>/` and downloadable from the UI; provisioning logs land in `<dataDir>/db-logs/`.
 
 > Instances can optionally expose a host port for external clients (e.g. a local `psql`/`redis-cli`). Only enable this if you understand the instance will be reachable from outside the docker network.
 

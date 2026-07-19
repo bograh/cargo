@@ -8,7 +8,7 @@ const STATUS_COLORS: Record<string, "green" | "amber" | "red" | "gray"> = {
   running: "green",
   provisioning: "amber",
   error: "red",
-  deleting: "gray",
+  stopped: "gray",
 };
 
 const POSTGRES_VERSIONS = ["16", "17"];

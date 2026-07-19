@@ -66,7 +66,7 @@ export interface DatabaseInstance {
   version: string;
   redis_mode: string;
   host_port: number | null;
-  status: "provisioning" | "running" | "error" | "deleting" | string;
+  status: "provisioning" | "running" | "error" | "stopped" | string;
   created_at?: unknown;
   attachment_count: number;
 }

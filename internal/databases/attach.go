@@ -117,7 +117,19 @@ REVOKE CONNECT ON DATABASE %[1]s FROM PUBLIC;
 		InstanceID: inst.ID, AppID: appID,
 		DbName: txt(name), RoleName: txt(name), Secret: secret,
 	})
-	return url, att, err
+	return url, att, dupAttachErr(err)
+}
+
+// dupAttachErr maps the UNIQUE(instance_id, app_id) violation (a concurrent
+// duplicate attach that races past the pre-check) to ErrConflict so it
+// surfaces as 409 rather than a generic 500. Other errors pass through.
+func dupAttachErr(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "database_attachments_instance_id_app_id_key" {
+		return fmt.Errorf("%w: app already attached to this instance", ErrConflict)
+	}
+	return err
 }
 
 func (s *Service) attachRedisACL(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID, slug string) (string, sqlc.DatabaseAttachment, error) {
@@ -198,7 +210,7 @@ func (s *Service) reserveIndex(ctx context.Context, instanceID pgtype.UUID, para
 			pgErr.ConstraintName == "database_attachments_instance_db_index" {
 			continue // index was taken concurrently; re-pick
 		}
-		return sqlc.DatabaseAttachment{}, 0, err
+		return sqlc.DatabaseAttachment{}, 0, dupAttachErr(err)
 	}
 	return sqlc.DatabaseAttachment{}, 0, fmt.Errorf("%w: could not allocate a free redis database index", ErrConflict)
 }
