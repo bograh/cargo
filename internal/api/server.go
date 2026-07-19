@@ -118,6 +118,7 @@ type DatabaseService interface {
 	SnapshotPath(ctx context.Context, id, actor pgtype.UUID, name string) (string, error)
 	DeleteSnapshot(ctx context.Context, id, actor pgtype.UUID, name string) error
 	LogPath(id string) string
+	MarkError(ctx context.Context, id pgtype.UUID) error
 }
 
 // InstanceSettings is satisfied by *settings.Service.

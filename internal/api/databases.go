@@ -97,6 +97,7 @@ func (s *Server) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
 	idVal, _ := inst.ID.Value()
 	idStr, _ := idVal.(string)
 	if err := s.enqueue.EnqueueDBProvision(r.Context(), idStr); err != nil {
+		_ = s.databases.MarkError(r.Context(), inst.ID)
 		Error(w, http.StatusInternalServerError, "internal", "failed to enqueue provisioning")
 		return
 	}

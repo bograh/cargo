@@ -282,6 +282,15 @@ func (s *Service) LogPath(id string) string {
 	return filepath.Join(s.dataDir, "db-logs", id+".log")
 }
 
+// MarkError sets an instance's status to "error". It is used as enqueue-
+// failure compensation by the API layer: if the provisioning job can't be
+// queued after Create, the instance would otherwise be stuck in
+// "provisioning" forever with no job and no retry path. No actor check —
+// this is an internal compensation path, not a user-facing operation.
+func (s *Service) MarkError(ctx context.Context, id pgtype.UUID) error {
+	return s.q.SetDatabaseInstanceStatus(ctx, sqlc.SetDatabaseInstanceStatusParams{ID: id, Status: "error"})
+}
+
 // Provision runs the container-level provisioning for an instance. It is
 // called by the provision job (no actor check) and records running/error.
 func (s *Service) Provision(ctx context.Context, id pgtype.UUID) error {

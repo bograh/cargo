@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +24,8 @@ type stubDatabases struct {
 	snaps   []databases.SnapshotInfo
 	snapDir string
 	err     error
+
+	markErrorCalls *[]pgtype.UUID
 }
 
 func (s stubDatabases) Create(_ context.Context, _, _ pgtype.UUID, _ databases.CreateInput) (sqlc.DatabaseInstance, error) {
@@ -56,6 +59,13 @@ func (s stubDatabases) DeleteSnapshot(_ context.Context, _, _ pgtype.UUID, _ str
 }
 func (s stubDatabases) LogPath(id string) string { return filepath.Join(os.TempDir(), id+".log") }
 
+func (s stubDatabases) MarkError(_ context.Context, id pgtype.UUID) error {
+	if s.markErrorCalls != nil {
+		*s.markErrorCalls = append(*s.markErrorCalls, id)
+	}
+	return nil
+}
+
 func dbServer(d DatabaseService, e Enqueuer) *Server {
 	return &Server{
 		auth:      stubAuth{user: sqlc.User{Email: "a@b.co"}},
@@ -81,6 +91,26 @@ func TestCreateDatabaseEnqueues(t *testing.T) {
 	}
 	if len(enq.ids) != 1 || enq.ids[0] != testUUID {
 		t.Fatalf("enqueued = %v", enq.ids)
+	}
+}
+
+func TestCreateDatabaseEnqueueFailureMarksError(t *testing.T) {
+	var id pgtype.UUID
+	if err := id.Scan(testUUID); err != nil {
+		t.Fatal(err)
+	}
+	var calls []pgtype.UUID
+	s := dbServer(stubDatabases{
+		inst:           sqlc.DatabaseInstance{ID: id, Status: "provisioning"},
+		markErrorCalls: &calls,
+	}, &recordingEnqueuer{err: errors.New("queue down")})
+	rec := doAuthed(t, s, http.MethodPost, "/api/v1/orgs/"+testUUID+"/databases",
+		`{"name":"mydb","engine":"postgres","version":"16"}`)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body)
+	}
+	if len(calls) != 1 || calls[0] != id {
+		t.Fatalf("MarkError calls = %v, want [%v]", calls, id)
 	}
 }
 
