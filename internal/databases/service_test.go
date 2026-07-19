@@ -263,7 +263,93 @@ func TestRedisACLIsolation(t *testing.T) {
 	if _, err := rc2.cmdErr("AUTH", ua.user, ub.pass); err == nil {
 		t.Fatal("A authenticated with B's password, expected failure")
 	}
-	_ = urlB
+
+	// acl mode grants no pub/sub: channels are global (not db-index scoped),
+	// so SUBSCRIBE must be denied (NOPERM). rc is still authed as A.
+	if _, err := rc.cmdErr("SUBSCRIBE", "ch"); err == nil || !strings.Contains(err.Error(), "NOPERM") {
+		t.Fatalf("A SUBSCRIBE = %v, want NOPERM (acl mode has no pub/sub)", err)
+	}
+}
+
+// TestAppDeleteDropsRedisACLUser is the cross-tenant regression for the
+// orphaned-credential breach: deleting an app must remove its redis ACL user
+// on the engine, not just cascade-delete the attachment row, so a retained old
+// REDIS_URL cannot authenticate against a freed-and-reassigned db index.
+func TestAppDeleteDropsRedisACLUser(t *testing.T) {
+	requireDocker(t)
+	e := setup(t)
+	e.appsSvc.SetAttachmentCleaner(e.svc)
+	ctx := context.Background()
+	instID := e.provision(t, CreateInput{Name: "cache", Engine: "redis", Version: "7", RedisMode: "acl", ExposePort: true})
+	inst, _ := e.svc.Get(ctx, instID, e.owner)
+	port := inst.Instance.HostPort.Int32
+
+	appA := e.newApp(t, "App A")
+	urlA, attA, err := e.svc.Attach(ctx, instID, appA, e.owner)
+	if err != nil {
+		t.Fatalf("attach A: %v", err)
+	}
+	if attA.DbIndex.Int32 != 0 {
+		t.Fatalf("first attach index = %d, want 0", attA.DbIndex.Int32)
+	}
+	ua := mustParseRedis(t, urlA)
+
+	// Old credential authenticates before the app is deleted.
+	rc := dialRedis(t, port)
+	if _, err := rc.cmdErr("AUTH", ua.user, ua.pass); err != nil {
+		t.Fatalf("A auth before delete: %v", err)
+	}
+	rc.Close()
+
+	// Deleting the app must run engine cleanup (ACL DELUSER).
+	if err := e.appsSvc.Delete(ctx, appA, e.owner); err != nil {
+		t.Fatalf("delete app: %v", err)
+	}
+
+	// The old credential no longer authenticates.
+	rc2 := dialRedis(t, port)
+	defer rc2.Close()
+	if _, err := rc2.cmdErr("AUTH", ua.user, ua.pass); err == nil {
+		t.Fatal("A authenticated after app delete, expected ACL user removed")
+	}
+
+	// A new app reuses the freed index 0 with a fresh user.
+	appB := e.newApp(t, "App B")
+	_, attB, err := e.svc.Attach(ctx, instID, appB, e.owner)
+	if err != nil {
+		t.Fatalf("attach B: %v", err)
+	}
+	if attB.DbIndex.Int32 != 0 {
+		t.Fatalf("reused index = %d, want 0 (freed by app delete)", attB.DbIndex.Int32)
+	}
+}
+
+// TestAppDeleteDropsPostgresRole asserts app deletion drops the postgres login
+// role of its attachment (the database itself is kept, matching Detach).
+func TestAppDeleteDropsPostgresRole(t *testing.T) {
+	requireDocker(t)
+	e := setup(t)
+	e.appsSvc.SetAttachmentCleaner(e.svc)
+	ctx := context.Background()
+	instID := e.provision(t, CreateInput{Name: "orders-db", Engine: "postgres", Version: "16", ExposePort: true})
+	inst, _ := e.svc.Get(ctx, instID, e.owner)
+	port := inst.Instance.HostPort.Int32
+
+	appA := e.newApp(t, "App A")
+	urlA, _, err := e.svc.Attach(ctx, instID, appA, e.owner)
+	if err != nil {
+		t.Fatalf("attach A: %v", err)
+	}
+	connA := hostRewrite(t, urlA, port)
+	if err := pgCanConnect(ctx, connA); err != nil {
+		t.Fatalf("A -> own db before delete: %v", err)
+	}
+	if err := e.appsSvc.Delete(ctx, appA, e.owner); err != nil {
+		t.Fatalf("delete app: %v", err)
+	}
+	if err := pgCanConnect(ctx, connA); err == nil {
+		t.Fatal("A connected after app delete, expected role dropped")
+	}
 }
 
 // ---- minimal RESP client (no new deps) -----------------------------------

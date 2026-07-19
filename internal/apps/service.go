@@ -58,14 +58,27 @@ type UpdateInput struct {
 	RegistryCreds   *RegistryCreds
 }
 
+// AttachmentCleaner tears down the engine-level credentials for every managed
+// database attached to an app. It is an optional collaborator (nil in tests
+// and until wired) satisfied by *databases.Service, injected via a setter to
+// avoid an apps -> databases import dependency.
+type AttachmentCleaner interface {
+	DetachAllForApp(ctx context.Context, appID pgtype.UUID) error
+}
+
 type Service struct {
-	q   *sqlc.Queries
-	box *crypto.Box
+	q       *sqlc.Queries
+	box     *crypto.Box
+	cleaner AttachmentCleaner
 }
 
 func NewService(pool *pgxpool.Pool, box *crypto.Box) *Service {
 	return &Service{q: sqlc.New(pool), box: box}
 }
+
+// SetAttachmentCleaner wires the managed-database cleanup collaborator used by
+// Delete to drop engine credentials before an app row is removed.
+func (s *Service) SetAttachmentCleaner(c AttachmentCleaner) { s.cleaner = c }
 
 // roleIn returns the actor's role in org or ErrNotFound (scoping, FR-2.4).
 func (s *Service) roleIn(ctx context.Context, orgID, actor pgtype.UUID) (string, error) {
@@ -249,6 +262,17 @@ func (s *Service) Delete(ctx context.Context, appID, actor pgtype.UUID) error {
 	app, err := s.appFor(ctx, appID, actor, "admin")
 	if err != nil {
 		return err
+	}
+	// Drop managed-database engine credentials (postgres roles, redis ACL
+	// users) BEFORE deleting the app. The attachment rows themselves cascade
+	// with the app, but the engine-side credentials do not — leaving them
+	// alive is a cross-tenant breach once a freed redis index is reassigned.
+	// Hard-fail: if engine cleanup errors we do not delete the app, so the
+	// operation can be safely retried rather than orphaning credentials.
+	if s.cleaner != nil {
+		if err := s.cleaner.DetachAllForApp(ctx, app.ID); err != nil {
+			return err
+		}
 	}
 	return s.q.DeleteApplication(ctx, app.ID)
 }

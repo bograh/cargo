@@ -225,6 +225,18 @@ func (s *Service) Detach(ctx context.Context, instanceID, appID, actor pgtype.UU
 	if err != nil {
 		return err
 	}
+	if err := s.detachEngine(ctx, inst, att); err != nil {
+		return err
+	}
+	return s.q.DeleteDatabaseAttachment(ctx, att.ID)
+}
+
+// detachEngine performs the engine-level credential teardown for one
+// attachment: for postgres it terminates sessions, reassigns/drops owned
+// objects and drops the role (the database itself is kept so data survives);
+// for redis acl it removes the ACL user. Shared by Detach (role-gated) and
+// DetachAllForApp (internal, app-deletion path) so both do identical cleanup.
+func (s *Service) detachEngine(ctx context.Context, inst sqlc.DatabaseInstance, att sqlc.DatabaseAttachment) error {
 	switch {
 	case inst.Engine == "postgres":
 		name := att.RoleName.String
@@ -250,7 +262,36 @@ DROP ROLE IF EXISTS %[1]s;
 			return err
 		}
 	}
-	return s.q.DeleteDatabaseAttachment(ctx, att.ID)
+	return nil
+}
+
+// DetachAllForApp tears down every managed-database credential belonging to an
+// app and deletes its attachment rows. It is the app-deletion cleanup path:
+// database_attachments rows cascade-delete with the app (FK ON DELETE
+// CASCADE), but that leaves the postgres role / redis ACL user alive on the
+// engine. For redis acl that is a cross-tenant breach — the freed db_index is
+// later reassigned to a new attachment while the deleted app's ACL user still
+// holds +select|<idx>, so a retained old REDIS_URL could read the new tenant's
+// keys. Internal (no actor check), like MarkError: it runs from apps.Delete
+// after the caller has already been authorized to delete the app.
+func (s *Service) DetachAllForApp(ctx context.Context, appID pgtype.UUID) error {
+	rows, err := s.q.ListAttachmentsByApp(ctx, appID)
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		inst, err := s.q.GetDatabaseInstance(ctx, r.DatabaseAttachment.InstanceID)
+		if err != nil {
+			return err
+		}
+		if err := s.detachEngine(ctx, inst, r.DatabaseAttachment); err != nil {
+			return err
+		}
+		if err := s.q.DeleteDatabaseAttachment(ctx, r.DatabaseAttachment.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EnvFor rebuilds the injected env vars for an app's attachments. Pipeline-

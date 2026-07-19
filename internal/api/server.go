@@ -173,9 +173,17 @@ func (s *Server) WireDeployments(d *deployments.Service, e Enqueuer, hub *events
 	s.provider = p
 }
 
-// WireDatabases attaches the managed-databases service.
+// WireDatabases attaches the managed-databases service and wires its
+// engine-level attachment cleanup into the app-deletion path, so deleting an
+// app also drops the postgres roles / redis ACL users of its attachments
+// (their rows cascade with the app, but the engine credentials do not).
 func (s *Server) WireDatabases(d DatabaseService) {
 	s.databases = d
+	if a, ok := s.apps.(*apps.Service); ok {
+		if c, ok := d.(apps.AttachmentCleaner); ok {
+			a.SetAttachmentCleaner(c)
+		}
+	}
 }
 
 // NewServer builds a Server. pool/box may be nil in tests that stub dependencies.
