@@ -31,7 +31,7 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
   const [name, setName] = useState("");
   const [engine, setEngine] = useState<"postgres" | "redis">("postgres");
   const [version, setVersion] = useState("16");
-  const [redisMode, setRedisMode] = useState("standalone");
+  const [redisMode, setRedisMode] = useState("acl");
   const [exposePort, setExposePort] = useState(false);
   const [formError, setFormError] = useState("");
   const [oneTimeUrl, setOneTimeUrl] = useState<{ url: string; envKey: string } | null>(null);
@@ -115,8 +115,8 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
             <div>
               <Label htmlFor="db-redis-mode">Redis mode</Label>
               <Select id="db-redis-mode" value={redisMode} onChange={(e) => setRedisMode(e.target.value)}>
-                <option value="standalone">standalone</option>
-                <option value="cache">cache (no persistence)</option>
+                <option value="acl">acl (per-app users, isolated)</option>
+                <option value="shared">shared (one password, indexes only)</option>
               </Select>
             </div>
           )}

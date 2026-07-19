@@ -34,6 +34,32 @@ test("provisioning submits the expected payload", async () => {
   });
 });
 
+test("provisioning a redis instance defaults redis_mode to acl", async () => {
+  const calls = mockApi({
+    ...baseRoutes,
+    "GET /orgs/org-1/databases": { status: 200, body: [] },
+    "POST /orgs/org-1/databases": { status: 202, body: { id: "db-2", status: "provisioning" } },
+  });
+  const user = userEvent.setup();
+  renderPage(<DatabasesTab orgId="org-1" />);
+
+  await user.type(await screen.findByLabelText("Name"), "my-redis");
+  await user.selectOptions(screen.getByLabelText("Engine"), "redis");
+  await user.click(screen.getByRole("button", { name: "Provision" }));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.method === "POST" && c.path === "/orgs/org-1/databases");
+    expect(call).toBeTruthy();
+    expect(call?.body).toEqual({
+      name: "my-redis",
+      engine: "redis",
+      version: "7",
+      redis_mode: "acl",
+      expose_port: false,
+    });
+  });
+});
+
 test("attach shows a one-time URL modal with the exact response url", async () => {
   mockApi({
     ...baseRoutes,
