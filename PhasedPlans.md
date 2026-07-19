@@ -251,12 +251,13 @@ Periodic job checks DNS resolution + HTTPS response per domain.
 
 ## Phase 8 — PRD "Phase 2" ⬜
 
-*Execution order agreed 2026-07-18: 8.2 → 8.1 → 8.3. Each feature gets its own spec → plan → ship cycle. 8.2 shipped 2026-07-18.*
+*Execution order agreed 2026-07-18: 8.2 → 8.1 → 8.3. Each feature gets its own spec → plan → ship cycle. 8.2 shipped 2026-07-18. 8.1 shipped 2026-07-19.*
 
-### 8.1 Managed databases (Postgres, Redis first) ⬜
+### 8.1 Managed databases (Postgres, Redis first) ✅
+*Spec: `docs/superpowers/specs/2026-07-18-cargo-managed-databases-design.md` · Plan: `docs/superpowers/plans/2026-07-18-cargo-m10-databases.md` (complete). Milestone m10.*
 - One-click provision of a managed Postgres/Redis per org; connection string injected as env vars; backed by the same per-app compose model
-
-*(Acceptance criteria to be detailed when the feature is specced.)*
+- Per-org Postgres 16/17 and Redis 7 instances; attach/detach with per-app credentials (one attachment per engine per app); `DATABASE_URL`/`REDIS_URL` injected at deploy
+- Manual snapshots (`pg_dumpall --clean` / Redis `SAVE`) downloadable from the UI; optional host port exposure for external clients
 
 ### 8.2 OIDC login ✅
 *Spec: `docs/superpowers/specs/2026-07-18-cargo-oidc-design.md` · Plan: `docs/superpowers/plans/2026-07-18-cargo-m9-oidc.md` (complete). Milestone m9.*
