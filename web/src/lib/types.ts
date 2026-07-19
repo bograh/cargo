@@ -58,6 +58,38 @@ export interface Deployment {
   finished_at?: unknown;
 }
 
+export interface DatabaseInstance {
+  id: string;
+  org_id: string;
+  name: string;
+  engine: "postgres" | "redis";
+  version: string;
+  redis_mode: string;
+  host_port: number | null;
+  status: "provisioning" | "running" | "error" | "deleting" | string;
+  created_at?: unknown;
+  attachment_count: number;
+}
+
+export interface DatabaseAttachment {
+  id: string;
+  app_id: string;
+  db_name?: string;
+  db_index?: number;
+  created_at?: unknown;
+}
+
+export interface DatabaseDetail extends DatabaseInstance {
+  size_bytes: number;
+  attachments: DatabaseAttachment[];
+}
+
+export interface Snapshot {
+  name: string;
+  size: number;
+  created_at: string;
+}
+
 export const ACTIVE_STATUSES = ["queued", "building", "deploying"] as const;
 
 export function isActive(status: Deployment["status"]): boolean {

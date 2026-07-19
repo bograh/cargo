@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import type { App, Org } from "../lib/types";
 import { Badge, Button, Card, EmptyState, PageTitle, Spinner } from "../components/ui";
+import { DatabasesTab } from "../components/DatabasesTab";
 
 export function useOrg(orgId: string | undefined) {
   return useQuery({
@@ -20,6 +22,7 @@ export default function OrgDashboard() {
     queryFn: () => api<App[]>(`/orgs/${orgId}/apps`),
     enabled: !!orgId,
   });
+  const [tab, setTab] = useState<"apps" | "databases">("apps");
 
   if (error) {
     return <EmptyState title="Organization not found" hint="You may not be a member of this organization." />;
@@ -46,7 +49,28 @@ export default function OrgDashboard() {
         {orgData?.organization.name ?? "…"}
       </PageTitle>
 
-      {isLoading ? (
+      <div className="mb-4 flex gap-2 border-b border-slate-800">
+        <button
+          className={`px-3 py-2 text-sm font-medium ${
+            tab === "apps" ? "border-b-2 border-indigo-500 text-slate-100" : "text-slate-500"
+          }`}
+          onClick={() => setTab("apps")}
+        >
+          Apps
+        </button>
+        <button
+          className={`px-3 py-2 text-sm font-medium ${
+            tab === "databases" ? "border-b-2 border-indigo-500 text-slate-100" : "text-slate-500"
+          }`}
+          onClick={() => setTab("databases")}
+        >
+          Databases
+        </button>
+      </div>
+
+      {tab === "databases" ? (
+        orgId && <DatabasesTab orgId={orgId} />
+      ) : isLoading ? (
         <div className="flex justify-center py-20">
           <Spinner />
         </div>
