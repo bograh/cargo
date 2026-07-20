@@ -1,15 +1,15 @@
 import type { Deployment } from "../lib/types";
-import { Badge } from "./ui";
+import { Badge, type BadgeTone } from "./ui/Badge";
 
-const COLORS: Record<Deployment["status"], "green" | "amber" | "red" | "gray"> = {
+const TONES: Record<Deployment["status"], BadgeTone> = {
   queued: "amber",
   building: "amber",
   deploying: "amber",
-  live: "green",
-  failed: "red",
-  cancelled: "gray",
+  live: "live",
+  failed: "danger",
+  cancelled: "neutral",
 };
 
 export function StatusBadge({ status }: { status: Deployment["status"] }) {
-  return <Badge color={COLORS[status] ?? "gray"}>{status}</Badge>;
+  return <Badge tone={TONES[status] ?? "neutral"}>{status}</Badge>;
 }
