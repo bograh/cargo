@@ -2,8 +2,10 @@ import { useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, post, put } from "../lib/api";
+import { cn } from "../lib/cn";
+import { useOrg } from "../lib/hooks";
 import type { App, Deployment } from "../lib/types";
-import { Button, Card, FieldError, Input, Label, PageTitle, Select } from "../components/ui";
+import { Button, Card, FieldError, Icon, Input, Label, PageHeader, Select, useToast } from "../components/ui";
 
 interface GithubRepo {
   full_name: string;
@@ -20,6 +22,8 @@ export default function NewApp() {
   const { orgId } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const toast = useToast();
+  const { data: orgData } = useOrg(orgId);
 
   const [name, setName] = useState("");
   const [sourceType, setSourceType] = useState<"git" | "image">("git");
@@ -91,14 +95,16 @@ export default function NewApp() {
       void qc.invalidateQueries({ queryKey: ["apps", orgId] });
       navigate(`/deployments/${dep.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "failed to create app");
+      const message = err instanceof Error ? err.message : "failed to create app";
+      setError(message);
+      toast(message, "error");
       setBusy(false);
     }
   }
 
   return (
     <div className="mx-auto max-w-2xl">
-      <PageTitle>New App</PageTitle>
+      <PageHeader eyebrow={orgData?.organization.name ?? "org"} title="New App" />
       <form onSubmit={submit} className="space-y-6">
         <Card className="space-y-4">
           <div>
@@ -107,16 +113,19 @@ export default function NewApp() {
           </div>
           <div>
             <Label>Source</Label>
-            <div className="flex gap-2">
-              {(["git", "image"] as const).map((t) => (
-                <Button
-                  key={t}
+            <div className="flex rounded-lg border border-border bg-raised p-0.5">
+              {(["git", "image"] as const).map((s) => (
+                <button
+                  key={s}
                   type="button"
-                  variant={sourceType === t ? "primary" : "secondary"}
-                  onClick={() => setSourceType(t)}
+                  onClick={() => setSourceType(s)}
+                  className={cn(
+                    "flex-1 rounded-md px-3 py-1.5 text-sm capitalize transition-colors duration-150",
+                    sourceType === s ? "bg-amber-tint text-amber" : "text-muted hover:text-text",
+                  )}
                 >
-                  {t === "git" ? "Git repository" : "Container image"}
-                </Button>
+                  {s === "git" ? "Git repository" : "Container image"}
+                </button>
               ))}
             </div>
           </div>
@@ -210,7 +219,7 @@ export default function NewApp() {
               <Input id="health" value={healthPath} onChange={(e) => setHealthPath(e.target.value)} />
             </div>
           </div>
-          <label className="flex items-center gap-2 text-sm text-slate-300">
+          <label className="flex items-center gap-2 text-sm text-muted">
             <input type="checkbox" checked={autoDeploy} onChange={(e) => setAutoDeploy(e.target.checked)} />
             Auto-deploy on push (takes effect once GitHub integration is connected)
           </label>
@@ -218,12 +227,12 @@ export default function NewApp() {
 
         <Card>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="font-semibold">Environment variables</h2>
+            <h2 className="font-display font-semibold">Environment variables</h2>
             <Button type="button" variant="secondary" onClick={() => setEnvRows((r) => [...r, { key: "", value: "" }])}>
-              Add variable
+              <Icon name="plus" size={14} /> Add variable
             </Button>
           </div>
-          {envRows.length === 0 && <p className="text-sm text-slate-500">No variables yet.</p>}
+          {envRows.length === 0 && <p className="text-sm text-muted">No variables yet.</p>}
           <div className="space-y-2">
             {envRows.map((row, i) => (
               <div key={i} className="flex gap-2">
@@ -239,8 +248,13 @@ export default function NewApp() {
                   value={row.value}
                   onChange={(e) => setEnvRow(i, { value: e.target.value })}
                 />
-                <Button type="button" variant="secondary" onClick={() => setEnvRows((r) => r.filter((_, j) => j !== i))}>
-                  ✕
+                <Button
+                  type="button"
+                  variant="ghost"
+                  aria-label={`remove env ${i}`}
+                  onClick={() => setEnvRows((r) => r.filter((_, j) => j !== i))}
+                >
+                  <Icon name="trash" size={14} />
                 </Button>
               </div>
             ))}
