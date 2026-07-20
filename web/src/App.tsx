@@ -12,6 +12,7 @@ import AppDetail from "./pages/AppDetail";
 import DeploymentLogs from "./pages/DeploymentLogs";
 import AcceptInvite from "./pages/AcceptInvite";
 import Admin from "./pages/Admin";
+import NotFound from "./pages/NotFound";
 
 export default function App() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/deployments/:deploymentId" element={<DeploymentLogs />} />
         <Route path="/invite/:token" element={<AcceptInvite />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
   );

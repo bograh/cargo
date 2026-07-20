@@ -1,4 +1,8 @@
-import { screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { AuthProvider } from "../../auth";
+import NotFound from "../../pages/NotFound";
 import { mockApi, renderPage } from "../../test/utils";
 import { Shell } from "./Shell";
 
@@ -39,5 +43,27 @@ describe("Shell", () => {
     expect(screen.getByRole("link", { name: /environment/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /domains/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /all apps/i })).toBeInTheDocument();
+  });
+
+  it("renders not-found inside the shell for unmatched routes", async () => {
+    mockApi({
+      "GET /auth/me": ME,
+      "GET /orgs": ORGS,
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/orgs/o1/databases"]}>
+          <AuthProvider>
+            <Routes>
+              <Route element={<Shell />}>
+                <Route path="*" element={<NotFound />} />
+              </Route>
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Page not found")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /apps/i })).toBeInTheDocument();
   });
 });
