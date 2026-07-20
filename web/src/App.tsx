@@ -10,7 +10,11 @@ import OrgDatabases from "./pages/OrgDatabases";
 import OrgMembers from "./pages/OrgMembers";
 import OrgSettings from "./pages/OrgSettings";
 import NewApp from "./pages/NewApp";
-import AppDetail from "./pages/AppDetail";
+import AppOverview from "./pages/AppOverview";
+import AppDeployments from "./pages/AppDeployments";
+import AppEnv from "./pages/AppEnv";
+import AppDomains from "./pages/AppDomains";
+import AppSettings from "./pages/AppSettings";
 import DeploymentLogs from "./pages/DeploymentLogs";
 import AcceptInvite from "./pages/AcceptInvite";
 import Admin from "./pages/Admin";
@@ -29,7 +33,11 @@ export default function App() {
         <Route path="/orgs/:orgId/members" element={<OrgMembers />} />
         <Route path="/orgs/:orgId/settings" element={<OrgSettings />} />
         <Route path="/orgs/:orgId/apps/new" element={<NewApp />} />
-        <Route path="/apps/:appId" element={<AppDetail />} />
+        <Route path="/apps/:appId" element={<AppOverview />} />
+        <Route path="/apps/:appId/deployments" element={<AppDeployments />} />
+        <Route path="/apps/:appId/env" element={<AppEnv />} />
+        <Route path="/apps/:appId/domains" element={<AppDomains />} />
+        <Route path="/apps/:appId/settings" element={<AppSettings />} />
         <Route path="/deployments/:deploymentId" element={<DeploymentLogs />} />
         <Route path="/invite/:token" element={<AcceptInvite />} />
         <Route path="/admin" element={<Admin />} />

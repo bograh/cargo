@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, del, post } from "../lib/api";
+import { useInstanceInfo } from "../lib/hooks";
 import type { App } from "../lib/types";
-import { Badge, Button, Card, Input, Spinner } from "./ui";
+import { Badge, Button, Card, Icon, Input, Skeleton, useToast, type BadgeTone } from "./ui";
 
 interface Domain {
   id: string;
@@ -10,17 +11,19 @@ interface Domain {
   status: "active" | "pending" | "misconfigured";
 }
 
-const STATUS_COLORS = { active: "green", pending: "amber", misconfigured: "red" } as const;
+const STATUS_TONES: Record<Domain["status"], BadgeTone> = {
+  active: "live",
+  pending: "amber",
+  misconfigured: "danger",
+};
 
 export function DomainsTab({ app }: { app: App }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [hostname, setHostname] = useState("");
   const [error, setError] = useState("");
 
-  const { data: info } = useQuery({
-    queryKey: ["instance-info"],
-    queryFn: () => api<{ apps_domain_suffix: string }>("/instance/info"),
-  });
+  const { data: info } = useInstanceInfo();
   const { data: domains, isLoading } = useQuery({
     queryKey: ["domains", app.id],
     queryFn: () => api<Domain[]>(`/apps/${app.id}/domains`),
@@ -34,18 +37,27 @@ export function DomainsTab({ app }: { app: App }) {
       setError("");
       invalidate();
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "attach failed"),
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "attach failed";
+      setError(message);
+      toast(message, "error");
+    },
   });
   const remove = useMutation({
     mutationFn: (id: string) => del(`/apps/${app.id}/domains/${id}`),
     onSuccess: invalidate,
-    onError: (err) => setError(err instanceof Error ? err.message : "remove failed"),
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "remove failed";
+      setError(message);
+      toast(message, "error");
+    },
   });
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-10">
-        <Spinner />
+      <div className="space-y-4">
+        <Skeleton className="h-24" />
+        <Skeleton className="h-40" />
       </div>
     );
   }
@@ -54,23 +66,35 @@ export function DomainsTab({ app }: { app: App }) {
   return (
     <div className="space-y-6">
       <Card>
-        <h2 className="mb-3 font-semibold">Auto subdomain</h2>
-        <div className="flex items-center justify-between text-sm">
+        <h2 className="mb-3 font-display font-semibold">Auto subdomain</h2>
+        <div className="flex items-center justify-between gap-2 text-sm">
           <a
             href={`https://${autoDomain}`}
             target="_blank"
             rel="noreferrer"
-            className="text-indigo-400 hover:underline"
+            className="truncate font-mono text-terminal-blue hover:underline"
           >
             {autoDomain}
           </a>
-          <Badge color="indigo">automatic</Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              aria-label="copy subdomain"
+              onClick={() => {
+                void navigator.clipboard?.writeText(autoDomain);
+                toast("Copied");
+              }}
+            >
+              <Icon name="copy" size={14} />
+            </Button>
+            <Badge tone="amber">automatic</Badge>
+          </div>
         </div>
       </Card>
 
       <Card>
-        <h2 className="mb-3 font-semibold">Custom domains</h2>
-        <p className="mb-3 text-xs text-slate-500">
+        <h2 className="mb-3 font-display font-semibold">Custom domains</h2>
+        <p className="mb-3 text-xs text-muted">
           Point the domain's DNS at this server, attach it here, then redeploy — the router picks it up on
           the next deploy. SSL is issued automatically.
         </p>
@@ -79,8 +103,8 @@ export function DomainsTab({ app }: { app: App }) {
             {domains.map((d) => (
               <li key={d.id} className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-2">
-                  <code className="text-slate-300">{d.hostname}</code>
-                  <Badge color={STATUS_COLORS[d.status] ?? "gray"}>{d.status}</Badge>
+                  <code className="font-mono text-text">{d.hostname}</code>
+                  <Badge tone={STATUS_TONES[d.status] ?? "neutral"}>{d.status}</Badge>
                 </span>
                 <Button variant="secondary" onClick={() => remove.mutate(d.id)}>
                   Remove
@@ -89,7 +113,7 @@ export function DomainsTab({ app }: { app: App }) {
             ))}
           </ul>
         ) : (
-          <p className="mb-4 text-sm text-slate-500">No custom domains attached.</p>
+          <p className="mb-4 text-sm text-muted">No custom domains attached.</p>
         )}
         <form
           className="flex gap-2"
@@ -108,7 +132,7 @@ export function DomainsTab({ app }: { app: App }) {
             Attach
           </Button>
         </form>
-        {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+        {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       </Card>
     </div>
   );

@@ -1,13 +1,16 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { api, post } from "../lib/api";
 import { isActive, type App, type Deployment } from "../lib/types";
 import { StatusBadge } from "./StatusBadge";
-import { Button, EmptyState, Spinner } from "./ui";
+import { Button, ConfirmModal, EmptyState, Icon, Skeleton, StatusDot, useToast } from "./ui";
 
 export function DeploymentsTab({ app }: { app: App }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const toast = useToast();
+  const [rollbackTarget, setRollbackTarget] = useState<Deployment | null>(null);
   const { data: deployments, isLoading } = useQuery({
     queryKey: ["deployments", app.id],
     queryFn: () => api<Deployment[]>(`/apps/${app.id}/deployments`),
@@ -21,20 +24,25 @@ export function DeploymentsTab({ app }: { app: App }) {
       void qc.invalidateQueries({ queryKey: ["deployments", app.id] });
       navigate(`/deployments/${dep.id}`);
     },
+    onError: (err) => toast(err instanceof Error ? err.message : "deploy failed", "error"),
   });
   const rollback = useMutation({
     mutationFn: (targetID: string) =>
       post<Deployment>(`/apps/${app.id}/rollback`, { deployment_id: targetID }),
     onSuccess: (dep) => {
+      setRollbackTarget(null);
       void qc.invalidateQueries({ queryKey: ["deployments", app.id] });
       navigate(`/deployments/${dep.id}`);
     },
+    onError: (err) => toast(err instanceof Error ? err.message : "rollback failed", "error"),
   });
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-10">
-        <Spinner />
+      <div className="space-y-2">
+        <Skeleton className="h-10" />
+        <Skeleton className="h-10" />
+        <Skeleton className="h-10" />
       </div>
     );
   }
@@ -43,22 +51,15 @@ export function DeploymentsTab({ app }: { app: App }) {
     <div>
       <div className="mb-4 flex justify-end">
         <Button onClick={() => deploy.mutate()} disabled={deploy.isPending}>
-          Deploy
+          <Icon name="rocket" size={14} /> Deploy
         </Button>
       </div>
-      {(deploy.error || rollback.error) && (
-        <p className="mb-2 text-sm text-red-400">
-          {(deploy.error ?? rollback.error) instanceof Error
-            ? (deploy.error ?? rollback.error)?.message
-            : "operation failed"}
-        </p>
-      )}
       {!deployments || deployments.length === 0 ? (
         <EmptyState title="No deployments yet" hint="Hit Deploy to ship the current configuration." />
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-slate-500">
+            <tr className="text-left font-mono text-[0.68rem] uppercase tracking-[0.12em] text-muted">
               <th className="pb-2">Status</th>
               <th className="pb-2">Trigger</th>
               <th className="pb-2">Commit</th>
@@ -68,29 +69,25 @@ export function DeploymentsTab({ app }: { app: App }) {
           </thead>
           <tbody>
             {deployments.map((d) => (
-              <tr key={d.id} className="border-t border-slate-800">
+              <tr key={d.id} className="border-t border-border">
                 <td className="py-2">
-                  <StatusBadge status={d.status} />
+                  <span className="flex items-center gap-2">
+                    <StatusDot status={d.status} />
+                    <StatusBadge status={d.status} />
+                  </span>
                   {d.status === "failed" && d.error && (
-                    <p className="mt-1 max-w-xs truncate text-xs text-red-400">{d.error}</p>
+                    <p className="mt-1 max-w-xs truncate text-xs text-danger">{d.error}</p>
                   )}
                 </td>
-                <td className="py-2 text-slate-400">{d.trigger}</td>
-                <td className="py-2 font-mono text-xs text-slate-400">{d.commit_sha.slice(0, 8) || "—"}</td>
-                <td className="py-2 font-mono text-xs text-slate-400 truncate max-w-40">{d.image_tag || "—"}</td>
-                <td className="py-2 text-right space-x-2 whitespace-nowrap">
-                  <Link to={`/deployments/${d.id}`} className="text-indigo-400 hover:underline">
+                <td className="py-2 text-muted">{d.trigger}</td>
+                <td className="py-2 font-mono text-xs text-muted">{d.commit_sha.slice(0, 8) || "—"}</td>
+                <td className="max-w-40 truncate py-2 font-mono text-xs text-muted">{d.image_tag || "—"}</td>
+                <td className="space-x-2 whitespace-nowrap py-2 text-right">
+                  <Link to={`/deployments/${d.id}`} className="text-amber hover:underline">
                     Logs
                   </Link>
                   {d.status === "live" && d.image_tag && (
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        if (window.confirm("Roll back to this deployment's image?")) {
-                          rollback.mutate(d.id);
-                        }
-                      }}
-                    >
+                    <Button variant="secondary" onClick={() => setRollbackTarget(d)}>
                       Rollback
                     </Button>
                   )}
@@ -99,6 +96,17 @@ export function DeploymentsTab({ app }: { app: App }) {
             ))}
           </tbody>
         </table>
+      )}
+
+      {rollbackTarget && (
+        <ConfirmModal
+          title="Roll back deployment?"
+          body="Roll back to this deployment's image?"
+          confirmLabel="Rollback"
+          busy={rollback.isPending}
+          onConfirm={() => rollback.mutate(rollbackTarget.id)}
+          onClose={() => setRollbackTarget(null)}
+        />
       )}
     </div>
   );

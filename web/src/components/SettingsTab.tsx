@@ -3,11 +3,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { del, patch } from "../lib/api";
 import type { App } from "../lib/types";
-import { Button, Card, FieldError, Input, Label, Select } from "./ui";
+import { Button, Card, ConfirmModal, FieldError, Icon, Input, Label, Select, useToast } from "./ui";
 
 export function SettingsTab({ app }: { app: App }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const toast = useToast();
   const [name, setName] = useState(app.name);
   const [branch, setBranch] = useState(app.git_branch);
   const [imageRef, setImageRef] = useState(app.image_ref);
@@ -16,7 +17,7 @@ export function SettingsTab({ app }: { app: App }) {
   const [healthPath, setHealthPath] = useState(app.healthcheck_path);
   const [autoDeploy, setAutoDeploy] = useState(app.auto_deploy);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   const update = useMutation({
     mutationFn: () =>
@@ -30,19 +31,27 @@ export function SettingsTab({ app }: { app: App }) {
         auto_deploy: autoDeploy,
       }),
     onSuccess: () => {
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      toast("Settings saved");
       void qc.invalidateQueries({ queryKey: ["app", app.id] });
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "save failed"),
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "save failed";
+      setError(message);
+      toast(message, "error");
+    },
   });
   const remove = useMutation({
     mutationFn: () => del(`/apps/${app.id}`),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["apps", app.org_id] });
+      toast("Application deleted");
       navigate(`/orgs/${app.org_id}`);
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "delete failed"),
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "delete failed";
+      setError(message);
+      toast(message, "error");
+    },
   });
 
   function submit(e: FormEvent) {
@@ -97,36 +106,37 @@ export function SettingsTab({ app }: { app: App }) {
               <Input id="s-health" value={healthPath} onChange={(e) => setHealthPath(e.target.value)} />
             </div>
           </div>
-          <label className="flex items-center gap-2 text-sm text-slate-300">
+          <label className="flex items-center gap-2 text-sm text-muted">
             <input type="checkbox" checked={autoDeploy} onChange={(e) => setAutoDeploy(e.target.checked)} />
             Auto-deploy on push
           </label>
           <FieldError message={error} />
-          <div className="flex items-center gap-3">
-            <Button type="submit" disabled={update.isPending}>
-              Save changes
-            </Button>
-            {saved && <span className="text-sm text-green-400">Saved — applies on next deploy</span>}
-          </div>
+          <Button type="submit" disabled={update.isPending}>
+            Save changes
+          </Button>
         </form>
       </Card>
 
-      <Card className="border-red-900">
-        <h2 className="mb-2 font-semibold text-red-400">Danger zone</h2>
-        <p className="mb-3 text-sm text-slate-400">
+      <Card className="border-danger/40">
+        <h2 className="font-display text-lg font-semibold text-danger">Danger zone</h2>
+        <p className="mt-1 text-sm text-muted">
           Deleting the app stops its containers and removes its deployments and logs.
         </p>
-        <Button
-          variant="danger"
-          onClick={() => {
-            if (window.confirm(`Delete ${app.name}? This cannot be undone.`)) {
-              remove.mutate();
-            }
-          }}
-        >
-          Delete application
+        <Button variant="danger" className="mt-4" onClick={() => setConfirming(true)}>
+          <Icon name="trash" size={14} /> Delete application
         </Button>
       </Card>
+
+      {confirming && (
+        <ConfirmModal
+          title={`Delete ${app.name}?`}
+          body="This stops the app's containers and removes its deployments and logs."
+          requireText={app.name}
+          busy={remove.isPending}
+          onConfirm={() => remove.mutate()}
+          onClose={() => setConfirming(false)}
+        />
+      )}
     </div>
   );
 }
