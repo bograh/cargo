@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/bograh/cargo/internal/apps"
 	"github.com/bograh/cargo/internal/builder"
@@ -28,6 +29,12 @@ type DeployArgs struct {
 
 func (DeployArgs) Kind() string { return "deploy" }
 
+// deployJobTimeout bounds a single deploy job's context. It must comfortably
+// exceed a cold build (base-image pulls + dependency install) plus the
+// reconciler's post-apply health gate (default 2 min). River's 1-minute
+// default is far too short and cancels healthy deploys mid-flight.
+const deployJobTimeout = 30 * time.Minute
+
 type DeployWorker struct {
 	river.WorkerDefaults[DeployArgs]
 	P *Pipeline
@@ -35,6 +42,10 @@ type DeployWorker struct {
 
 func (w *DeployWorker) Work(ctx context.Context, job *river.Job[DeployArgs]) error {
 	return w.P.Run(ctx, job.Args.DeploymentID)
+}
+
+func (w *DeployWorker) Timeout(*river.Job[DeployArgs]) time.Duration {
+	return deployJobTimeout
 }
 
 // Pipeline executes one deployment end to end: clone → build → reconcile →
@@ -103,8 +114,11 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 	defer func() { _ = logw.Close() }()
 
 	if err := p.run(ctx, dep, deploymentID, logw); err != nil {
+		// Persist the failure even when ctx was cancelled (e.g. job timeout);
+		// otherwise the status stays "deploying" and River's retry re-enters
+		// run(), hitting an illegal deploying→building transition.
 		_, _ = fmt.Fprintf(logw, "==> failed: %v\n", err)
-		_ = p.Deployments.Finish(ctx, depID, "failed", err.Error())
+		_ = p.Deployments.Finish(context.WithoutCancel(ctx), depID, "failed", err.Error())
 		return err
 	}
 	_, _ = fmt.Fprintln(logw, "==> live")

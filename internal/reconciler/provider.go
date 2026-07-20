@@ -44,9 +44,10 @@ func output(ctx context.Context, name string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-func (d *Docker) ensureNetwork(ctx context.Context, log io.Writer) {
-	// "already exists" is fine — ignore the error entirely.
-	_ = run(ctx, log, "docker", "network", "create", "cargo-proxy")
+func (d *Docker) ensureNetwork(ctx context.Context) {
+	// "already exists" is the common case — ignore the error and keep its
+	// noisy "network already exists" output out of the user's deploy log.
+	_ = run(ctx, io.Discard, "docker", "network", "create", "cargo-proxy")
 }
 
 func (d *Docker) Apply(ctx context.Context, spec Spec, log io.Writer) error {
@@ -65,7 +66,7 @@ func (d *Docker) Apply(ctx context.Context, spec Spec, log io.Writer) error {
 	if err := os.WriteFile(composePath, []byte(GenerateCompose(spec)), 0o644); err != nil {
 		return err
 	}
-	d.ensureNetwork(ctx, log)
+	d.ensureNetwork(ctx)
 	if err := run(ctx, log, "docker", "compose", "-f", composePath, "up", "-d", "--remove-orphans"); err != nil {
 		return err
 	}
