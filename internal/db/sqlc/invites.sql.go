@@ -12,9 +12,9 @@ import (
 )
 
 const createInvite = `-- name: CreateInvite :one
-INSERT INTO invites (org_id, token_hash, role, expires_at, created_by)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at
+INSERT INTO invites (org_id, token_hash, role, expires_at, created_by, email)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at, email
 `
 
 type CreateInviteParams struct {
@@ -23,6 +23,7 @@ type CreateInviteParams struct {
 	Role      string
 	ExpiresAt pgtype.Timestamptz
 	CreatedBy pgtype.UUID
+	Email     pgtype.Text
 }
 
 func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Invite, error) {
@@ -32,6 +33,7 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 		arg.Role,
 		arg.ExpiresAt,
 		arg.CreatedBy,
+		arg.Email,
 	)
 	var i Invite
 	err := row.Scan(
@@ -43,12 +45,13 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 		&i.CreatedBy,
 		&i.RevokedAt,
 		&i.CreatedAt,
+		&i.Email,
 	)
 	return i, err
 }
 
 const getInviteByTokenHash = `-- name: GetInviteByTokenHash :one
-SELECT id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at FROM invites WHERE token_hash = $1
+SELECT id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at, email FROM invites WHERE token_hash = $1
 `
 
 func (q *Queries) GetInviteByTokenHash(ctx context.Context, tokenHash []byte) (Invite, error) {
@@ -63,12 +66,13 @@ func (q *Queries) GetInviteByTokenHash(ctx context.Context, tokenHash []byte) (I
 		&i.CreatedBy,
 		&i.RevokedAt,
 		&i.CreatedAt,
+		&i.Email,
 	)
 	return i, err
 }
 
 const listInvitesForOrg = `-- name: ListInvitesForOrg :many
-SELECT id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at FROM invites WHERE org_id = $1 AND revoked_at IS NULL ORDER BY created_at
+SELECT id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at, email FROM invites WHERE org_id = $1 AND revoked_at IS NULL ORDER BY created_at
 `
 
 func (q *Queries) ListInvitesForOrg(ctx context.Context, orgID pgtype.UUID) ([]Invite, error) {
@@ -89,6 +93,7 @@ func (q *Queries) ListInvitesForOrg(ctx context.Context, orgID pgtype.UUID) ([]I
 			&i.CreatedBy,
 			&i.RevokedAt,
 			&i.CreatedAt,
+			&i.Email,
 		); err != nil {
 			return nil, err
 		}

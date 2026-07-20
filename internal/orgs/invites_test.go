@@ -22,7 +22,7 @@ func TestInviteLifecycle(t *testing.T) {
 		t.Fatalf("create org: %v", err)
 	}
 
-	token, inv, err := svc.CreateInvite(ctx, org.ID, owner, "member", 24*time.Hour)
+	token, inv, err := svc.CreateInvite(ctx, org.ID, owner, "member", "", 24*time.Hour)
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestInviteRevokedAndExpired(t *testing.T) {
 		t.Fatalf("create org: %v", err)
 	}
 
-	token, inv, err := svc.CreateInvite(ctx, org.ID, owner, "member", 24*time.Hour)
+	token, inv, err := svc.CreateInvite(ctx, org.ID, owner, "member", "", 24*time.Hour)
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestInviteRevokedAndExpired(t *testing.T) {
 		t.Fatalf("revoked accept err = %v", err)
 	}
 
-	expTok, _, err := svc.CreateInvite(ctx, org.ID, owner, "member", -time.Hour)
+	expTok, _, err := svc.CreateInvite(ctx, org.ID, owner, "member", "", -time.Hour)
 	if err != nil {
 		t.Fatalf("create expired: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestInviteRequiresAdmin(t *testing.T) {
 	if err := svc.AddMember(ctx, org.ID, viewer, "viewer"); err != nil {
 		t.Fatalf("add viewer: %v", err)
 	}
-	if _, _, err := svc.CreateInvite(ctx, org.ID, viewer, "member", time.Hour); !errors.Is(err, ErrForbidden) {
+	if _, _, err := svc.CreateInvite(ctx, org.ID, viewer, "member", "", time.Hour); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer invite err = %v", err)
 	}
 }

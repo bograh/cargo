@@ -26,7 +26,10 @@ func newInviteToken() (string, []byte, error) {
 	return tok, sum[:], nil
 }
 
-func (s *Service) CreateInvite(ctx context.Context, orgID, actor pgtype.UUID, role string, ttl time.Duration) (string, sqlc.Invite, error) {
+// CreateInvite issues an invite. email is optional: a non-empty value ties the
+// invite to a recipient (used to email the link and prefill the accept page); an
+// empty value creates a shareable link invite.
+func (s *Service) CreateInvite(ctx context.Context, orgID, actor pgtype.UUID, role, email string, ttl time.Duration) (string, sqlc.Invite, error) {
 	if !ValidRole(role) {
 		return "", sqlc.Invite{}, ErrBadRole
 	}
@@ -41,14 +44,48 @@ func (s *Service) CreateInvite(ctx context.Context, orgID, actor pgtype.UUID, ro
 	if err != nil {
 		return "", sqlc.Invite{}, err
 	}
+	var emailCol pgtype.Text
+	if email != "" {
+		emailCol = pgtype.Text{String: email, Valid: true}
+	}
 	inv, err := s.q.CreateInvite(ctx, sqlc.CreateInviteParams{
 		OrgID:     orgID,
 		TokenHash: hash,
 		Role:      role,
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(ttl), Valid: true},
 		CreatedBy: actor,
+		Email:     emailCol,
 	})
 	return token, inv, err
+}
+
+// InvitePreview is the public, unauthenticated view of an invite.
+type InvitePreview struct {
+	OrgName string
+	Role    string
+	Email   string
+}
+
+// PreviewInvite resolves a raw token to its org/role/email without requiring
+// authentication, so an invited user can see what they're joining before they
+// sign in. Returns ErrInviteInvalid for unknown/revoked/expired tokens.
+func (s *Service) PreviewInvite(ctx context.Context, token string) (InvitePreview, error) {
+	sum := sha256.Sum256([]byte(token))
+	inv, err := s.q.GetInviteByTokenHash(ctx, sum[:])
+	if errors.Is(err, pgx.ErrNoRows) {
+		return InvitePreview{}, ErrInviteInvalid
+	}
+	if err != nil {
+		return InvitePreview{}, err
+	}
+	if inv.RevokedAt.Valid || time.Now().After(inv.ExpiresAt.Time) {
+		return InvitePreview{}, ErrInviteInvalid
+	}
+	org, err := s.q.GetOrganizationByID(ctx, inv.OrgID)
+	if err != nil {
+		return InvitePreview{}, err
+	}
+	return InvitePreview{OrgName: org.Name, Role: inv.Role, Email: inv.Email.String}, nil
 }
 
 func (s *Service) ListInvites(ctx context.Context, orgID, actor pgtype.UUID) ([]sqlc.Invite, error) {

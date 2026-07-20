@@ -40,7 +40,7 @@ func (s stubOrgs) UpdateRole(_ context.Context, _, _, _ pgtype.UUID, _ string) (
 	return sqlc.Membership{}, s.err
 }
 func (s stubOrgs) RemoveMember(_ context.Context, _, _, _ pgtype.UUID) error { return s.err }
-func (s stubOrgs) CreateInvite(_ context.Context, _, _ pgtype.UUID, _ string, _ time.Duration) (string, sqlc.Invite, error) {
+func (s stubOrgs) CreateInvite(_ context.Context, _, _ pgtype.UUID, _, _ string, _ time.Duration) (string, sqlc.Invite, error) {
 	return "tok", sqlc.Invite{}, s.err
 }
 func (s stubOrgs) ListInvites(_ context.Context, _, _ pgtype.UUID) ([]sqlc.Invite, error) {
@@ -49,6 +49,9 @@ func (s stubOrgs) ListInvites(_ context.Context, _, _ pgtype.UUID) ([]sqlc.Invit
 func (s stubOrgs) RevokeInvite(_ context.Context, _, _, _ pgtype.UUID) error { return s.err }
 func (s stubOrgs) AcceptInvite(_ context.Context, _ string, _ pgtype.UUID) (sqlc.Organization, error) {
 	return s.org, s.err
+}
+func (s stubOrgs) PreviewInvite(_ context.Context, _ string) (orgs.InvitePreview, error) {
+	return orgs.InvitePreview{OrgName: s.org.Name, Role: "member"}, s.err
 }
 
 func authedServer(o OrgService) *Server {

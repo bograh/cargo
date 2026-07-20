@@ -1,6 +1,6 @@
 -- name: CreateInvite :one
-INSERT INTO invites (org_id, token_hash, role, expires_at, created_by)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO invites (org_id, token_hash, role, expires_at, created_by, email)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetInviteByTokenHash :one

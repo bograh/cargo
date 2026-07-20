@@ -57,10 +57,11 @@ type OrgService interface {
 	ListMembers(ctx context.Context, orgID, userID pgtype.UUID) ([]sqlc.ListMembersRow, error)
 	UpdateRole(ctx context.Context, orgID, actor, target pgtype.UUID, role string) (sqlc.Membership, error)
 	RemoveMember(ctx context.Context, orgID, actor, target pgtype.UUID) error
-	CreateInvite(ctx context.Context, orgID, actor pgtype.UUID, role string, ttl time.Duration) (string, sqlc.Invite, error)
+	CreateInvite(ctx context.Context, orgID, actor pgtype.UUID, role, email string, ttl time.Duration) (string, sqlc.Invite, error)
 	ListInvites(ctx context.Context, orgID, actor pgtype.UUID) ([]sqlc.Invite, error)
 	RevokeInvite(ctx context.Context, orgID, actor, inviteID pgtype.UUID) error
 	AcceptInvite(ctx context.Context, token string, userID pgtype.UUID) (sqlc.Organization, error)
+	PreviewInvite(ctx context.Context, token string) (orgs.InvitePreview, error)
 }
 
 // AdminStore is satisfied by *sqlc.Queries.

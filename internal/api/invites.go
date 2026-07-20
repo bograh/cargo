@@ -1,11 +1,15 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/bograh/cargo/internal/mailer"
 	"github.com/bograh/cargo/internal/orgs"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -13,27 +17,120 @@ import (
 
 const defaultInviteTTL = 7 * 24 * time.Hour
 
+// baseURL reconstructs the public origin from the request, honoring the
+// reverse proxy's X-Forwarded-Proto (Cargo runs behind Traefik).
+func baseURL(r *http.Request) string {
+	scheme := "http"
+	if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
+		scheme = p
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
+
+// inviteResult reports the outcome for one email invite. When the email could
+// not be sent (SMTP unset or a send error), link is populated so the admin can
+// share it manually.
+type inviteResult struct {
+	Email string `json:"email"`
+	Sent  bool   `json:"sent"`
+	Link  string `json:"link,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
 func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	id, ok := orgIDParam(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Role string `json:"role"`
+		Role   string   `json:"role"`
+		Emails []string `json:"emails"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		Error(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
 		return
 	}
-	token, inv, err := s.orgs.CreateInvite(r.Context(), id, userFrom(r.Context()).ID, body.Role, defaultInviteTTL)
-	if err != nil {
-		orgError(w, err)
+	actor := userFrom(r.Context()).ID
+
+	emails := normalizeEmails(body.Emails)
+
+	// No emails → a single shareable link invite (unchanged behavior).
+	if len(emails) == 0 {
+		token, inv, err := s.orgs.CreateInvite(r.Context(), id, actor, body.Role, "", defaultInviteTTL)
+		if err != nil {
+			orgError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"invite": inv, "token": token})
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"invite": inv,
-		"token":  token, // shown once; only the hash is stored
-	})
+
+	smtp := s.smtpConfig(r.Context())
+	results := make([]inviteResult, 0, len(emails))
+	for _, email := range emails {
+		token, _, err := s.orgs.CreateInvite(r.Context(), id, actor, body.Role, email, defaultInviteTTL)
+		if err != nil {
+			// Role/permission errors apply to every email — fail the whole call.
+			if errors.Is(err, orgs.ErrForbidden) || errors.Is(err, orgs.ErrBadRole) || errors.Is(err, orgs.ErrNotFound) {
+				orgError(w, err)
+				return
+			}
+			results = append(results, inviteResult{Email: email, Sent: false, Error: err.Error()})
+			continue
+		}
+		link := baseURL(r) + "/invite/" + token
+		res := inviteResult{Email: email}
+		if smtp == nil {
+			res.Link, res.Error = link, "email not sent (SMTP not configured)"
+		} else if err := sendInviteEmail(*smtp, email, link); err != nil {
+			res.Link, res.Error = link, "email delivery failed"
+		} else {
+			res.Sent = true
+		}
+		results = append(results, res)
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"results": results})
+}
+
+// smtpConfig loads the instance SMTP relay config, or nil if unavailable.
+func (s *Server) smtpConfig(ctx context.Context) *mailer.SMTP {
+	if s.instanceSettings == nil {
+		return nil
+	}
+	cfg, err := s.instanceSettings.SMTP(ctx)
+	if err != nil || cfg == nil {
+		return nil
+	}
+	return &mailer.SMTP{Host: cfg.Host, Port: cfg.Port, Username: cfg.Username, Password: cfg.Password, From: cfg.From}
+}
+
+func sendInviteEmail(cfg mailer.SMTP, to, link string) error {
+	subject := "You've been invited to Cargo"
+	body := fmt.Sprintf(`<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#111">
+<p>You've been invited to join an organization on Cargo.</p>
+<p><a href="%s" style="display:inline-block;background:#f5a524;color:#14100a;font-weight:600;text-decoration:none;padding:10px 18px;border-radius:8px">Accept invitation</a></p>
+<p style="color:#555">Or paste this link into your browser:<br><a href="%s">%s</a></p>
+<p style="color:#888;font-size:13px">This invitation expires in 7 days.</p>
+</div>`, link, link, link)
+	return mailer.Send(cfg, []string{to}, subject, body)
+}
+
+// normalizeEmails trims, lowercases, drops blanks/duplicates, and keeps only
+// entries that look like an email address.
+func normalizeEmails(in []string) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		e := strings.ToLower(strings.TrimSpace(raw))
+		if e == "" || !strings.Contains(e, "@") || seen[e] {
+			continue
+		}
+		seen[e] = true
+		out = append(out, e)
+	}
+	return out
 }
 
 func (s *Server) handleListInvites(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +161,21 @@ func (s *Server) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+// handlePreviewInvite is public (no auth): it lets an invited user see the org
+// and role before signing in.
+func (s *Server) handlePreviewInvite(w http.ResponseWriter, r *http.Request) {
+	p, err := s.orgs.PreviewInvite(r.Context(), chi.URLParam(r, "token"))
+	if errors.Is(err, orgs.ErrInviteInvalid) {
+		Error(w, http.StatusNotFound, "invite_invalid", "invite is invalid, revoked, or expired")
+		return
+	}
+	if err != nil {
+		orgError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"org_name": p.OrgName, "role": p.Role, "email": p.Email})
 }
 
 func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {

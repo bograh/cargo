@@ -117,6 +117,7 @@ type Invite struct {
 	CreatedBy pgtype.UUID
 	RevokedAt pgtype.Timestamptz
 	CreatedAt pgtype.Timestamptz
+	Email     pgtype.Text
 }
 
 type Membership struct {
