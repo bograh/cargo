@@ -3,21 +3,10 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../auth";
-import { Button, Card, FieldError, Input, Label } from "../components/ui";
+import { AuthShell } from "../components/AuthShell";
+import { Button, FieldError, Input, Label } from "../components/ui";
 
-export function AuthShell({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        <h1 className="mb-6 text-center text-2xl font-bold tracking-tight text-indigo-400">Cargo</h1>
-        <Card>
-          <h2 className="mb-4 text-lg font-semibold">{title}</h2>
-          {children}
-        </Card>
-      </div>
-    </main>
-  );
-}
+export { AuthShell } from "../components/AuthShell";
 
 export default function Login() {
   const { login } = useAuth();
@@ -50,7 +39,7 @@ export default function Login() {
   return (
     <AuthShell title="Log in">
       {ssoError && (
-        <p className="mb-4 rounded-md border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-300">
+        <p className="mb-4 rounded-lg border border-danger/40 bg-danger-tint px-3 py-2 text-sm text-danger">
           SSO sign-in failed. Try again or use your password.
         </p>
       )}
@@ -61,13 +50,7 @@ export default function Login() {
         </div>
         <div>
           <Label htmlFor="password">Password</Label>
-          <Input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+          <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           <FieldError message={error} />
         </div>
         <Button type="submit" className="w-full" disabled={busy}>
@@ -76,14 +59,14 @@ export default function Login() {
         {providers?.oidc && (
           <a
             href="/api/v1/auth/oidc/start"
-            className="block w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-center text-sm font-medium text-slate-200 hover:bg-slate-700"
+            className="block w-full rounded-lg border border-border bg-raised px-3 py-1.5 text-center text-sm font-medium text-text transition-colors duration-150 hover:border-amber-dim"
           >
             Sign in with SSO
           </a>
         )}
-        <p className="text-center text-sm text-slate-400">
+        <p className="text-center text-sm text-muted">
           No account?{" "}
-          <Link to="/register" className="text-indigo-400 hover:underline">
+          <Link to="/register" className="text-amber hover:underline">
             Register
           </Link>
         </p>

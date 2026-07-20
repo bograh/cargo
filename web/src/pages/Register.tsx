@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
+import { AuthShell } from "../components/AuthShell";
 import { Button, FieldError, Input, Label } from "../components/ui";
-import { AuthShell } from "./Login";
 
 export default function Register() {
   const { register } = useAuth();
@@ -39,21 +39,15 @@ export default function Register() {
         </div>
         <div>
           <Label htmlFor="password">Password (min 10 characters)</Label>
-          <Input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+          <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           <FieldError message={error} />
         </div>
         <Button type="submit" className="w-full" disabled={busy}>
           Register
         </Button>
-        <p className="text-center text-sm text-slate-400">
-          Already have an account?{" "}
-          <Link to="/login" className="text-indigo-400 hover:underline">
+        <p className="text-center text-sm text-muted">
+          Have an account?{" "}
+          <Link to="/login" className="text-amber hover:underline">
             Log in
           </Link>
         </p>
