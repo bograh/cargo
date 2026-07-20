@@ -1,0 +1,32 @@
+# Per-domain HTTP-01 overlay (FR-5.3). Use as:
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+# Requires CARGO_ACME_EMAIL in .env. Each auto subdomain and custom domain
+# gets its own certificate on first request (subject to Let's Encrypt rate
+# limits with many apps). For one wildcard certificate instead, use
+# docker-compose.dns01.yml.
+
+services:
+  traefik:
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=cargo-proxy
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      # HTTP-01 resolver — used for custom domains and, in this mode, for
+      # auto subdomains too.
+      - --certificatesresolvers.le.acme.email=${CARGO_ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/acme/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      # Default cert for app routers.
+      - --entrypoints.websecure.http.tls.certresolver=le
+  controlplane:
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.cargo.rule=Host(`${CARGO_PLATFORM_DOMAIN}`)
+      - traefik.http.routers.cargo.entrypoints=websecure
+      - traefik.http.routers.cargo.tls=true
+      - traefik.http.routers.cargo.tls.certresolver=le
+      - traefik.http.services.cargo.loadbalancer.server.port=8080

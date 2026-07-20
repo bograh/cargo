@@ -21,8 +21,8 @@ Exactly three platform containers (plus one per deployed app):
 ## Prerequisites
 
 - A Linux host with Docker Engine + the compose plugin
-- DNS records pointing at the host: `<platform-domain>` and `*.<apps-domain>`
 - Ports 80 and 443 open
+- For a production install: DNS records pointing at the host (`<platform-domain>` and `*.<apps-domain>`). No domain? The installer falls back to a local install on localhost / the server's IP.
 
 ## Quick install
 
@@ -31,18 +31,18 @@ cd deploy
 ./install.sh
 ```
 
-The installer checks dependencies, prompts for your platform domain, apps-domain suffix, and Let's Encrypt email (optionally a DNS provider for wildcard certificates), generates secrets into a mode-0600 `.env`, and starts the stack. Non-interactive installs can set `CARGO_PLATFORM_DOMAIN`, `CARGO_APPS_SUFFIX`, and `CARGO_ACME_EMAIL` in the environment instead.
+The installer checks dependencies, prompts for your platform domain, apps-domain suffix, and Let's Encrypt email (optionally a DNS provider for wildcard certificates), generates secrets into a mode-0600 `.env`, and starts the stack. Leave the platform domain empty for a local install (plain HTTP + self-signed HTTPS, no DNS or certificates needed). Non-interactive installs can set `CARGO_PLATFORM_DOMAIN`, `CARGO_APPS_SUFFIX`, and `CARGO_ACME_EMAIL` in the environment instead.
 
 > **Back up `CARGO_MASTER_KEY` from `.env` somewhere safe.** Environment
 > variables and credentials are encrypted with it and are unrecoverable
 > without it.
 
-Open `https://<platform-domain>` and register — the first account becomes the instance admin. Instance settings (apps-domain suffix, SMTP, GitHub App credentials) are managed from the admin area in the UI.
+Open `https://<platform-domain>` (or `http://localhost` / `http://<server-ip>` for a local install) and register — the first account becomes the instance admin. Instance settings (apps-domain suffix, SMTP, GitHub App credentials) are managed from the admin area in the UI.
 
 ## Upgrade
 
 ```bash
-docker compose pull && docker compose up -d
+docker compose pull && docker compose up -d   # add your TLS overlay's -f flag for production installs
 ```
 
 Migrations run automatically at startup; running user apps are not touched.

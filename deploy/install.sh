@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Cargo installer (FR-8.1): dependency checks → prompts → secrets → up.
 # Run from the deploy/ directory of a checkout:  ./install.sh
+# Leave the platform domain empty (or give localhost/an IP) for a local
+# install: plain HTTP + self-signed HTTPS, no DNS or Let's Encrypt needed.
 # Non-interactive: set CARGO_PLATFORM_DOMAIN, CARGO_APPS_SUFFIX,
 # CARGO_ACME_EMAIL (and optionally CARGO_DNS_PROVIDER + its credentials)
-# in the environment. Flags: --force (overwrite .env), --no-up (skip launch).
+# in the environment; with none of them set you get a local install.
+# Flags: --force (overwrite .env), --no-up (skip launch).
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -44,13 +47,44 @@ ask() { # ask VAR "prompt" [default]
   printf -v "$var" '%s' "${current:-$default}"
 }
 
-ask CARGO_PLATFORM_DOMAIN "Platform domain (where the Cargo UI lives, e.g. cargo.example.com)"
-ask CARGO_APPS_SUFFIX     "Apps domain suffix (apps get <name>.<suffix>, e.g. apps.example.com)"
-ask CARGO_ACME_EMAIL      "Email for Let's Encrypt certificates"
-ask CARGO_DNS_PROVIDER    "DNS provider for wildcard certs (e.g. cloudflare; empty = per-domain HTTP-01)" ""
+# Best-effort primary IPv4 of this host (for local installs).
+detect_ip() {
+  local ip=""
+  if command -v ip >/dev/null 2>&1; then
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -n1)"
+  fi
+  if [[ -z "$ip" ]] && command -v hostname >/dev/null 2>&1; then
+    ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | sed -n '/^[0-9]*\./p' | head -n1)"
+  fi
+  printf '%s' "$ip"
+}
 
-[[ -n "$CARGO_PLATFORM_DOMAIN" && -n "$CARGO_APPS_SUFFIX" && -n "$CARGO_ACME_EMAIL" ]] ||
-  fail "platform domain, apps suffix, and ACME email are required"
+# localhost, *.localhost, and IP literals can't get real certificates.
+is_local_host() {
+  [[ "$1" == "localhost" || "$1" == *.localhost ||
+    "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ || "$1" == *:* ]]
+}
+
+ask CARGO_PLATFORM_DOMAIN "Platform domain (where the Cargo UI lives, e.g. cargo.example.com; empty = localhost/this server's IP)" ""
+
+MODE=production
+if [[ -z "$CARGO_PLATFORM_DOMAIN" ]] || is_local_host "$CARGO_PLATFORM_DOMAIN"; then
+  MODE=local
+  if [[ -z "$CARGO_PLATFORM_DOMAIN" ]]; then
+    CARGO_PLATFORM_DOMAIN="$(detect_ip)"
+    [[ -n "$CARGO_PLATFORM_DOMAIN" ]] || CARGO_PLATFORM_DOMAIN="localhost"
+  fi
+  CARGO_APPS_SUFFIX="${CARGO_APPS_SUFFIX:-apps.localhost}"
+  CARGO_ACME_EMAIL=""
+  CARGO_DNS_PROVIDER=""
+  say "local install on ${CARGO_PLATFORM_DOMAIN}: no DNS or Let's Encrypt needed (plain HTTP + self-signed HTTPS)"
+else
+  ask CARGO_APPS_SUFFIX  "Apps domain suffix (apps get <name>.<suffix>, e.g. apps.example.com)"
+  ask CARGO_ACME_EMAIL   "Email for Let's Encrypt certificates"
+  ask CARGO_DNS_PROVIDER "DNS provider for wildcard certs (e.g. cloudflare; empty = per-domain HTTP-01)" ""
+  [[ -n "$CARGO_APPS_SUFFIX" && -n "$CARGO_ACME_EMAIL" ]] ||
+    fail "apps suffix and ACME email are required for a domain install"
+fi
 
 # --- secrets ------------------------------------------------------------
 gen_hex() { # gen_hex BYTES
@@ -82,15 +116,19 @@ cat <<'EOF'
 
 EOF
 
-say "DNS prerequisites (verify before continuing):"
-echo "    ${CARGO_PLATFORM_DOMAIN}  → this server's IP"
-echo "    *.${CARGO_APPS_SUFFIX}    → this server's IP"
+if [[ $MODE == production ]]; then
+  say "DNS prerequisites (verify before continuing):"
+  echo "    ${CARGO_PLATFORM_DOMAIN}  → this server's IP"
+  echo "    *.${CARGO_APPS_SUFFIX}    → this server's IP"
+fi
 
-if [[ -n "$CARGO_DNS_PROVIDER" ]]; then
+if [[ $MODE == local ]]; then
+  COMPOSE_ARGS=(-f docker-compose.yml)
+elif [[ -n "$CARGO_DNS_PROVIDER" ]]; then
   say "wildcard DNS-01 mode: remember to add ${CARGO_DNS_PROVIDER}'s credential env vars to .env (see docker-compose.dns01.yml)"
   COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.dns01.yml)
 else
-  COMPOSE_ARGS=(-f docker-compose.yml)
+  COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.tls.yml)
 fi
 
 if [[ $NO_UP -eq 1 ]]; then
@@ -100,4 +138,9 @@ fi
 
 say "starting Cargo…"
 docker compose "${COMPOSE_ARGS[@]}" up -d
-say "done. Open https://${CARGO_PLATFORM_DOMAIN} and register — the first account becomes the instance admin."
+if [[ $MODE == local ]]; then
+  say "done. Open http://${CARGO_PLATFORM_DOMAIN} (or http://localhost) and register — the first account becomes the instance admin."
+  say "apps will be served at https://<name>.${CARGO_APPS_SUFFIX} with a self-signed certificate (accept the browser warning)"
+else
+  say "done. Open https://${CARGO_PLATFORM_DOMAIN} and register — the first account becomes the instance admin."
+fi

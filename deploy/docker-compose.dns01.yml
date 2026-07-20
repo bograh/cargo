@@ -1,9 +1,10 @@
-# Wildcard DNS-01 overlay (recommended mode, FR-5.3). Use as:
+# Wildcard DNS-01 overlay (recommended production mode, FR-5.3). Use as:
 #   docker compose -f docker-compose.yml -f docker-compose.dns01.yml up -d
-# Requires CARGO_DNS_PROVIDER (a Traefik ACME DNS provider name) plus the
-# provider's credential env vars in .env (e.g. CF_DNS_API_TOKEN for
-# cloudflare). Auto subdomains are covered by one wildcard certificate;
-# custom domains keep per-domain HTTP-01 via their pinned resolver.
+# Requires CARGO_ACME_EMAIL and CARGO_DNS_PROVIDER (a Traefik ACME DNS
+# provider name) plus the provider's credential env vars in .env (e.g.
+# CF_DNS_API_TOKEN for cloudflare). Auto subdomains are covered by one
+# wildcard certificate; custom domains keep per-domain HTTP-01 via their
+# pinned resolver.
 
 services:
   traefik:
@@ -29,3 +30,13 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_REGION: ${AWS_REGION:-}
+  controlplane:
+    labels:
+      # The platform UI keeps a per-domain HTTP-01 cert (resolver `le`);
+      # only app subdomains use the wildcard.
+      - traefik.enable=true
+      - traefik.http.routers.cargo.rule=Host(`${CARGO_PLATFORM_DOMAIN}`)
+      - traefik.http.routers.cargo.entrypoints=websecure
+      - traefik.http.routers.cargo.tls=true
+      - traefik.http.routers.cargo.tls.certresolver=le
+      - traefik.http.services.cargo.loadbalancer.server.port=8080
