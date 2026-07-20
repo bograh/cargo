@@ -5,6 +5,7 @@ export { Textarea } from "./Textarea";
 export { Label } from "./Label";
 export { Card } from "./Card";
 export { Badge } from "./Badge";
+export type { BadgeTone } from "./Badge";
 export { Spinner } from "./Spinner";
 export { Skeleton } from "./Skeleton";
 export { FieldError } from "./FieldError";

@@ -6,6 +6,7 @@ import Register from "./pages/Register";
 import Home from "./pages/Home";
 import NewOrg from "./pages/NewOrg";
 import OrgApps from "./pages/OrgApps";
+import OrgDatabases from "./pages/OrgDatabases";
 import OrgSettings from "./pages/OrgSettings";
 import NewApp from "./pages/NewApp";
 import AppDetail from "./pages/AppDetail";
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/orgs/new" element={<NewOrg />} />
         <Route path="/orgs/:orgId" element={<OrgApps />} />
+        <Route path="/orgs/:orgId/databases" element={<OrgDatabases />} />
         <Route path="/orgs/:orgId/settings" element={<OrgSettings />} />
         <Route path="/orgs/:orgId/apps/new" element={<NewApp />} />
         <Route path="/apps/:appId" element={<AppDetail />} />

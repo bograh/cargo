@@ -160,10 +160,10 @@ test("delete confirm button is disabled until the typed name matches", async () 
   await user.click(await screen.findByRole("button", { name: "Manage" }));
   await user.click(await screen.findByRole("button", { name: "Delete database" }));
 
-  const confirmButton = screen.getByRole("button", { name: "Confirm delete" });
+  const confirmButton = screen.getByRole("button", { name: "Delete" });
   expect(confirmButton).toBeDisabled();
 
-  await user.type(screen.getByLabelText("confirm instance name"), "my-db");
+  await user.type(screen.getByLabelText(/type my-db to confirm/i), "my-db");
 
   expect(confirmButton).not.toBeDisabled();
 });

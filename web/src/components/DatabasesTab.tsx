@@ -2,13 +2,28 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, del, post } from "../lib/api";
 import type { App, DatabaseAttachment, DatabaseDetail, DatabaseInstance, Snapshot } from "../lib/types";
-import { Badge, Button, Card, FieldError, Input, Label, Select, Spinner } from "./ui";
+import {
+  Badge,
+  Button,
+  Card,
+  ConfirmModal,
+  FieldError,
+  Icon,
+  Input,
+  Label,
+  Modal,
+  Select,
+  Skeleton,
+  StatusDot,
+  useToast,
+  type BadgeTone,
+} from "./ui";
 
-const STATUS_COLORS: Record<string, "green" | "amber" | "red" | "gray"> = {
-  running: "green",
+const STATUS_TONES: Record<string, BadgeTone> = {
+  running: "live",
   provisioning: "amber",
-  error: "red",
-  stopped: "gray",
+  error: "danger",
+  stopped: "neutral",
 };
 
 const POSTGRES_VERSIONS = ["16", "17"];
@@ -28,6 +43,7 @@ function formatSize(bytes?: number) {
 
 export function DatabasesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [name, setName] = useState("");
   const [engine, setEngine] = useState<"postgres" | "redis">("postgres");
   const [version, setVersion] = useState("16");
@@ -59,8 +75,13 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
       setExposePort(false);
       setFormError("");
       invalidateList();
+      toast("Database provisioning started");
     },
-    onError: (err) => setFormError(err instanceof Error ? err.message : "provision failed"),
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "provision failed";
+      setFormError(message);
+      toast(message, "error");
+    },
   });
 
   function onEngineChange(next: "postgres" | "redis") {
@@ -71,7 +92,7 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
   return (
     <div className="space-y-6">
       <Card>
-        <h2 className="mb-3 font-semibold">Provision a database</h2>
+        <h2 className="mb-3 font-display font-semibold">Provision a database</h2>
         <form
           className="space-y-3"
           onSubmit={(e) => {
@@ -93,6 +114,7 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
               <Label htmlFor="db-engine">Engine</Label>
               <Select
                 id="db-engine"
+                className="w-full"
                 value={engine}
                 onChange={(e) => onEngineChange(e.target.value as "postgres" | "redis")}
               >
@@ -102,7 +124,7 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
             </div>
             <div>
               <Label htmlFor="db-version">Version</Label>
-              <Select id="db-version" value={version} onChange={(e) => setVersion(e.target.value)}>
+              <Select id="db-version" className="w-full" value={version} onChange={(e) => setVersion(e.target.value)}>
                 {(engine === "postgres" ? POSTGRES_VERSIONS : REDIS_VERSIONS).map((v) => (
                   <option key={v} value={v}>
                     {v}
@@ -114,14 +136,14 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
           {engine === "redis" && (
             <div>
               <Label htmlFor="db-redis-mode">Redis mode</Label>
-              <Select id="db-redis-mode" value={redisMode} onChange={(e) => setRedisMode(e.target.value)}>
+              <Select id="db-redis-mode" className="w-full" value={redisMode} onChange={(e) => setRedisMode(e.target.value)}>
                 <option value="acl">acl (per-app users, isolated)</option>
                 <option value="shared">shared (one password, indexes only)</option>
               </Select>
             </div>
           )}
           <div>
-            <label className="flex items-center gap-2 text-sm text-slate-300">
+            <label className="flex items-center gap-2 text-sm text-muted">
               <input
                 type="checkbox"
                 checked={exposePort}
@@ -130,7 +152,7 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
               Expose a host port
             </label>
             {exposePort && (
-              <p className="mt-1 text-xs text-amber-400">
+              <p className="mt-1 text-xs text-amber">
                 Warning: exposing a host port makes this database reachable outside the deploy network.
                 Only enable this if you understand the security implications.
               </p>
@@ -144,11 +166,12 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
       </Card>
 
       {isLoading ? (
-        <div className="flex justify-center py-10">
-          <Spinner />
+        <div className="space-y-4">
+          <Skeleton className="h-32" />
+          <Skeleton className="h-32" />
         </div>
       ) : !instances || instances.length === 0 ? (
-        <p className="text-sm text-slate-500">No databases provisioned yet.</p>
+        <p className="text-sm text-muted">No databases provisioned yet.</p>
       ) : (
         <div className="space-y-4">
           {instances.map((inst) => (
@@ -179,34 +202,31 @@ function OneTimeUrlModal({
   envKey: string;
   onClose: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const toast = useToast();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <Card className="max-w-lg w-full">
-        <h3 className="mb-2 font-semibold">Connection URL</h3>
-        <p className="mb-3 text-sm text-slate-400">
-          Injected into the attached app as <code>{envKey}</code>.
-        </p>
-        <div className="mb-3 flex items-center gap-2">
-          <code className="flex-1 truncate rounded bg-slate-950 px-2 py-1.5 text-xs text-slate-200">{url}</code>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              void navigator.clipboard?.writeText(url);
-              setCopied(true);
-            }}
-          >
-            {copied ? "Copied" : "Copy"}
-          </Button>
-        </div>
-        <p className="mb-4 text-sm font-medium text-amber-400">
-          Save this now — it will not be shown again.
-        </p>
-        <div className="flex justify-end">
-          <Button onClick={onClose}>Close</Button>
-        </div>
-      </Card>
-    </div>
+    <Modal title="Connection URL" onClose={onClose} wide>
+      <p className="mb-3 text-sm text-muted">
+        Injected into the attached app as <code className="font-mono text-text">{envKey}</code>.
+      </p>
+      <div className="mb-3 flex items-center gap-2">
+        <code className="flex-1 truncate rounded-md bg-terminal px-2 py-1.5 font-mono text-xs text-text">{url}</code>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            void navigator.clipboard?.writeText(url);
+            toast("Copied to clipboard");
+          }}
+        >
+          <Icon name="copy" size={14} /> Copy
+        </Button>
+      </div>
+      <p className="mb-4 text-sm font-medium text-amber">
+        Save this now — it will not be shown again.
+      </p>
+      <div className="flex justify-end">
+        <Button onClick={onClose}>Close</Button>
+      </div>
+    </Modal>
   );
 }
 
@@ -226,7 +246,7 @@ function InstanceCard({
   invalidateList: () => void;
 }) {
   const qc = useQueryClient();
-  const [deleteText, setDeleteText] = useState("");
+  const toast = useToast();
   const [showDelete, setShowDelete] = useState(false);
   const [selectedAppId, setSelectedAppId] = useState("");
   const [error, setError] = useState("");
@@ -251,6 +271,12 @@ function InstanceCard({
   const invalidateSnapshots = () =>
     void qc.invalidateQueries({ queryKey: ["database-snapshots", instance.id] });
 
+  function reportError(err: unknown, fallback: string) {
+    const message = err instanceof Error ? err.message : fallback;
+    setError(message);
+    toast(message, "error");
+  }
+
   const attach = useMutation({
     mutationFn: (appId: string) =>
       post<{ url: string; env_key: string }>(`/databases/${instance.id}/attachments`, { app_id: appId }),
@@ -261,7 +287,7 @@ function InstanceCard({
       invalidateDetail();
       invalidateList();
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "attach failed"),
+    onError: (err) => reportError(err, "attach failed"),
   });
   const detach = useMutation({
     mutationFn: (appId: string) => del(`/databases/${instance.id}/attachments/${appId}`),
@@ -269,58 +295,66 @@ function InstanceCard({
       invalidateDetail();
       invalidateList();
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "detach failed"),
+    onError: (err) => reportError(err, "detach failed"),
   });
   const takeSnapshot = useMutation({
     mutationFn: () => post(`/databases/${instance.id}/snapshots`),
-    onSuccess: invalidateSnapshots,
-    onError: (err) => setError(err instanceof Error ? err.message : "snapshot failed"),
+    onSuccess: () => {
+      invalidateSnapshots();
+      toast("Snapshot created");
+    },
+    onError: (err) => reportError(err, "snapshot failed"),
   });
   const deleteSnapshot = useMutation({
     mutationFn: (snapshotName: string) => del(`/databases/${instance.id}/snapshots/${snapshotName}`),
     onSuccess: invalidateSnapshots,
-    onError: (err) => setError(err instanceof Error ? err.message : "delete snapshot failed"),
+    onError: (err) => reportError(err, "delete snapshot failed"),
   });
   const deleteInstance = useMutation({
     mutationFn: () => del(`/databases/${instance.id}`),
     onSuccess: () => {
       setShowDelete(false);
       invalidateList();
+      toast("Database deleted");
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "delete failed"),
+    onError: (err) => reportError(err, "delete failed"),
   });
 
   const attachedAppIds = new Set((detail?.attachments ?? []).map((a: DatabaseAttachment) => a.app_id));
   const availableApps = (apps ?? []).filter((a) => !attachedAppIds.has(a.id));
   const appNameById = new Map((apps ?? []).map((a) => [a.id, a.name]));
 
+  const dotStatus =
+    instance.status === "running" ? "live" : instance.status === "error" ? "failed" : "building";
+
   return (
     <Card>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h3 className="font-semibold text-slate-100">{instance.name}</h3>
-          <Badge color="indigo">{instance.engine}</Badge>
-          <span className="text-xs text-slate-500">v{instance.version}</span>
-          <Badge color={STATUS_COLORS[instance.status] ?? "gray"}>{instance.status}</Badge>
+          <StatusDot status={dotStatus} />
+          <h3 className="font-display font-semibold text-text">{instance.name}</h3>
+          <Badge tone="amber">{instance.engine}</Badge>
+          <span className="text-xs text-muted">v{instance.version}</span>
+          <Badge tone={STATUS_TONES[instance.status] ?? "neutral"}>{instance.status}</Badge>
         </div>
         <Button variant="secondary" onClick={onToggle}>
           {expanded ? "Hide" : "Manage"}
         </Button>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
         {detail && <span>{formatSize(detail.size_bytes)}</span>}
         {instance.host_port && <span>host port {instance.host_port}</span>}
         {(detail?.attachments ?? []).map((a) => (
-          <Badge key={a.app_id} color="gray">
+          <Badge key={a.app_id} tone="neutral">
             {appNameById.get(a.app_id) ?? a.app_id}
           </Badge>
         ))}
       </div>
 
       {expanded && (
-        <div className="mt-4 space-y-4 border-t border-slate-800 pt-4">
+        <div className="mt-4 space-y-4 border-t border-border pt-4">
           <div>
-            <h4 className="mb-2 text-sm font-medium text-slate-300">Attach to an app</h4>
+            <h4 className="mb-2 text-sm font-medium text-text">Attach to an app</h4>
             <div className="flex gap-2">
               <Select
                 aria-label="attach app"
@@ -357,7 +391,7 @@ function InstanceCard({
 
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <h4 className="text-sm font-medium text-slate-300">Snapshots</h4>
+              <h4 className="text-sm font-medium text-text">Snapshots</h4>
               <Button
                 variant="secondary"
                 onClick={() => takeSnapshot.mutate()}
@@ -372,11 +406,11 @@ function InstanceCard({
                   <li key={s.name} className="flex items-center justify-between text-sm">
                     <a
                       href={`/api/v1/databases/${instance.id}/snapshots/${s.name}`}
-                      className="text-indigo-400 hover:underline"
+                      className="font-mono text-amber hover:underline"
                     >
                       {s.name}
                     </a>
-                    <span className="text-xs text-slate-500">{formatSize(s.size)}</span>
+                    <span className="text-xs text-muted">{formatSize(s.size)}</span>
                     <Button variant="danger" onClick={() => deleteSnapshot.mutate(s.name)}>
                       Delete
                     </Button>
@@ -384,43 +418,29 @@ function InstanceCard({
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-slate-500">No snapshots yet.</p>
+              <p className="text-sm text-muted">No snapshots yet.</p>
             )}
           </div>
 
           <FieldError message={error} />
 
-          <div className="border-t border-slate-800 pt-4">
-            {!showDelete ? (
-              <Button variant="danger" onClick={() => setShowDelete(true)}>
-                Delete database
-              </Button>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-sm text-slate-400">
-                  Type <code className="text-slate-200">{instance.name}</code> to confirm deletion.
-                </p>
-                <Input
-                  aria-label="confirm instance name"
-                  value={deleteText}
-                  onChange={(e) => setDeleteText(e.target.value)}
-                />
-                <div className="flex gap-2">
-                  <Button
-                    variant="danger"
-                    disabled={deleteText !== instance.name || deleteInstance.isPending}
-                    onClick={() => deleteInstance.mutate()}
-                  >
-                    Confirm delete
-                  </Button>
-                  <Button variant="secondary" onClick={() => setShowDelete(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            )}
+          <div className="border-t border-border pt-4">
+            <Button variant="danger" onClick={() => setShowDelete(true)}>
+              <Icon name="trash" size={14} /> Delete database
+            </Button>
           </div>
         </div>
+      )}
+
+      {showDelete && (
+        <ConfirmModal
+          title={`Delete ${instance.name}?`}
+          body="This destroys the instance, its volume, and all snapshots. Attached apps lose their credentials on next deploy."
+          requireText={instance.name}
+          busy={deleteInstance.isPending}
+          onConfirm={() => deleteInstance.mutate()}
+          onClose={() => setShowDelete(false)}
+        />
       )}
     </Card>
   );
