@@ -19,12 +19,3 @@ export { Dropdown, DropdownItem } from "./Dropdown";
 export { Modal } from "./Modal";
 export { ConfirmModal } from "./ConfirmModal";
 export { ToastProvider, useToast } from "./Toast";
-
-// --- compat shims (deleted in the final cleanup task) ---
-import { createElement, type ReactNode } from "react";
-import { PageHeader } from "./PageHeader";
-
-/** @deprecated use PageHeader */
-export function PageTitle({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
-  return createElement(PageHeader, { title: children, actions });
-}

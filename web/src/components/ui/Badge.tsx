@@ -10,23 +10,12 @@ const TONES: Record<BadgeTone, string> = {
   neutral: "bg-raised text-muted border-border",
 };
 
-/** @deprecated legacy color names from ui.tsx — removed in the cleanup task */
-type LegacyColor = "green" | "amber" | "red" | "gray" | "indigo";
-const LEGACY: Record<LegacyColor, BadgeTone> = {
-  green: "live",
-  amber: "amber",
-  red: "danger",
-  gray: "neutral",
-  indigo: "amber",
-};
-
 export function Badge({
-  tone,
-  color,
+  tone = "neutral",
   className,
   ...props
-}: HTMLAttributes<HTMLSpanElement> & { tone?: BadgeTone; color?: LegacyColor }) {
-  const resolved: BadgeTone = tone ?? (color ? LEGACY[color] : "neutral");
+}: HTMLAttributes<HTMLSpanElement> & { tone?: BadgeTone }) {
+  const resolved: BadgeTone = tone;
   return (
     <span
       className={cn(
