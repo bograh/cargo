@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, del, post } from "../lib/api";
+import { cn } from "../lib/cn";
 import type { App, DatabaseAttachment, DatabaseDetail, DatabaseInstance, Snapshot } from "../lib/types";
 import {
   Badge,
@@ -18,6 +19,8 @@ import {
   useToast,
   type BadgeTone,
 } from "./ui";
+import postgresLogo from "../assets/db/postgresql.svg";
+import redisLogo from "../assets/db/redis.svg";
 
 const STATUS_TONES: Record<string, BadgeTone> = {
   running: "live",
@@ -26,8 +29,25 @@ const STATUS_TONES: Record<string, BadgeTone> = {
   stopped: "neutral",
 };
 
-const POSTGRES_VERSIONS = ["16", "17"];
-const REDIS_VERSIONS = ["7"];
+type EngineId = "postgres" | "redis";
+
+interface EngineMeta {
+  id: EngineId;
+  label: string;
+  logo: string;
+  blurb: string;
+  versions: string[];
+}
+
+// Only postgres and redis are provisionable by the control plane today.
+const ENGINES: EngineMeta[] = [
+  { id: "postgres", label: "PostgreSQL", logo: postgresLogo, blurb: "Relational SQL database", versions: ["16", "17"] },
+  { id: "redis", label: "Redis", logo: redisLogo, blurb: "In-memory key-value store", versions: ["7"] },
+];
+
+const ENGINE_BY_ID: Record<EngineId, EngineMeta> = Object.fromEntries(
+  ENGINES.map((e) => [e.id, e]),
+) as Record<EngineId, EngineMeta>;
 
 function formatSize(bytes?: number) {
   if (!bytes) return "0 B";
@@ -45,7 +65,7 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [name, setName] = useState("");
-  const [engine, setEngine] = useState<"postgres" | "redis">("postgres");
+  const [engine, setEngine] = useState<EngineId>("postgres");
   const [version, setVersion] = useState("16");
   const [redisMode, setRedisMode] = useState("acl");
   const [exposePort, setExposePort] = useState(false);
@@ -84,9 +104,9 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
     },
   });
 
-  function onEngineChange(next: "postgres" | "redis") {
+  function onEngineChange(next: EngineId) {
     setEngine(next);
-    setVersion(next === "postgres" ? POSTGRES_VERSIONS[0] : REDIS_VERSIONS[0]);
+    setVersion(ENGINE_BY_ID[next].versions[0]);
   }
 
   return (
@@ -109,29 +129,44 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
               placeholder="my-database"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="db-engine">Engine</Label>
-              <Select
-                id="db-engine"
-                className="w-full"
-                value={engine}
-                onChange={(e) => onEngineChange(e.target.value as "postgres" | "redis")}
-              >
-                <option value="postgres">postgres</option>
-                <option value="redis">redis</option>
-              </Select>
+          <div>
+            <Label>Engine</Label>
+            <div className="grid grid-cols-2 gap-3">
+              {ENGINES.map((eng) => {
+                const selected = engine === eng.id;
+                return (
+                  <button
+                    key={eng.id}
+                    type="button"
+                    aria-label={eng.label}
+                    aria-pressed={selected}
+                    onClick={() => onEngineChange(eng.id)}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg border p-3 text-left transition-colors duration-150",
+                      selected
+                        ? "border-amber bg-amber-tint"
+                        : "border-border bg-raised hover:border-amber-dim",
+                    )}
+                  >
+                    <img src={eng.logo} alt="" className="h-9 w-9 shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block truncate font-display text-sm font-semibold text-text">{eng.label}</span>
+                      <span className="block truncate text-xs text-muted">{eng.blurb}</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-            <div>
-              <Label htmlFor="db-version">Version</Label>
-              <Select id="db-version" className="w-full" value={version} onChange={(e) => setVersion(e.target.value)}>
-                {(engine === "postgres" ? POSTGRES_VERSIONS : REDIS_VERSIONS).map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </Select>
-            </div>
+          </div>
+          <div>
+            <Label htmlFor="db-version">Version</Label>
+            <Select id="db-version" className="w-full" value={version} onChange={(e) => setVersion(e.target.value)}>
+              {ENGINE_BY_ID[engine].versions.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </Select>
           </div>
           {engine === "redis" && (
             <div>
@@ -332,6 +367,9 @@ function InstanceCard({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <StatusDot status={dotStatus} />
+          {ENGINE_BY_ID[instance.engine as EngineId]?.logo && (
+            <img src={ENGINE_BY_ID[instance.engine as EngineId].logo} alt="" className="h-5 w-5 shrink-0" />
+          )}
           <h3 className="font-display font-semibold text-text">{instance.name}</h3>
           <Badge tone="amber">{instance.engine}</Badge>
           <span className="text-xs text-muted">v{instance.version}</span>

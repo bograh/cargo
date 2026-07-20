@@ -44,7 +44,7 @@ test("provisioning a redis instance defaults redis_mode to acl", async () => {
   renderPage(<DatabasesTab orgId="org-1" />);
 
   await user.type(await screen.findByLabelText("Name"), "my-redis");
-  await user.selectOptions(screen.getByLabelText("Engine"), "redis");
+  await user.click(screen.getByRole("button", { name: "Redis" }));
   await user.click(screen.getByRole("button", { name: "Provision" }));
 
   await waitFor(() => {
