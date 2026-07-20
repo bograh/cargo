@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { post } from "../lib/api";
 import type { Org } from "../lib/types";
-import { Card, Spinner } from "../components/ui";
+import { AuthShell } from "../components/AuthShell";
+import { Spinner } from "../components/ui";
 
 export default function AcceptInvite() {
   const { token } = useParams();
@@ -24,17 +25,20 @@ export default function AcceptInvite() {
   }, [token, navigate, qc]);
 
   return (
-    <div className="mx-auto max-w-md">
-      <Card>
-        {error ? (
-          <p className="text-sm text-red-400">Could not accept invite: {error}</p>
-        ) : (
-          <div className="flex items-center gap-3">
-            <Spinner />
-            <p className="text-sm text-slate-300">Joining organization…</p>
-          </div>
-        )}
-      </Card>
-    </div>
+    <AuthShell title="Join organization">
+      {error ? (
+        <div className="space-y-3">
+          <p className="text-sm text-danger">Could not accept invite: {error}</p>
+          <Link to="/" className="text-sm text-amber hover:underline">
+            Back to dashboard
+          </Link>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <Spinner />
+          <p className="text-sm text-muted">Joining organization…</p>
+        </div>
+      )}
+    </AuthShell>
   );
 }

@@ -1,10 +1,22 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate } from "react-router-dom";
 import { api, del, put } from "../lib/api";
 import { useAuth } from "../auth";
 import type { User } from "../lib/types";
-import { Badge, Button, Card, FieldError, Input, Label, PageTitle, Spinner } from "../components/ui";
+import { Badge, Button, Card, FieldError, Input, Label, PageHeader, Spinner, Textarea, useToast } from "../components/ui";
+
+function SectionHeading({ eyebrow, title, aside }: { eyebrow: string; title: string; aside?: ReactNode }) {
+  return (
+    <div className="mb-3 flex items-start justify-between gap-2">
+      <div>
+        <div className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-amber">{eyebrow}</div>
+        <h2 className="mt-0.5 font-display font-semibold">{title}</h2>
+      </div>
+      {aside}
+    </div>
+  );
+}
 
 interface InstanceSettings {
   apps_domain_suffix: string;
@@ -13,6 +25,7 @@ interface InstanceSettings {
 
 function InstanceSettingsCard() {
   const qc = useQueryClient();
+  const toast = useToast();
   const { data } = useQuery({
     queryKey: ["admin", "settings"],
     queryFn: () => api<InstanceSettings>("/admin/settings"),
@@ -29,7 +42,11 @@ function InstanceSettingsCard() {
     void qc.invalidateQueries({ queryKey: ["admin", "settings"] });
     void qc.invalidateQueries({ queryKey: ["instance-info"] });
   };
-  const onError = (err: unknown) => setError(err instanceof Error ? err.message : "save failed");
+  const onError = (err: unknown) => {
+    const message = err instanceof Error ? err.message : "save failed";
+    setError(message);
+    toast(message, "error");
+  };
 
   const saveSuffix = useMutation({
     mutationFn: () => put("/admin/settings/apps-domain-suffix", { suffix }),
@@ -37,6 +54,7 @@ function InstanceSettingsCard() {
       setSuffix("");
       setError("");
       invalidate();
+      toast("Saved");
     },
     onError,
   });
@@ -53,18 +71,22 @@ function InstanceSettingsCard() {
       setSmtpPass("");
       setError("");
       invalidate();
+      toast("Saved");
     },
     onError,
   });
   const clearSmtp = useMutation({
     mutationFn: () => del("/admin/settings/smtp"),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate();
+      toast("SMTP cleared");
+    },
     onError,
   });
 
   return (
     <Card>
-      <h2 className="mb-3 font-semibold">Instance settings</h2>
+      <SectionHeading eyebrow="instance" title="Instance settings" />
       <div className="space-y-6">
         <form
           className="flex items-end gap-2"
@@ -75,7 +97,7 @@ function InstanceSettingsCard() {
         >
           <div className="flex-1">
             <Label htmlFor="suffix">
-              Apps domain suffix — currently <code className="text-slate-300">{data?.apps_domain_suffix}</code>
+              Apps domain suffix — currently <code className="font-mono text-text">{data?.apps_domain_suffix}</code>
             </Label>
             <Input id="suffix" placeholder="apps.example.com" value={suffix} onChange={(e) => setSuffix(e.target.value)} />
           </div>
@@ -83,7 +105,7 @@ function InstanceSettingsCard() {
             Save suffix
           </Button>
         </form>
-        <p className="-mt-4 text-xs text-slate-500">Applies to new deployments; existing app URLs are unchanged.</p>
+        <p className="-mt-4 text-xs text-muted">Applies to new deployments; existing app URLs are unchanged.</p>
 
         <form
           className="space-y-3"
@@ -96,13 +118,13 @@ function InstanceSettingsCard() {
             <Label className="mb-0">SMTP (optional)</Label>
             {data?.smtp.configured ? (
               <span className="flex items-center gap-2">
-                <Badge color="green">configured — {data.smtp.host}:{data.smtp.port}</Badge>
+                <Badge tone="live">configured — {data.smtp.host}:{data.smtp.port}</Badge>
                 <Button type="button" variant="secondary" onClick={() => clearSmtp.mutate()}>
                   Clear
                 </Button>
               </span>
             ) : (
-              <Badge color="gray">not configured</Badge>
+              <Badge tone="neutral">not configured</Badge>
             )}
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -130,6 +152,7 @@ interface GithubAppStatus {
 
 function GithubAppForm() {
   const qc = useQueryClient();
+  const toast = useToast();
   const { data: status } = useQuery({
     queryKey: ["admin", "github-app"],
     queryFn: () => api<GithubAppStatus>("/admin/settings/github-app"),
@@ -151,8 +174,13 @@ function GithubAppForm() {
       setPrivateKey("");
       setWebhookSecret("");
       void qc.invalidateQueries({ queryKey: ["admin", "github-app"] });
+      toast("Saved");
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "save failed"),
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "save failed";
+      setError(message);
+      toast(message, "error");
+    },
   });
 
   function submit(e: FormEvent) {
@@ -163,17 +191,20 @@ function GithubAppForm() {
 
   return (
     <Card>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-semibold">GitHub App</h2>
-        {status?.configured ? (
-          <Badge color="green">configured — {status.app_slug} (#{status.app_id})</Badge>
-        ) : (
-          <Badge color="gray">not configured</Badge>
-        )}
-      </div>
-      <p className="mb-4 text-xs text-slate-500">
+      <SectionHeading
+        eyebrow="integration"
+        title="GitHub App"
+        aside={
+          status?.configured ? (
+            <Badge tone="live">configured — {status.app_slug} (#{status.app_id})</Badge>
+          ) : (
+            <Badge tone="neutral">not configured</Badge>
+          )
+        }
+      />
+      <p className="mb-4 text-xs text-muted">
         Create a GitHub App with repository read access and push webhooks pointed at{" "}
-        <code>{window.location.origin}/api/v1/webhooks/github</code>, then paste its credentials here.
+        <code className="font-mono text-text">{window.location.origin}/api/v1/webhooks/github</code>, then paste its credentials here.
         They are stored encrypted; the key and secret are never shown again.
       </p>
       <form onSubmit={submit} className="space-y-3">
@@ -189,13 +220,13 @@ function GithubAppForm() {
         </div>
         <div>
           <Label htmlFor="gh-key">Private key (PEM)</Label>
-          <textarea
+          <Textarea
             id="gh-key"
             value={privateKey}
             onChange={(e) => setPrivateKey(e.target.value)}
             required
             rows={4}
-            className="w-full rounded-md bg-slate-900 border border-slate-700 px-3 py-1.5 font-mono text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+            className="font-mono text-xs"
           />
         </div>
         <div>
@@ -225,6 +256,7 @@ interface OIDCStatus {
 
 function OIDCForm() {
   const qc = useQueryClient();
+  const toast = useToast();
   const { data: status } = useQuery({
     queryKey: ["admin", "oidc"],
     queryFn: () => api<OIDCStatus>("/admin/settings/oidc"),
@@ -245,13 +277,25 @@ function OIDCForm() {
       setClientSecret("");
       setError("");
       invalidate();
+      toast("Saved");
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "save failed"),
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "save failed";
+      setError(message);
+      toast(message, "error");
+    },
   });
   const clear = useMutation({
     mutationFn: () => del("/admin/settings/oidc"),
-    onSuccess: invalidate,
-    onError: (err) => setError(err instanceof Error ? err.message : "clear failed"),
+    onSuccess: () => {
+      invalidate();
+      toast("SSO cleared");
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "clear failed";
+      setError(message);
+      toast(message, "error");
+    },
   });
 
   function submit(e: FormEvent) {
@@ -262,22 +306,25 @@ function OIDCForm() {
 
   return (
     <Card>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-semibold">SSO (OIDC)</h2>
-        {status?.configured ? (
-          <span className="flex items-center gap-2">
-            <Badge color="green">configured — {status.issuer_url}</Badge>
-            <Button type="button" variant="secondary" onClick={() => clear.mutate()}>
-              Clear
-            </Button>
-          </span>
-        ) : (
-          <Badge color="gray">not configured</Badge>
-        )}
-      </div>
-      <p className="mb-4 text-xs text-slate-500">
+      <SectionHeading
+        eyebrow="auth"
+        title="SSO (OIDC)"
+        aside={
+          status?.configured ? (
+            <span className="flex items-center gap-2">
+              <Badge tone="live">configured — {status.issuer_url}</Badge>
+              <Button type="button" variant="secondary" onClick={() => clear.mutate()}>
+                Clear
+              </Button>
+            </span>
+          ) : (
+            <Badge tone="neutral">not configured</Badge>
+          )
+        }
+      />
+      <p className="mb-4 text-xs text-muted">
         Register a confidential OIDC client at your identity provider with redirect URI{" "}
-        <code>{window.location.origin}/api/v1/auth/oidc/callback</code>. The client secret is stored
+        <code className="font-mono text-text">{window.location.origin}/api/v1/auth/oidc/callback</code>. The client secret is stored
         encrypted and never shown again.
       </p>
       <form onSubmit={submit} className="space-y-3">
@@ -356,29 +403,29 @@ export default function Admin() {
   }
 
   return (
-    <div className="space-y-8">
-      <PageTitle>Instance administration</PageTitle>
+    <div className="space-y-6">
+      <PageHeader eyebrow="instance" title="Admin" />
       <InstanceSettingsCard />
       <GithubAppForm />
       <OIDCForm />
       <Card>
-        <h2 className="mb-3 font-semibold">Users</h2>
+        <SectionHeading eyebrow="people" title="Users" />
         <ul className="space-y-2 text-sm">
           {users?.map((u) => (
-            <li key={u.id} className="flex items-center justify-between border-t border-slate-800 pt-2 first:border-0 first:pt-0">
+            <li key={u.id} className="flex items-center justify-between border-t border-border pt-2 first:border-0 first:pt-0">
               <span>{u.email}</span>
-              {u.is_instance_admin && <Badge color="indigo">instance admin</Badge>}
+              {u.is_instance_admin && <Badge tone="amber">instance admin</Badge>}
             </li>
           ))}
         </ul>
       </Card>
       <Card>
-        <h2 className="mb-3 font-semibold">Organizations</h2>
+        <SectionHeading eyebrow="tenants" title="Organizations" />
         <ul className="space-y-2 text-sm">
           {orgs?.map((o) => (
-            <li key={o.id} className="flex items-center justify-between border-t border-slate-800 pt-2 first:border-0 first:pt-0">
+            <li key={o.id} className="flex items-center justify-between border-t border-border pt-2 first:border-0 first:pt-0">
               <span>{o.name}</span>
-              <span className="text-slate-500">{o.slug}</span>
+              <span className="font-mono text-muted">{o.slug}</span>
             </li>
           ))}
         </ul>
