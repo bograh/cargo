@@ -137,6 +137,9 @@ if [[ $NO_UP -eq 1 ]]; then
 fi
 
 say "starting Cargo…"
+# cargo-proxy is a shared external network (app containers attach to it
+# too); create it if this is the first install on this host.
+docker network inspect cargo-proxy >/dev/null 2>&1 || docker network create cargo-proxy >/dev/null
 docker compose "${COMPOSE_ARGS[@]}" up -d
 if [[ $MODE == local ]]; then
   say "done. Open http://${CARGO_PLATFORM_DOMAIN} (or http://localhost) and register — the first account becomes the instance admin."

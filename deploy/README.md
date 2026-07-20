@@ -28,7 +28,8 @@ cd deploy
   suffix, and Let's Encrypt email when prompted.
 
 Manual alternative: create `.env` yourself (keys documented in
-docker-compose.yml), `chmod 600 .env`, then `docker compose up -d` (add the
+docker-compose.yml), `chmod 600 .env`, create the shared proxy network
+(`docker network create cargo-proxy`), then `docker compose up -d` (add the
 appropriate TLS overlay for production, see below).
 
 First registered account becomes the instance admin.

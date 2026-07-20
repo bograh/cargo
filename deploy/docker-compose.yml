@@ -27,7 +27,9 @@ name: cargo
 
 services:
   traefik:
-    image: traefik:v3.3
+    # v3.6+: Docker Engine 29 dropped API <1.44, which breaks v3.3's
+    # docker provider (empty "Error response from daemon" on startup).
+    image: traefik:v3.6
     restart: unless-stopped
     ports:
       - "80:80"
@@ -49,6 +51,11 @@ services:
 
   controlplane:
     image: ghcr.io/bograh/cargo:latest
+    # install.sh runs from a checkout, so compose builds the image locally
+    # when the registry copy is unavailable (e.g. private GHCR package).
+    build:
+      context: ..
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       db:
@@ -92,7 +99,13 @@ services:
 
 networks:
   cargo-proxy:
+    # Shared with app containers (app compose files consume it as external,
+    # and the controlplane creates it on first deploy). External here too so
+    # `docker compose down` never removes it from under running apps, and a
+    # pre-existing unlabeled network (created by the controlplane) is reused.
+    # install.sh ensures it exists before `up`.
     name: cargo-proxy
+    external: true
 
 volumes:
   cargo-db:
