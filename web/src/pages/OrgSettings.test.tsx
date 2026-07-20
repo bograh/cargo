@@ -12,33 +12,24 @@ function routes(role: string) {
       status: 200,
       body: { organization: { id: "org-1", name: "Acme", slug: "acme" }, role },
     },
-    "GET /orgs/org-1/members": {
+    "GET /orgs/org-1/github": {
       status: 200,
-      body: [
-        { UserID: "u1", Role: role, Email: "me@x.co" },
-        { UserID: "u2", Role: "member", Email: "teammate@x.co" },
-      ],
+      body: { configured: false, connected: false, account_login: "" },
     },
-    "GET /orgs/org-1/invites": { status: 200, body: [] },
   };
 }
 
-test("owner sees role controls and invite section", async () => {
+test("owner sees the danger zone delete control", async () => {
   mockApi(routes("owner"));
   renderPage(<OrgSettings />, { path: "/orgs/:orgId/settings", route: "/orgs/org-1/settings" });
 
-  expect(await screen.findByText("teammate@x.co")).toBeInTheDocument();
-  expect(screen.getByLabelText("role for teammate@x.co")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /create invite link/i })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /delete organization/i })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /delete organization/i })).toBeInTheDocument();
 });
 
-test("viewer sees read-only members and no invite controls", async () => {
-  mockApi(routes("viewer"));
+test("non-owner does not see the danger zone", async () => {
+  mockApi(routes("admin"));
   renderPage(<OrgSettings />, { path: "/orgs/:orgId/settings", route: "/orgs/org-1/settings" });
 
-  expect(await screen.findByText("teammate@x.co")).toBeInTheDocument();
-  expect(screen.queryByLabelText("role for teammate@x.co")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /create invite link/i })).not.toBeInTheDocument();
+  expect(await screen.findByText("GitHub")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /delete organization/i })).not.toBeInTheDocument();
 });
