@@ -1,5 +1,7 @@
-export function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
+export function relativeTime(iso: unknown): string {
+  if (typeof iso !== "string" && typeof iso !== "number") return "—";
+  const date = new Date(iso);
+  const then = date.getTime();
   if (Number.isNaN(then)) return "—";
   const m = Math.floor((Date.now() - then) / 60000);
   if (m < 1) return "just now";
@@ -8,5 +10,5 @@ export function relativeTime(iso: string): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 30) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return date.toLocaleDateString();
 }
