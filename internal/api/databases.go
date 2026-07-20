@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/bograh/cargo/internal/databases"
 	"github.com/bograh/cargo/internal/db/sqlc"
@@ -196,16 +197,15 @@ func (s *Server) handleAttachDatabase(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "validation_failed", "app_id must be a UUID")
 		return
 	}
-	url, att, err := s.databases.Attach(r.Context(), id, appID, userFrom(r.Context()).ID)
+	url, _, err := s.databases.Attach(r.Context(), id, appID, userFrom(r.Context()).ID)
 	if err != nil {
 		databasesError(w, err)
 		return
 	}
-	envKey := "DATABASE_URL"
-	if !att.DbName.Valid {
-		envKey = "REDIS_URL"
-	}
-	writeJSON(w, http.StatusCreated, map[string]string{"url": url, "env_key": envKey})
+	// The URL scheme is the engine name for every managed engine
+	// (postgres/mysql/mongodb/redis), so it maps 1:1 to the env key.
+	scheme, _, _ := strings.Cut(url, "://")
+	writeJSON(w, http.StatusCreated, map[string]string{"url": url, "env_key": databases.EnvKey(scheme)})
 }
 
 func (s *Server) handleDetachDatabase(w http.ResponseWriter, r *http.Request) {

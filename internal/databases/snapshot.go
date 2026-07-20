@@ -38,8 +38,11 @@ func (s *Service) Snapshot(ctx context.Context, id, actor pgtype.UUID) (string, 
 		return "", err
 	}
 	ext := ".sql"
-	if inst.Engine == "redis" {
+	switch inst.Engine {
+	case "redis":
 		ext = ".rdb"
+	case "mongodb":
+		ext = ".archive"
 	}
 	return base + ext, nil
 }

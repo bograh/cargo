@@ -14,6 +14,26 @@ import (
 
 var _ DatabaseProvider = (*Docker)(nil)
 
+// MongoshAdmin is the mongosh invocation that authenticates as the instance
+// admin using credentials from the container environment (MONGO_ADMIN_USER /
+// MONGO_ADMIN_PWD, set by ProvisionDB). Running it via `sh -c` expands the
+// variables inside the container, so the password never appears on the host
+// process argv.
+const MongoshAdmin = `mongosh --quiet -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PWD" --authenticationDatabase admin`
+
+// mongodumpAdmin is the mongodump equivalent, authenticating from container env.
+const mongodumpAdmin = `mongodump -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PWD" --authenticationDatabase admin --archive`
+
+// MySQLClient is the mysql invocation that authenticates as root. It exports
+// MYSQL_PWD (read by the client) from MYSQL_ROOT_PASSWORD for that process
+// only — run via `sh -c` so the secret is never on argv. MYSQL_PWD must NOT
+// be set in the container's persistent env: the mysql image's first-boot
+// entrypoint also reads it and fails to apply the root password.
+const MySQLClient = `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -u root`
+
+// mysqldumpAll is the mysqldump equivalent used for snapshots.
+const mysqldumpAll = `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -u root --all-databases`
+
 // dbDir returns the per-instance project directory for a managed database.
 func (d *Docker) dbDir(instanceID string) string {
 	return filepath.Join(d.dataDir, "databases", instanceID)
@@ -42,13 +62,31 @@ func (d *Docker) ProvisionDB(ctx context.Context, spec DBSpec, log io.Writer) er
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
-	envVars := map[string]string{"POSTGRES_PASSWORD": spec.AdminPass}
-	if spec.Engine == "redis" {
+	var envVars map[string]string
+	switch spec.Engine {
+	case "redis":
 		conf := fmt.Sprintf("requirepass %s\n", spec.AdminPass)
 		if err := os.WriteFile(filepath.Join(dir, "redis.conf"), []byte(conf), 0o644); err != nil {
 			return err
 		}
 		envVars = map[string]string{"REDISCLI_AUTH": spec.AdminPass}
+	case "mysql":
+		// Only MYSQL_ROOT_PASSWORD — it initializes the root account. MYSQL_PWD
+		// must not be set here: the entrypoint's own client reads it and then
+		// fails to apply the root password. Clients read it transiently instead
+		// (see reconciler.MySQLClient).
+		envVars = map[string]string{"MYSQL_ROOT_PASSWORD": spec.AdminPass}
+	case "mongodb":
+		// MONGO_INITDB_* create the root user on first boot; MONGO_ADMIN_* are
+		// read by MongoshAdmin/mongodump (via `sh -c`) for later auth.
+		envVars = map[string]string{
+			"MONGO_INITDB_ROOT_USERNAME": "root",
+			"MONGO_INITDB_ROOT_PASSWORD": spec.AdminPass,
+			"MONGO_ADMIN_USER":           "root",
+			"MONGO_ADMIN_PWD":            spec.AdminPass,
+		}
+	default: // postgres
+		envVars = map[string]string{"POSTGRES_PASSWORD": spec.AdminPass}
 	}
 	envContent, err := generateEnvFile(envVars)
 	if err != nil {
@@ -80,6 +118,14 @@ func (d *Docker) waitDBReady(ctx context.Context, spec DBSpec, log io.Writer) er
 		case "redis":
 			_, err = d.ExecDB(ctx, spec.InstanceID, spec.Engine, "",
 				"redis-cli", "--no-auth-warning", "PING")
+		case "mysql":
+			// SELECT 1 confirms the server is up AND root auth is initialized.
+			_, err = d.ExecDB(ctx, spec.InstanceID, spec.Engine, "",
+				"sh", "-c", MySQLClient+` -e "SELECT 1"`)
+		case "mongodb":
+			// An authenticated ping confirms the root user has been created.
+			_, err = d.ExecDB(ctx, spec.InstanceID, spec.Engine, "",
+				"sh", "-c", MongoshAdmin+` --eval "db.adminCommand({ping:1})"`)
 		default:
 			_, err = d.ExecDB(ctx, spec.InstanceID, spec.Engine, "",
 				"pg_isready", "-U", "postgres")
@@ -136,6 +182,22 @@ func (d *Docker) SnapshotDB(ctx context.Context, instanceID, engine, adminPass, 
 		}
 		return run(ctx, os.Stderr, "docker", "compose", "-f", composePath, "cp",
 			"db:/data/dump.rdb", destPath+".rdb")
+	case "mysql":
+		out, errOut, err := execCapturedSplit(ctx, "", nil, "docker",
+			"compose", "-f", composePath, "exec", "-T", "db",
+			"sh", "-c", mysqldumpAll)
+		if err != nil {
+			return fmt.Errorf("mysqldump: %w: %s", err, errOut)
+		}
+		return os.WriteFile(destPath+".sql", []byte(out), 0o600)
+	case "mongodb":
+		out, errOut, err := execCapturedSplit(ctx, "", nil, "docker",
+			"compose", "-f", composePath, "exec", "-T", "db",
+			"sh", "-c", mongodumpAdmin)
+		if err != nil {
+			return fmt.Errorf("mongodump: %w: %s", err, errOut)
+		}
+		return os.WriteFile(destPath+".archive", []byte(out), 0o600)
 	default:
 		out, errOut, err := execCapturedSplit(ctx, "", nil, "docker",
 			"compose", "-f", composePath, "exec", "-T", "db",

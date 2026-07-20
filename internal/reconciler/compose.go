@@ -58,39 +58,47 @@ func GenerateCompose(spec Spec) string {
 	return b.String()
 }
 
+// dbEngineParams maps an engine to its image name, data volume mount path,
+// and the in-container port it listens on.
+func dbEngineParams(engine, version string) (image, dataPath string, port int) {
+	switch engine {
+	case "redis":
+		return "redis:" + version, "/data", 6379
+	case "mysql":
+		return "mysql:" + version, "/var/lib/mysql", 3306
+	case "mongodb":
+		return "mongo:" + version, "/data/db", 27017
+	default: // postgres
+		return "postgres:" + version, "/var/lib/postgresql/data", 5432
+	}
+}
+
 // GenerateDBCompose renders the compose file for a managed database
-// instance. Secrets (POSTGRES_PASSWORD, redis requirepass) never appear in
-// this output — they are supplied via env_file / a mounted config file
-// written separately by ProvisionDB.
+// instance. Secrets (POSTGRES_PASSWORD, redis requirepass, MYSQL_ROOT_PASSWORD,
+// MONGO_INITDB_ROOT_PASSWORD) never appear in this output — they are supplied
+// via env_file / a mounted config file written separately by ProvisionDB.
 func GenerateDBCompose(spec DBSpec) string {
 	var b strings.Builder
 	name := "cargo-db-" + spec.InstanceID
+	image, dataPath, port := dbEngineParams(spec.Engine, spec.Version)
 	fmt.Fprintf(&b, "name: %s\n", name)
 	b.WriteString("services:\n")
 	b.WriteString("  db:\n")
-	fmt.Fprintf(&b, "    image: %s:%s\n", spec.Engine, spec.Version)
+	fmt.Fprintf(&b, "    image: %s\n", image)
 	fmt.Fprintf(&b, "    container_name: %s\n", name)
 	b.WriteString("    env_file: .env\n")
-	switch spec.Engine {
-	case "redis":
+	if spec.Engine == "redis" {
 		b.WriteString("    command: [\"redis-server\", \"/etc/cargo/redis.conf\"]\n")
 	}
 	b.WriteString("    restart: unless-stopped\n")
 	b.WriteString("    networks:\n      - cargo-data\n")
 	b.WriteString("    volumes:\n")
-	switch spec.Engine {
-	case "redis":
-		b.WriteString("      - data:/data\n")
+	fmt.Fprintf(&b, "      - data:%s\n", dataPath)
+	if spec.Engine == "redis" {
 		b.WriteString("      - ./redis.conf:/etc/cargo/redis.conf:ro\n")
-	default:
-		b.WriteString("      - data:/var/lib/postgresql/data\n")
 	}
 	if spec.HostPort > 0 {
-		port := "5432"
-		if spec.Engine == "redis" {
-			port = "6379"
-		}
-		fmt.Fprintf(&b, "    ports:\n      - \"%d:%s\"\n", spec.HostPort, port)
+		fmt.Fprintf(&b, "    ports:\n      - \"%d:%d\"\n", spec.HostPort, port)
 	}
 	b.WriteString("volumes:\n  data:\n")
 	b.WriteString("networks:\n  cargo-data:\n    external: true\n")

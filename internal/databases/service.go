@@ -213,9 +213,9 @@ func validateCreate(in CreateInput) error {
 		return fmt.Errorf("%w: name must be 3-40 chars, lowercase alphanumeric and dashes", ErrValidation)
 	}
 	switch in.Engine {
-	case "postgres", "redis":
+	case "postgres", "redis", "mysql", "mongodb":
 	default:
-		return fmt.Errorf("%w: engine must be postgres or redis", ErrValidation)
+		return fmt.Errorf("%w: engine must be postgres, redis, mysql, or mongodb", ErrValidation)
 	}
 	if !versionRe.MatchString(in.Version) {
 		return fmt.Errorf("%w: version is required", ErrValidation)
@@ -327,7 +327,9 @@ func (s *Service) Provision(ctx context.Context, id pgtype.UUID) error {
 	if provErr != nil {
 		status = "error"
 	}
-	if err := s.q.SetDatabaseInstanceStatus(ctx, sqlc.SetDatabaseInstanceStatusParams{ID: inst.ID, Status: status}); err != nil {
+	// Record the outcome even when ctx was cancelled (e.g. job timeout);
+	// otherwise the instance is stuck in "provisioning" with no retry.
+	if err := s.q.SetDatabaseInstanceStatus(context.WithoutCancel(ctx), sqlc.SetDatabaseInstanceStatusParams{ID: inst.ID, Status: status}); err != nil {
 		return err
 	}
 	return provErr
@@ -385,6 +387,23 @@ func (s *Service) sizeBytes(ctx context.Context, inst sqlc.DatabaseInstance) int
 			}
 		}
 		return 0
+	case "mysql":
+		out, err := s.provider.ExecDB(ctx, id, "mysql", "",
+			"sh", "-c", reconciler.MySQLClient+
+				` -N -B -e "SELECT COALESCE(SUM(data_length+index_length),0) FROM information_schema.tables"`)
+		if err != nil {
+			return 0
+		}
+		n, _ := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+		return n
+	case "mongodb":
+		out, err := s.provider.ExecDB(ctx, id, "mongodb", "",
+			"sh", "-c", reconciler.MongoshAdmin+` --eval "print(db.adminCommand({listDatabases:1}).totalSize)"`)
+		if err != nil {
+			return 0
+		}
+		n, _ := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+		return n
 	default:
 		out, err := s.provider.ExecDB(ctx, id, "postgres",
 			"SELECT COALESCE(sum(pg_database_size(datname)),0) FROM pg_database;",

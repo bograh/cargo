@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/bograh/cargo/internal/databases"
 	"github.com/riverqueue/river"
@@ -16,6 +17,11 @@ type DBProvisionArgs struct {
 
 func (DBProvisionArgs) Kind() string { return "provision_database" }
 
+// dbProvisionTimeout bounds a provisioning job. It must cover a cold image
+// pull (mysql/mongo images are hundreds of MB) plus first-boot init; River's
+// 1-minute default cancels the pull mid-flight.
+const dbProvisionTimeout = 30 * time.Minute
+
 // DBProvisionWorker runs container-level provisioning for a managed database
 // instance. Provisioning is not idempotent-safe, so the worker always
 // returns nil: a provider failure is recorded as instance status "error" by
@@ -24,6 +30,10 @@ func (DBProvisionArgs) Kind() string { return "provision_database" }
 type DBProvisionWorker struct {
 	river.WorkerDefaults[DBProvisionArgs]
 	Databases *databases.Service
+}
+
+func (w *DBProvisionWorker) Timeout(*river.Job[DBProvisionArgs]) time.Duration {
+	return dbProvisionTimeout
 }
 
 func (w *DBProvisionWorker) Work(ctx context.Context, job *river.Job[DBProvisionArgs]) error {

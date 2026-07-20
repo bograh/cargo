@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -60,22 +61,38 @@ func (s *Service) Attach(ctx context.Context, instanceID, appID, actor pgtype.UU
 		}
 	}
 
-	switch {
-	case inst.Engine == "postgres":
+	switch inst.Engine {
+	case "postgres":
 		return s.attachPostgres(ctx, inst, appID, app.Slug)
-	case inst.RedisMode.String == "acl":
-		return s.attachRedisACL(ctx, inst, appID, app.Slug)
-	default: // redis shared
+	case "mysql":
+		return s.attachMySQL(ctx, inst, appID, app.Slug)
+	case "mongodb":
+		return s.attachMongo(ctx, inst, appID, app.Slug)
+	default: // redis
+		if inst.RedisMode.String == "acl" {
+			return s.attachRedisACL(ctx, inst, appID, app.Slug)
+		}
 		return s.attachRedisShared(ctx, inst, appID)
 	}
 }
 
-func envKey(engine string) string {
-	if engine == "redis" {
+// EnvKey returns the environment variable an engine's connection URL is
+// injected under. Distinct per engine so an app may attach one of each
+// without the keys colliding.
+func EnvKey(engine string) string {
+	switch engine {
+	case "redis":
 		return "REDIS_URL"
+	case "mysql":
+		return "MYSQL_URL"
+	case "mongodb":
+		return "MONGODB_URL"
+	default: // postgres
+		return "DATABASE_URL"
 	}
-	return "DATABASE_URL"
 }
+
+func envKey(engine string) string { return EnvKey(engine) }
 
 func dbHost(inst sqlc.DatabaseInstance) string { return "cargo-db-" + uuidStr(inst.ID) }
 
@@ -130,6 +147,70 @@ func dupAttachErr(err error) error {
 		return fmt.Errorf("%w: app already attached to this instance", ErrConflict)
 	}
 	return err
+}
+
+func (s *Service) attachMySQL(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID, slug string) (string, sqlc.DatabaseAttachment, error) {
+	name := dbIdent(slug)
+	pass, err := genPassword()
+	if err != nil {
+		return "", sqlc.DatabaseAttachment{}, err
+	}
+	// Identifiers come from the validated slug (safe [a-z0-9_]); the password is
+	// base64url (no quotes/backslashes). IF NOT EXISTS + ALTER USER make re-attach
+	// idempotent. Statements are fed on stdin (never argv); root auth is via
+	// MYSQL_PWD in the container env_file.
+	script := fmt.Sprintf(
+		"CREATE DATABASE IF NOT EXISTS `%[1]s`;\n"+
+			"CREATE USER IF NOT EXISTS '%[1]s'@'%%' IDENTIFIED BY '%[2]s';\n"+
+			"ALTER USER '%[1]s'@'%%' IDENTIFIED BY '%[2]s';\n"+
+			"GRANT ALL PRIVILEGES ON `%[1]s`.* TO '%[1]s'@'%%';\n"+
+			"FLUSH PRIVILEGES;\n",
+		name, pass)
+	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "mysql", script,
+		"sh", "-c", reconciler.MySQLClient); err != nil {
+		return "", sqlc.DatabaseAttachment{}, err
+	}
+	secret, err := s.sealSecret(pass)
+	if err != nil {
+		return "", sqlc.DatabaseAttachment{}, err
+	}
+	url := fmt.Sprintf("mysql://%s:%s@%s:3306/%s", name, pass, dbHost(inst), name)
+	att, err := s.q.CreateDatabaseAttachment(ctx, sqlc.CreateDatabaseAttachmentParams{
+		InstanceID: inst.ID, AppID: appID,
+		DbName: txt(name), RoleName: txt(name), Secret: secret,
+	})
+	return url, att, dupAttachErr(err)
+}
+
+func (s *Service) attachMongo(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID, slug string) (string, sqlc.DatabaseAttachment, error) {
+	name := dbIdent(slug)
+	pass, err := genPassword()
+	if err != nil {
+		return "", sqlc.DatabaseAttachment{}, err
+	}
+	// The per-app user is scoped to readWrite on its own database only. The
+	// script (with the generated password) is fed on stdin; admin auth is via
+	// MongoshAdmin, which reads MONGO_ADMIN_* from the container env. Re-attach
+	// updates the existing user's password.
+	script := fmt.Sprintf(
+		"var d = db.getSiblingDB('%[1]s');"+
+			"if (d.getUser('%[1]s')) { d.updateUser('%[1]s', { pwd: '%[2]s', roles: [{ role: 'readWrite', db: '%[1]s' }] }); }"+
+			" else { d.createUser({ user: '%[1]s', pwd: '%[2]s', roles: [{ role: 'readWrite', db: '%[1]s' }] }); }\n",
+		name, pass)
+	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "mongodb", script,
+		"sh", "-c", reconciler.MongoshAdmin); err != nil {
+		return "", sqlc.DatabaseAttachment{}, err
+	}
+	secret, err := s.sealSecret(pass)
+	if err != nil {
+		return "", sqlc.DatabaseAttachment{}, err
+	}
+	url := fmt.Sprintf("mongodb://%s:%s@%s:27017/%s?authSource=%s", name, pass, dbHost(inst), name, name)
+	att, err := s.q.CreateDatabaseAttachment(ctx, sqlc.CreateDatabaseAttachmentParams{
+		InstanceID: inst.ID, AppID: appID,
+		DbName: txt(name), RoleName: txt(name), Secret: secret,
+	})
+	return url, att, dupAttachErr(err)
 }
 
 func (s *Service) attachRedisACL(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID, slug string) (string, sqlc.DatabaseAttachment, error) {
@@ -274,6 +355,22 @@ DROP ROLE IF EXISTS %[1]s;
 			"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres"); err != nil {
 			return err
 		}
+	case inst.Engine == "mysql":
+		name := att.RoleName.String
+		// Drop the app's user; the database (its data) is kept.
+		script := fmt.Sprintf("DROP USER IF EXISTS '%[1]s'@'%%';\nFLUSH PRIVILEGES;\n", name)
+		if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "mysql", script,
+			"sh", "-c", reconciler.MySQLClient); err != nil {
+			return err
+		}
+	case inst.Engine == "mongodb":
+		name := att.RoleName.String
+		// Drop the app's user; the database (its data) is kept.
+		script := fmt.Sprintf("var d = db.getSiblingDB('%[1]s'); if (d.getUser('%[1]s')) { d.dropUser('%[1]s'); }\n", name)
+		if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "mongodb", script,
+			"sh", "-c", reconciler.MongoshAdmin); err != nil {
+			return err
+		}
 	case inst.RedisMode.String == "acl":
 		if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "redis", "",
 			"redis-cli", "--no-auth-warning", "ACL", "DELUSER", att.AclUser.String); err != nil {
@@ -349,6 +446,18 @@ func (s *Service) attachmentURL(inst sqlc.DatabaseInstance, att sqlc.DatabaseAtt
 			return "", err
 		}
 		return fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=disable", att.RoleName.String, pass, host, att.DbName.String), nil
+	case inst.Engine == "mysql":
+		pass, err := s.openSecret(att.Secret)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("mysql://%s:%s@%s:3306/%s", att.RoleName.String, pass, host, att.DbName.String), nil
+	case inst.Engine == "mongodb":
+		pass, err := s.openSecret(att.Secret)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("mongodb://%s:%s@%s:27017/%s?authSource=%s", att.RoleName.String, pass, host, att.DbName.String, att.DbName.String), nil
 	case att.AclUser.Valid && len(att.Secret) > 0: // redis acl
 		pass, err := s.openSecret(att.Secret)
 		if err != nil {
