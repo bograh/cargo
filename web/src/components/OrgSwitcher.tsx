@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { useOrgs } from "../lib/hooks";
+import { useActiveOrgId, useOrgs } from "../lib/hooks";
 import { Dropdown, DropdownItem } from "./ui/Dropdown";
 import { Icon } from "./ui/Icon";
 
@@ -7,8 +7,9 @@ export function OrgSwitcher() {
   const { data: orgs } = useOrgs();
   const navigate = useNavigate();
   const location = useLocation();
+  const activeOrgId = useActiveOrgId();
   if (!orgs || orgs.length === 0 || location.pathname.startsWith("/apps/")) return null;
-  const current = orgs.find((o) => location.pathname.startsWith(`/orgs/${o.id}`));
+  const current = orgs.find((o) => o.id === activeOrgId);
   return (
     <div className="px-2 pb-3">
       <Dropdown

@@ -5,14 +5,18 @@ import { Tooltip } from "../ui/Tooltip";
 
 export function NavItem({ to, icon, label, end }: { to: string; icon: IconName; label: string; end?: boolean }) {
   return (
-    <Tooltip label={label}>
+    <Tooltip label={label} block>
       <NavLink
         to={to}
         end={end}
         className={({ isActive }) =>
           cn(
-            "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors duration-150 md:justify-center lg:justify-start",
-            isActive ? "bg-amber-tint text-amber" : "text-muted hover:bg-raised hover:text-text",
+            // -mx-2 cancels the nav container's px-2 so the active fill bleeds
+            // to both sidebar edges; the left border reads as an active rail.
+            "-mx-2 flex w-full items-center gap-2.5 border-l-2 px-5 py-2 text-sm transition-colors duration-150 md:justify-center md:px-0 lg:justify-start lg:px-5",
+            isActive
+              ? "border-amber bg-amber-tint text-amber"
+              : "border-transparent text-muted hover:bg-raised hover:text-text",
           )
         }
       >

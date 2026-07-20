@@ -1,9 +1,8 @@
-import { useMatch } from "react-router-dom";
+import { useActiveOrgId } from "../../lib/hooks";
 import { NavItem } from "./NavItem";
 
 export function OrgScopeNav() {
-  const match = useMatch("/orgs/:orgId/*");
-  const orgId = match?.params.orgId;
+  const orgId = useActiveOrgId();
   if (!orgId) return null;
   return (
     <nav className="flex flex-col gap-0.5 px-2">

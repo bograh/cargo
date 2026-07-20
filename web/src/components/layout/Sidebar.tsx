@@ -6,6 +6,7 @@ import { Icon } from "../ui/Icon";
 import { OrgSwitcher } from "../OrgSwitcher";
 import { AppScopeNav } from "./AppScopeNav";
 import { ContainerMark } from "./ContainerMark";
+import { NavItem } from "./NavItem";
 import { OrgScopeNav } from "./OrgScopeNav";
 import { UserMenu } from "./UserMenu";
 
@@ -43,18 +44,12 @@ export function Sidebar() {
           {!isAppScope && <OrgSwitcher />}
           {isAppScope ? <AppScopeNav /> : <OrgScopeNav />}
           {user?.is_instance_admin && !isAppScope && (
-            <div className="mt-4 border-t border-border px-2 pt-3">
+            <nav className="mt-4 flex flex-col gap-0.5 border-t border-border px-2 pt-3">
               <div className="px-3 pb-1 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-amber md:hidden lg:block">
                 Instance
               </div>
-              <Link
-                to="/admin"
-                className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-muted transition-colors duration-150 hover:bg-raised hover:text-text md:justify-center lg:justify-start"
-              >
-                <Icon name="shield" size={16} />
-                <span className="md:hidden lg:inline">Admin</span>
-              </Link>
-            </div>
+              <NavItem to="/admin" icon="shield" label="Admin" />
+            </nav>
           )}
         </div>
         <UserMenu />

@@ -1,9 +1,19 @@
 import type { ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
-export function Tooltip({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+export function Tooltip({
+  label,
+  children,
+  className,
+  block,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+  block?: boolean;
+}) {
   return (
-    <span className="group relative inline-flex">
+    <span className={cn("group relative", block ? "flex w-full" : "inline-flex")}>
       {children}
       <span
         role="tooltip"
