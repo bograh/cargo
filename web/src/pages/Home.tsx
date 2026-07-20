@@ -1,5 +1,5 @@
 import { Navigate } from "react-router-dom";
-import { useOrgs } from "../components/OrgSwitcher";
+import { useOrgs } from "../lib/hooks";
 import { Spinner } from "../components/ui";
 
 export default function Home() {

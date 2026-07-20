@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, del, patch, post } from "../lib/api";
 import type { Invite, Member } from "../lib/types";
-import { useOrg } from "./OrgDashboard";
+import { useOrg } from "../lib/hooks";
 import { useAuth } from "../auth";
 import { Badge, Button, Card, PageTitle, Select, Spinner } from "../components/ui";
 
