@@ -12,13 +12,28 @@ import {
   ConfirmModal,
   EmptyState,
   Icon,
+  Label,
   PageHeader,
   Select,
   Skeleton,
+  Textarea,
   useToast,
 } from "../components/ui";
 
 const ROLES = ["owner", "admin", "member", "viewer"];
+
+interface InviteResult {
+  email?: string;
+  sent: boolean;
+  link?: string;
+  error?: string;
+}
+
+function inviteEmail(inv: Invite): string {
+  const e = inv.Email;
+  if (!e) return "";
+  return typeof e === "string" ? e : e.Valid ? e.String : "";
+}
 
 export default function OrgMembers() {
   const { orgId } = useParams();
@@ -41,7 +56,8 @@ export default function OrgMembers() {
   });
 
   const [inviteRole, setInviteRole] = useState("member");
-  const [inviteLink, setInviteLink] = useState("");
+  const [emails, setEmails] = useState("");
+  const [results, setResults] = useState<InviteResult[]>([]);
   const [removing, setRemoving] = useState<Member | null>(null);
   const [revoking, setRevoking] = useState<Invite | null>(null);
 
@@ -51,10 +67,23 @@ export default function OrgMembers() {
   };
   const onError = (err: unknown) => toast(err instanceof Error ? err.message : "operation failed", "error");
 
-  const createInvite = useMutation({
+  const parsedEmails = emails.split(/[\s,]+/).map((e) => e.trim()).filter(Boolean);
+
+  const sendInvites = useMutation({
+    mutationFn: () => post<{ results: InviteResult[] }>(`/orgs/${orgId}/invites`, { role: inviteRole, emails: parsedEmails }),
+    onSuccess: (data) => {
+      setResults(data.results ?? []);
+      setEmails("");
+      const sent = (data.results ?? []).filter((r) => r.sent).length;
+      if (sent > 0) toast(`Sent ${sent} invite${sent === 1 ? "" : "s"}`);
+      invalidate();
+    },
+    onError,
+  });
+  const createLink = useMutation({
     mutationFn: () => post<{ token: string }>(`/orgs/${orgId}/invites`, { role: inviteRole }),
     onSuccess: (data) => {
-      setInviteLink(`${window.location.origin}/invite/${data.token}`);
+      setResults([{ sent: false, link: `${window.location.origin}/invite/${data.token}` }]);
       invalidate();
     },
     onError,
@@ -138,13 +167,29 @@ export default function OrgMembers() {
 
       {isAdmin && (
         <Card>
-          <h2 className="mb-4 font-display font-semibold">Invites</h2>
-          <div className="flex items-end gap-2">
+          <h2 className="font-display font-semibold">Invite people</h2>
+          <p className="mt-1 text-sm text-muted">
+            Enter one or more emails to send an invitation, or create a shareable link.
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
             <div>
-              <label className="mb-1 block font-mono text-[0.68rem] uppercase tracking-[0.12em] text-muted" htmlFor="invite-role">
-                Role
-              </label>
-              <Select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+              <Label htmlFor="invite-emails">Emails</Label>
+              <Textarea
+                id="invite-emails"
+                rows={2}
+                placeholder="alice@example.com, bob@example.com"
+                value={emails}
+                onChange={(e) => setEmails(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="invite-role">Role</Label>
+              <Select
+                id="invite-role"
+                className="w-full sm:w-36"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value)}
+              >
                 {ROLES.map((r) => (
                   <option key={r} value={r}>
                     {r}
@@ -152,43 +197,76 @@ export default function OrgMembers() {
                 ))}
               </Select>
             </div>
-            <Button onClick={() => createInvite.mutate()} disabled={createInvite.isPending}>
-              Create invite link
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              onClick={() => sendInvites.mutate()}
+              disabled={sendInvites.isPending || parsedEmails.length === 0}
+            >
+              <Icon name="users" size={14} /> Send invite{parsedEmails.length > 1 ? "s" : ""}
+            </Button>
+            <Button variant="secondary" onClick={() => createLink.mutate()} disabled={createLink.isPending}>
+              <Icon name="link" size={14} /> Create link
             </Button>
           </div>
-          {inviteLink && (
-            <>
-              <div className="mt-3 flex items-center gap-2 rounded-md bg-terminal p-2 text-xs">
-                <code className="flex-1 truncate font-mono text-text">{inviteLink}</code>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(inviteLink);
-                    toast("Invite link copied");
-                  }}
-                >
-                  <Icon name="copy" size={14} /> Copy
-                </Button>
-              </div>
-              <p className="mt-1 text-xs text-amber">
-                This link is shown once — copy it now and share it with your teammate.
-              </p>
-            </>
-          )}
-          {invites && invites.length > 0 && (
+
+          {results.length > 0 && (
             <ul className="mt-4 space-y-2">
+              {results.map((res, i) => (
+                <li key={i} className="rounded-lg border border-border bg-raised px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate">{res.email ?? "Shareable link"}</span>
+                    {res.sent ? (
+                      <Badge tone="live">sent</Badge>
+                    ) : (
+                      <Badge tone="amber">link</Badge>
+                    )}
+                  </div>
+                  {res.link && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <code className="flex-1 truncate rounded-md bg-terminal px-2 py-1 font-mono text-xs text-text">
+                        {res.link}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        aria-label="copy invite link"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(res.link!);
+                          toast("Invite link copied");
+                        }}
+                      >
+                        <Icon name="copy" size={14} />
+                      </Button>
+                    </div>
+                  )}
+                  {res.error && <p className="mt-1 text-xs text-muted">{res.error}</p>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
+
+      {isAdmin && (
+        <Card>
+          <h2 className="mb-3 font-display font-semibold">Pending invites</h2>
+          {invites && invites.length > 0 ? (
+            <ul className="divide-y divide-border">
               {invites.map((inv) => (
-                <li key={inv.ID} className="flex items-center justify-between text-sm">
-                  <Badge tone="amber">{inv.Role}</Badge>
+                <li key={inv.ID} className="flex items-center justify-between gap-2 py-2.5 text-sm first:pt-0 last:pb-0">
+                  <span className="flex items-center gap-2 truncate">
+                    <Icon name={inviteEmail(inv) ? "users" : "link"} size={14} className="shrink-0 text-muted" />
+                    <span className="truncate">{inviteEmail(inv) || "Shareable link"}</span>
+                    <Badge tone="amber">{inv.Role}</Badge>
+                  </span>
                   <Button variant="secondary" onClick={() => setRevoking(inv)}>
                     Revoke
                   </Button>
                 </li>
               ))}
             </ul>
-          )}
-          {invites && invites.length === 0 && !inviteLink && (
-            <p className="mt-4 text-sm text-muted">No pending invites.</p>
+          ) : (
+            <p className="text-sm text-muted">No pending invites.</p>
           )}
         </Card>
       )}

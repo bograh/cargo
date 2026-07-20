@@ -21,6 +21,7 @@ export interface Member {
 export interface Invite {
   ID: string;
   Role: string;
+  Email?: { String: string; Valid: boolean } | string;
   ExpiresAt: { Time: string; Valid: boolean } | string;
   CreatedAt?: unknown;
 }

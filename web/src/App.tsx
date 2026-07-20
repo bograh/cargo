@@ -25,6 +25,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/invite/:token" element={<AcceptInvite />} />
       <Route element={<RequireAuth><Shell /></RequireAuth>}>
         <Route path="/" element={<Home />} />
         <Route path="/orgs/new" element={<NewOrg />} />
@@ -39,7 +40,6 @@ export default function App() {
         <Route path="/apps/:appId/domains" element={<AppDomains />} />
         <Route path="/apps/:appId/settings" element={<AppSettings />} />
         <Route path="/deployments/:deploymentId" element={<DeploymentLogs />} />
-        <Route path="/invite/:token" element={<AcceptInvite />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="*" element={<NotFound />} />
       </Route>

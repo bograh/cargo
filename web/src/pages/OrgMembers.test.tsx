@@ -29,7 +29,8 @@ test("owner sees role controls and invite section", async () => {
 
   expect(await screen.findByText("teammate@x.co")).toBeInTheDocument();
   expect(screen.getByLabelText("role for teammate@x.co")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /create invite link/i })).toBeInTheDocument();
+  expect(screen.getByLabelText("Emails")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /create link/i })).toBeInTheDocument();
 });
 
 test("viewer sees read-only members and no invite controls", async () => {
@@ -38,5 +39,6 @@ test("viewer sees read-only members and no invite controls", async () => {
 
   expect(await screen.findByText("teammate@x.co")).toBeInTheDocument();
   expect(screen.queryByLabelText("role for teammate@x.co")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /create invite link/i })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Emails")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /create link/i })).not.toBeInTheDocument();
 });
