@@ -7,6 +7,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   ConfirmModal,
   FieldError,
   Icon,
@@ -21,6 +22,8 @@ import {
 } from "./ui";
 import postgresLogo from "../assets/db/postgresql.svg";
 import redisLogo from "../assets/db/redis.svg";
+import mysqlLogo from "../assets/db/mysql.svg";
+import mongoLogo from "../assets/db/mongodb.svg";
 
 const STATUS_TONES: Record<string, BadgeTone> = {
   running: "live",
@@ -29,7 +32,7 @@ const STATUS_TONES: Record<string, BadgeTone> = {
   stopped: "neutral",
 };
 
-type EngineId = "postgres" | "redis";
+type EngineId = "postgres" | "redis" | "mysql" | "mongodb";
 
 interface EngineMeta {
   id: EngineId;
@@ -39,9 +42,10 @@ interface EngineMeta {
   versions: string[];
 }
 
-// Only postgres and redis are provisionable by the control plane today.
 const ENGINES: EngineMeta[] = [
   { id: "postgres", label: "PostgreSQL", logo: postgresLogo, blurb: "Relational SQL database", versions: ["16", "17"] },
+  { id: "mysql", label: "MySQL", logo: mysqlLogo, blurb: "Relational SQL database", versions: ["8.4", "8.0"] },
+  { id: "mongodb", label: "MongoDB", logo: mongoLogo, blurb: "Document database", versions: ["7", "6"] },
   { id: "redis", label: "Redis", logo: redisLogo, blurb: "In-memory key-value store", versions: ["7"] },
 ];
 
@@ -179,11 +183,7 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
           )}
           <div>
             <label className="flex items-center gap-2 text-sm text-muted">
-              <input
-                type="checkbox"
-                checked={exposePort}
-                onChange={(e) => setExposePort(e.target.checked)}
-              />
+              <Checkbox checked={exposePort} onChange={(e) => setExposePort(e.target.checked)} />
               Expose a host port
             </label>
             {exposePort && (

@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { del, patch } from "../lib/api";
 import type { App } from "../lib/types";
-import { Button, Card, ConfirmModal, FieldError, Icon, Input, Label, Select, useToast } from "./ui";
+import { Button, Card, Checkbox, ConfirmModal, FieldError, Icon, Input, Label, Select, useToast } from "./ui";
 
 export function SettingsTab({ app }: { app: App }) {
   const qc = useQueryClient();
@@ -107,7 +107,7 @@ export function SettingsTab({ app }: { app: App }) {
             </div>
           </div>
           <label className="flex items-center gap-2 text-sm text-muted">
-            <input type="checkbox" checked={autoDeploy} onChange={(e) => setAutoDeploy(e.target.checked)} />
+            <Checkbox checked={autoDeploy} onChange={(e) => setAutoDeploy(e.target.checked)} />
             Auto-deploy on push
           </label>
           <FieldError message={error} />

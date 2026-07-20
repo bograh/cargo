@@ -5,7 +5,7 @@ import { api, post, put } from "../lib/api";
 import { cn } from "../lib/cn";
 import { useOrg } from "../lib/hooks";
 import type { App, Deployment } from "../lib/types";
-import { Button, Card, FieldError, Icon, Input, Label, PageHeader, Select, useToast } from "../components/ui";
+import { Button, Card, Checkbox, FieldError, Icon, Input, Label, PageHeader, Select, useToast } from "../components/ui";
 
 interface GithubRepo {
   full_name: string;
@@ -220,7 +220,7 @@ export default function NewApp() {
             </div>
           </div>
           <label className="flex items-center gap-2 text-sm text-muted">
-            <input type="checkbox" checked={autoDeploy} onChange={(e) => setAutoDeploy(e.target.checked)} />
+            <Checkbox checked={autoDeploy} onChange={(e) => setAutoDeploy(e.target.checked)} />
             Auto-deploy on push (takes effect once GitHub integration is connected)
           </label>
         </Card>

@@ -62,7 +62,7 @@ export interface DatabaseInstance {
   id: string;
   org_id: string;
   name: string;
-  engine: "postgres" | "redis";
+  engine: "postgres" | "redis" | "mysql" | "mongodb";
   version: string;
   redis_mode: string;
   host_port: number | null;

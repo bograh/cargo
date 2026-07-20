@@ -34,6 +34,11 @@
 }
 
 @layer base {
+  :root {
+    /* Render native controls (option lists, scrollbars, date pickers) dark so
+       they match the freight theme instead of the browser's light default. */
+    color-scheme: dark;
+  }
   body {
     @apply bg-bg text-text font-sans antialiased;
   }
@@ -47,6 +52,45 @@
   :focus-visible {
     outline: 2px solid var(--color-amber);
     outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Freight-styled native <select>: hide the default arrow and draw a muted
+     chevron so the closed control matches Input. */
+  .cargo-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa0a8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    background-size: 0.9rem;
+    padding-right: 2rem;
+  }
+
+  /* Freight-styled checkbox: an amber-filled box with a dark check when on. */
+  .cargo-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    height: 1rem;
+    width: 1rem;
+    flex-shrink: 0;
+    border-radius: 4px;
+    border: 1px solid var(--color-border);
+    background: var(--color-raised);
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s;
+  }
+  .cargo-checkbox:checked {
+    border-color: var(--color-amber);
+    background-color: var(--color-amber);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2314100a' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 0.7rem;
+  }
+  .cargo-checkbox:hover:not(:checked) {
+    border-color: color-mix(in srgb, var(--color-amber) 45%, transparent);
   }
 }
 

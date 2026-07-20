@@ -4,6 +4,7 @@ export { Select } from "./Select";
 export { Textarea } from "./Textarea";
 export { Label } from "./Label";
 export { Card } from "./Card";
+export { Checkbox } from "./Checkbox";
 export { Badge } from "./Badge";
 export type { BadgeTone } from "./Badge";
 export { Spinner } from "./Spinner";
