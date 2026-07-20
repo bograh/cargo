@@ -1,1 +1,78 @@
+@import "@fontsource/space-grotesk/500.css";
+@import "@fontsource/space-grotesk/600.css";
+@import "@fontsource/space-grotesk/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
 @import "tailwindcss";
+
+/* Always emit the freight motif utilities below — Tailwind v4 tree-shakes unused
+   @utility definitions, but these are design-system primitives consumed across tasks. */
+@source inline("corrugated hazard glow-top glass bg-amber-tint bg-live-tint bg-danger-tint border-amber-dim");
+
+@theme {
+  /* palette — verbatim from cargo-web global.css */
+  --color-bg: #0b0c0e;
+  --color-surface: #121316;
+  --color-raised: #17181c;
+  --color-border: #23252b;
+  --color-text: #e8e9eb;
+  --color-muted: #9aa0a8;
+  --color-amber: #f5a524;
+  --color-amber-deep: #c47f12;
+  --color-live: #3fb950;
+  --color-danger: #e5484d;
+  --color-terminal: #0d0f12;
+  --color-terminal-blue: #58a6ff;
+  --color-on-amber: #14100a;
+
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-lg: 10px;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+  ::selection {
+    background: rgba(245, 165, 36, 0.28);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-amber);
+    outline-offset: 2px;
+  }
+}
+
+/* Freight motifs (pure CSS, from cargo-web) */
+@utility corrugated {
+  background-image: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.025) 0 2px, transparent 2px 14px);
+}
+@utility hazard {
+  background: repeating-linear-gradient(45deg, var(--color-amber) 0 12px, transparent 12px 24px);
+}
+@utility glow-top {
+  background-image: radial-gradient(52rem 26rem at 50% -8rem, rgba(245, 165, 36, 0.13), transparent 65%);
+}
+@utility glass {
+  background: color-mix(in srgb, var(--color-bg) 82%, transparent);
+  backdrop-filter: blur(10px);
+}
+@utility bg-amber-tint {
+  background: color-mix(in srgb, var(--color-amber) 6%, transparent);
+}
+@utility bg-live-tint {
+  background: color-mix(in srgb, var(--color-live) 10%, transparent);
+}
+@utility bg-danger-tint {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+@utility border-amber-dim {
+  border-color: color-mix(in srgb, var(--color-amber) 45%, transparent);
+}
