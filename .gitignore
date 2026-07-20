@@ -1,2 +1,5 @@
 internal/webui/dist/*
 !internal/webui/dist/index.html
+
+# installer-generated secrets (mode 0600)
+deploy/.env

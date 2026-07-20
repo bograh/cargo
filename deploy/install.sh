@@ -110,7 +110,7 @@ cat <<'EOF'
 
   ┌─────────────────────────────────────────────────────────────────┐
   │  BACK UP CARGO_MASTER_KEY FROM .env SOMEWHERE SAFE.             │
-  │  Encrypted secrets (env vars, credentials) are UNRECOVERABLE   │
+  │  Encrypted secrets (env vars, credentials) are UNRECOVERABLE    │
   │  without it.                                                    │
   └─────────────────────────────────────────────────────────────────┘
 
