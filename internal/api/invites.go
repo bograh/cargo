@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -68,6 +67,14 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	smtp := s.smtpConfig(r.Context())
+	// Org name and inviter for the email body. Best-effort: the invite still
+	// issues if these can't be resolved.
+	orgName := "your organization"
+	if org, _, err := s.orgs.Get(r.Context(), id, actor); err == nil {
+		orgName = org.Name
+	}
+	invitedBy := userFrom(r.Context()).Email
+
 	results := make([]inviteResult, 0, len(emails))
 	for _, email := range emails {
 		token, _, err := s.orgs.CreateInvite(r.Context(), id, actor, body.Role, email, defaultInviteTTL)
@@ -84,7 +91,9 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		res := inviteResult{Email: email}
 		if smtp == nil {
 			res.Link, res.Error = link, "email not sent (SMTP not configured)"
-		} else if err := sendInviteEmail(*smtp, email, link); err != nil {
+		} else if err := sendInviteEmail(*smtp, email, mailer.InviteData{
+			OrgName: orgName, Role: body.Role, InvitedBy: invitedBy, Link: link,
+		}); err != nil {
 			res.Link, res.Error = link, "email delivery failed"
 		} else {
 			res.Sent = true
@@ -106,15 +115,9 @@ func (s *Server) smtpConfig(ctx context.Context) *mailer.SMTP {
 	return &mailer.SMTP{Host: cfg.Host, Port: cfg.Port, Username: cfg.Username, Password: cfg.Password, From: cfg.From}
 }
 
-func sendInviteEmail(cfg mailer.SMTP, to, link string) error {
-	subject := "You've been invited to Cargo"
-	body := fmt.Sprintf(`<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#111">
-<p>You've been invited to join an organization on Cargo.</p>
-<p><a href="%s" style="display:inline-block;background:#f5a524;color:#14100a;font-weight:600;text-decoration:none;padding:10px 18px;border-radius:8px">Accept invitation</a></p>
-<p style="color:#555">Or paste this link into your browser:<br><a href="%s">%s</a></p>
-<p style="color:#888;font-size:13px">This invitation expires in 7 days.</p>
-</div>`, link, link, link)
-	return mailer.Send(cfg, []string{to}, subject, body)
+func sendInviteEmail(cfg mailer.SMTP, to string, data mailer.InviteData) error {
+	subject, htmlBody, textBody := mailer.RenderInvite(data)
+	return mailer.Send(cfg, []string{to}, subject, htmlBody, textBody)
 }
 
 // normalizeEmails trims, lowercases, drops blanks/duplicates, and keeps only
