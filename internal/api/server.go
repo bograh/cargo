@@ -135,6 +135,7 @@ type InstanceSettings interface {
 type GitHubService interface {
 	AppStatus(ctx context.Context) (configured bool, slug string, appID int64, err error)
 	SaveApp(ctx context.Context, cfg github.AppConfig) error
+	CreateFromManifest(ctx context.Context, code string) (string, error)
 	WebhookSecret(ctx context.Context) (string, error)
 	InstallURL(ctx context.Context, state string) (string, error)
 	OrgStatus(ctx context.Context, orgID pgtype.UUID) (connected bool, accountLogin string, err error)

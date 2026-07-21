@@ -33,6 +33,9 @@ func (s *stubGitHub) SaveApp(_ context.Context, cfg github.AppConfig) error {
 	s.saved = &cfg
 	return nil
 }
+func (s *stubGitHub) CreateFromManifest(_ context.Context, _ string) (string, error) {
+	return "cargo-app", nil
+}
 func (s *stubGitHub) WebhookSecret(context.Context) (string, error) {
 	if !s.configured {
 		return "", github.ErrNotConfigured
