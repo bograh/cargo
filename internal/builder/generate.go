@@ -24,6 +24,8 @@ type Generator interface {
 // generators is the ordered registry. Add new languages here.
 var generators = []Generator{
 	Node{},
+	Go{},
+	Java{},
 }
 
 func detectGenerator(dir string) (Generator, bool) {
