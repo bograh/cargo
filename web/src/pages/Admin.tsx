@@ -1,10 +1,10 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Navigate } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { api, del, put } from "../lib/api";
 import { useAuth } from "../auth";
 import type { User } from "../lib/types";
-import { Badge, Button, Card, FieldError, Input, Label, PageHeader, Spinner, Textarea, useToast } from "../components/ui";
+import { Badge, Button, Card, FieldError, Icon, Input, Label, PageHeader, Spinner, Textarea, useToast } from "../components/ui";
 
 function SectionHeading({ eyebrow, title, aside }: { eyebrow: string; title: string; aside?: ReactNode }) {
   return (
@@ -162,6 +162,7 @@ function GithubAppForm() {
   const [privateKey, setPrivateKey] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
   const [error, setError] = useState("");
+  const [manual, setManual] = useState(false);
   const save = useMutation({
     mutationFn: () =>
       put("/admin/settings/github-app", {
@@ -203,47 +204,65 @@ function GithubAppForm() {
         }
       />
       <p className="mb-4 text-xs text-muted">
-        Create a GitHub App with repository read access and push webhooks pointed at{" "}
-        <code className="font-mono text-text">{window.location.origin}/api/v1/webhooks/github</code>, then paste its credentials here.
-        They are stored encrypted; the key and secret are never shown again.
+        Create a GitHub App for this instance. The one-click option sends a
+        prefilled manifest to GitHub and captures the credentials automatically —
+        no copy-pasting. They are stored encrypted; the key and secret are never
+        shown again.
       </p>
-      <form onSubmit={submit} className="space-y-3">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <Label htmlFor="gh-id">App ID</Label>
-            <Input id="gh-id" type="number" value={appId} onChange={(e) => setAppId(e.target.value)} required />
-          </div>
-          <div>
-            <Label htmlFor="gh-slug">App slug</Label>
-            <Input id="gh-slug" value={appSlug} onChange={(e) => setAppSlug(e.target.value)} required />
-          </div>
-        </div>
-        <div>
-          <Label htmlFor="gh-key">Private key (PEM)</Label>
-          <Textarea
-            id="gh-key"
-            value={privateKey}
-            onChange={(e) => setPrivateKey(e.target.value)}
-            required
-            rows={4}
-            className="font-mono text-xs"
-          />
-        </div>
-        <div>
-          <Label htmlFor="gh-secret">Webhook secret</Label>
-          <Input
-            id="gh-secret"
-            type="password"
-            value={webhookSecret}
-            onChange={(e) => setWebhookSecret(e.target.value)}
-            required
-          />
-        </div>
-        <FieldError message={error} />
-        <Button type="submit" disabled={save.isPending}>
-          Save GitHub App
+
+      <a href="/api/v1/admin/settings/github-app/manifest">
+        <Button>
+          <Icon name="git-branch" size={14} /> Create GitHub App automatically
         </Button>
-      </form>
+      </a>
+
+      <button
+        type="button"
+        onClick={() => setManual((m) => !m)}
+        className="mt-3 block text-xs text-muted hover:text-text"
+      >
+        {manual ? "Hide manual setup" : "or enter existing credentials manually"}
+      </button>
+
+      {manual && (
+        <form onSubmit={submit} className="mt-4 space-y-3 border-t border-border pt-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="gh-id">App ID</Label>
+              <Input id="gh-id" type="number" value={appId} onChange={(e) => setAppId(e.target.value)} required />
+            </div>
+            <div>
+              <Label htmlFor="gh-slug">App slug</Label>
+              <Input id="gh-slug" value={appSlug} onChange={(e) => setAppSlug(e.target.value)} required />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="gh-key">Private key (PEM)</Label>
+            <Textarea
+              id="gh-key"
+              value={privateKey}
+              onChange={(e) => setPrivateKey(e.target.value)}
+              required
+              rows={4}
+              className="font-mono text-xs"
+            />
+          </div>
+          <div>
+            <Label htmlFor="gh-secret">Webhook secret</Label>
+            <Input
+              id="gh-secret"
+              type="password"
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              required
+            />
+          </div>
+          <FieldError message={error} />
+          <Button type="submit" disabled={save.isPending}>
+            Save GitHub App
+          </Button>
+        </form>
+      )}
     </Card>
   );
 }
@@ -373,6 +392,24 @@ interface AdminOrg {
 export default function Admin() {
   const { user, loading } = useAuth();
   const isAdmin = !!user?.is_instance_admin;
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [params, setParams] = useSearchParams();
+
+  // Surface the outcome of the GitHub App manifest round-trip.
+  useEffect(() => {
+    const result = params.get("github");
+    if (!result) return;
+    if (result === "connected") {
+      toast("GitHub App connected");
+      void qc.invalidateQueries({ queryKey: ["admin", "github-app"] });
+    } else if (result === "error") {
+      toast("GitHub App setup failed", "error");
+    }
+    params.delete("github");
+    setParams(params, { replace: true });
+  }, [params, setParams, toast, qc]);
+
   const { data: users, isLoading } = useQuery({
     queryKey: ["admin", "users"],
     queryFn: () => api<User[]>("/admin/users"),
