@@ -68,6 +68,7 @@ func NewRouter(s *Server) *chi.Mux {
 				r.Post("/deploy", s.handleDeploy)
 				r.Post("/rollback", s.handleRollback)
 				r.Get("/deployments", s.handleListDeployments)
+				r.Get("/logs", s.handleAppLogs)
 			})
 			r.Route("/deployments/{deploymentID}", func(r chi.Router) {
 				r.Get("/", s.handleGetDeployment)

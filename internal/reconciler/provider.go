@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -159,6 +160,28 @@ func firstIP(networksJSON string) string {
 		}
 	}
 	return ""
+}
+
+// AppLogs streams the running app container's stdout+stderr (application and
+// request logs) via `docker compose logs -f`, starting with the last `tail`
+// lines. The returned reader is closed — and the underlying process killed —
+// when ctx is cancelled (e.g. the SSE client disconnects) or the caller Closes.
+func (d *Docker) AppLogs(ctx context.Context, appID string, tail int) (io.ReadCloser, error) {
+	composePath := filepath.Join(d.projectDir(appID), "compose.yaml")
+	if _, err := os.Stat(composePath); err != nil {
+		return nil, fmt.Errorf("app is not running")
+	}
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composePath,
+		"logs", "--no-color", "--tail", strconv.Itoa(tail), "-f", "app")
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		return nil, err
+	}
+	go func() { _ = pw.CloseWithError(cmd.Wait()) }()
+	return pr, nil
 }
 
 func (d *Docker) Teardown(ctx context.Context, appID, slug string, log io.Writer) error {
