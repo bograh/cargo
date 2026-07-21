@@ -1,24 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
-import { api } from "../lib/api";
 import { useApp } from "../lib/hooks";
-import { isActive, type Deployment } from "../lib/types";
-import { StatusBadge } from "../components/StatusBadge";
-import { Button, PageHeader, Spinner } from "../components/ui";
+import { Button, EmptyState, PageHeader, Skeleton, StatusDot } from "../components/ui";
 
-export default function DeploymentLogs() {
-  const { deploymentId } = useParams();
+export default function AppLogs() {
+  const { appId } = useParams();
+  const { data: app, isLoading, error } = useApp(appId);
   const [lines, setLines] = useState<string[]>([]);
+  const [connected, setConnected] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
-
-  const { data: dep } = useQuery({
-    queryKey: ["deployment", deploymentId],
-    queryFn: () => api<Deployment>(`/deployments/${deploymentId}`),
-    refetchInterval: (query) => (query.state.data && !isActive(query.state.data.status) ? false : 3000),
-    enabled: !!deploymentId,
-  });
-  const { data: app } = useApp(dep?.app_id);
 
   const scrollToBottom = useCallback(() => {
     const el = logRef.current;
@@ -26,46 +16,55 @@ export default function DeploymentLogs() {
   }, []);
 
   useEffect(() => {
-    if (!deploymentId) return;
+    if (!appId) return;
     setLines([]);
-    const es = new EventSource(`/api/v1/deployments/${deploymentId}/logs`);
+    setConnected(false);
+    const es = new EventSource(`/api/v1/apps/${appId}/logs`);
+    es.onopen = () => setConnected(true);
     es.onmessage = (e) => setLines((prev) => [...prev, e.data]);
-    es.onerror = () => es.close();
+    es.onerror = () => setConnected(false);
     return () => es.close();
-  }, [deploymentId]);
+  }, [appId]);
 
   useEffect(() => {
     scrollToBottom();
   }, [lines.length, scrollToBottom]);
 
+  if (isLoading) return <Skeleton className="h-64" />;
+  if (error || !app) return <EmptyState title="Application not found" />;
+
   return (
     <div>
       <PageHeader
-        eyebrow="deployment"
-        title={app?.name ?? "Logs"}
-        back={dep ? { to: `/apps/${dep.app_id}`, label: app?.name ?? "App" } : undefined}
-        actions={dep ? <StatusBadge status={dep.status} /> : <Spinner />}
+        eyebrow="app"
+        title="Logs"
+        back={{ to: `/apps/${app.id}`, label: app.name }}
+        actions={
+          <span className="flex items-center gap-2 text-xs text-muted">
+            <StatusDot status={connected ? "live" : "failed"} />
+            {connected ? "streaming" : "disconnected"}
+          </span>
+        }
       />
-      {dep?.status === "failed" && dep.error && (
-        <p className="mb-3 rounded-lg border border-danger/40 bg-danger-tint px-3 py-2 text-sm text-danger">{dep.error}</p>
-      )}
       <div className="overflow-hidden rounded-lg border border-border bg-terminal shadow-[0_24px_60px_-24px_rgba(0,0,0,0.7)]">
         <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
           <span className="h-2.5 w-2.5 rounded-full bg-danger/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-amber/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-live/70" />
-          <span className="ml-2 font-mono text-xs text-muted">deploy logs</span>
+          <span className="ml-2 font-mono text-xs text-muted">application &amp; request logs</span>
           <Button variant="ghost" className="ml-auto !px-2 !py-1 text-xs" onClick={scrollToBottom}>
             Latest
           </Button>
         </div>
         <pre
           ref={logRef}
-          data-testid="log-output"
+          data-testid="app-log-output"
           className="h-[60vh] overflow-y-auto p-4 font-mono text-xs leading-relaxed text-text"
         >
           {lines.length === 0 ? (
-            <span className="text-muted">Waiting for logs…</span>
+            <span className="text-muted">
+              {connected ? "Waiting for output…" : "Connecting… (the app must have a running container)"}
+            </span>
           ) : (
             lines.map((line, i) => <div key={i}>{line}</div>)
           )}

@@ -47,6 +47,7 @@ export default function AppOverview() {
       <PageHeader
         eyebrow="app"
         title={app.name}
+        back={{ to: `/orgs/${app.org_id}`, label: "All apps" }}
         actions={
           <Button onClick={() => deploy.mutate()} disabled={deploy.isPending}>
             <Icon name="rocket" size={14} /> Deploy

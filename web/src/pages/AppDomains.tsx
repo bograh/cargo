@@ -10,7 +10,7 @@ export default function AppDomains() {
   if (error || !app) return <EmptyState title="Application not found" />;
   return (
     <div>
-      <PageHeader eyebrow="app" title="Domains" />
+      <PageHeader eyebrow="app" title="Domains" back={{ to: `/apps/${app.id}`, label: app.name }} />
       <DomainsTab app={app} />
     </div>
   );

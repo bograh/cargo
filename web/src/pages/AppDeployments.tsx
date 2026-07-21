@@ -10,7 +10,7 @@ export default function AppDeployments() {
   if (error || !app) return <EmptyState title="Application not found" />;
   return (
     <div>
-      <PageHeader eyebrow="app" title="Deployments" />
+      <PageHeader eyebrow="app" title="Deployments" back={{ to: `/apps/${app.id}`, label: app.name }} />
       <DeploymentsTab app={app} />
     </div>
   );

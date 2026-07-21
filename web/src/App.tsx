@@ -12,6 +12,7 @@ import OrgSettings from "./pages/OrgSettings";
 import NewApp from "./pages/NewApp";
 import AppOverview from "./pages/AppOverview";
 import AppDeployments from "./pages/AppDeployments";
+import AppLogs from "./pages/AppLogs";
 import AppEnv from "./pages/AppEnv";
 import AppDomains from "./pages/AppDomains";
 import AppSettings from "./pages/AppSettings";
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="/orgs/:orgId/apps/new" element={<NewApp />} />
         <Route path="/apps/:appId" element={<AppOverview />} />
         <Route path="/apps/:appId/deployments" element={<AppDeployments />} />
+        <Route path="/apps/:appId/logs" element={<AppLogs />} />
         <Route path="/apps/:appId/env" element={<AppEnv />} />
         <Route path="/apps/:appId/domains" element={<AppDomains />} />
         <Route path="/apps/:appId/settings" element={<AppSettings />} />

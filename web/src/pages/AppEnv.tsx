@@ -10,7 +10,7 @@ export default function AppEnv() {
   if (error || !app) return <EmptyState title="Application not found" />;
   return (
     <div>
-      <PageHeader eyebrow="app" title="Environment" />
+      <PageHeader eyebrow="app" title="Environment" back={{ to: `/apps/${app.id}`, label: app.name }} />
       <EnvTab app={app} />
     </div>
   );

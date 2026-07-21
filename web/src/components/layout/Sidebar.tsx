@@ -14,7 +14,8 @@ export function Sidebar() {
   const { pathname } = useLocation();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
-  const isAppScope = pathname.startsWith("/apps/");
+  // A deployment logs page belongs to an app, so keep the app sidebar there.
+  const isAppScope = pathname.startsWith("/apps/") || pathname.startsWith("/deployments/");
   useEffect(() => setOpen(false), [pathname]);
   return (
     <>

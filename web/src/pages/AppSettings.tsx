@@ -10,7 +10,7 @@ export default function AppSettings() {
   if (error || !app) return <EmptyState title="Application not found" />;
   return (
     <div>
-      <PageHeader eyebrow="app" title="Settings" />
+      <PageHeader eyebrow="app" title="Settings" back={{ to: `/apps/${app.id}`, label: app.name }} />
       <SettingsTab app={app} />
     </div>
   );

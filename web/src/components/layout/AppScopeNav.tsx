@@ -9,7 +9,16 @@ import { NavItem } from "./NavItem";
 
 export function AppScopeNav() {
   const match = useMatch("/apps/:appId/*");
-  const appId = match?.params.appId;
+  // A deployment logs page (/deployments/:id) belongs to an app but has no app
+  // id in its URL — resolve it from the deployment so the sidebar stays
+  // app-scoped there too.
+  const depMatch = useMatch("/deployments/:deploymentId");
+  const { data: dep } = useQuery({
+    queryKey: ["deployment", depMatch?.params.deploymentId],
+    queryFn: () => api<Deployment>(`/deployments/${depMatch!.params.deploymentId}`),
+    enabled: !!depMatch?.params.deploymentId,
+  });
+  const appId = match?.params.appId ?? dep?.app_id;
   const { data: app } = useApp(appId);
   const { data: deployments } = useQuery({
     queryKey: ["deployments", appId],
@@ -39,6 +48,7 @@ export function AppScopeNav() {
       <nav className="flex flex-col gap-0.5">
         <NavItem to={`/apps/${appId}`} icon="box" label="Overview" end />
         <NavItem to={`/apps/${appId}/deployments`} icon="rocket" label="Deployments" />
+        <NavItem to={`/apps/${appId}/logs`} icon="list" label="Logs" />
         <NavItem to={`/apps/${appId}/env`} icon="key" label="Environment" />
         <NavItem to={`/apps/${appId}/domains`} icon="globe" label="Domains" />
         <NavItem to={`/apps/${appId}/settings`} icon="settings" label="Settings" />
