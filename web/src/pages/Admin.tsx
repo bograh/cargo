@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useSearchParams } from "react-router-dom";
-import { api, del, put } from "../lib/api";
+import { api, del, post, put } from "../lib/api";
 import { useAuth } from "../auth";
 import type { User } from "../lib/types";
 import { Badge, Button, Card, FieldError, Icon, Input, Label, PageHeader, Spinner, Textarea, useToast } from "../components/ui";
@@ -83,6 +83,12 @@ function InstanceSettingsCard() {
     },
     onError,
   });
+  const testSmtp = useMutation({
+    mutationFn: () => post<{ to: string }>("/admin/settings/smtp/test"),
+    onSuccess: (d) => toast(`Test email sent to ${d.to}`),
+    // Surface the concrete SMTP error (connect / auth / TLS / rejected).
+    onError: (err) => toast(err instanceof Error ? err.message : "test failed", "error"),
+  });
 
   return (
     <Card>
@@ -134,9 +140,16 @@ function InstanceSettingsCard() {
             <Input aria-label="smtp password" type="password" placeholder="password (write-only)" value={smtpPass} onChange={(e) => setSmtpPass(e.target.value)} />
             <Input aria-label="smtp from" placeholder="cargo@example.com" value={smtpFrom} onChange={(e) => setSmtpFrom(e.target.value)} className="col-span-2" />
           </div>
-          <Button type="submit" disabled={saveSmtp.isPending || !smtpHost.trim()}>
-            Save SMTP
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="submit" disabled={saveSmtp.isPending || !smtpHost.trim()}>
+              Save SMTP
+            </Button>
+            {data?.smtp.configured && (
+              <Button type="button" variant="secondary" onClick={() => testSmtp.mutate()} disabled={testSmtp.isPending}>
+                {testSmtp.isPending ? "Sending…" : "Send test email"}
+              </Button>
+            )}
+          </div>
         </form>
         <FieldError message={error} />
       </div>
