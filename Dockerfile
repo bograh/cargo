@@ -14,7 +14,10 @@ COPY --from=web /app/internal/webui/dist ./internal/webui/dist
 RUN CGO_ENABLED=0 go build -o /bin/cargod ./cmd/server
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates docker-cli docker-cli-compose git curl
+# docker-cli-buildx provides the BuildKit builder nixpacks requires (its
+# generated Dockerfiles use cache mounts); without it nixpacks builds fail and
+# plain Dockerfile builds fall back to the deprecated legacy builder.
+RUN apk add --no-cache ca-certificates docker-cli docker-cli-buildx docker-cli-compose git curl
 ARG NIXPACKS_VERSION=1.29.1
 RUN curl -fsSL "https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/nixpacks-v${NIXPACKS_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
     | tar -xz -C /usr/local/bin nixpacks
