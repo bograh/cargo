@@ -22,7 +22,9 @@ type Builder interface {
 	Build(ctx context.Context, in Input) error
 }
 
-// Detect implements FR-3.3: Dockerfile if present, otherwise Nixpacks.
+// Detect chooses a builder for auto mode: a user Dockerfile wins, then a
+// language generator (a lean multi-stage Dockerfile), then Nixpacks as the
+// universal fallback (FR-3.3).
 func Detect(workDir, dockerfilePath string) string {
 	if dockerfilePath == "" {
 		dockerfilePath = "Dockerfile"
@@ -30,12 +32,21 @@ func Detect(workDir, dockerfilePath string) string {
 	if _, err := os.Stat(filepath.Join(workDir, dockerfilePath)); err == nil {
 		return "dockerfile"
 	}
+	if g, ok := detectGenerator(workDir); ok {
+		return g.Name()
+	}
 	return "nixpacks"
 }
 
 func ForName(name string) Builder {
-	if name == "nixpacks" {
+	switch name {
+	case "nixpacks":
 		return Nixpacks{}
+	case "dockerfile":
+		return Dockerfile{}
+	}
+	if g, ok := generatorByName(name); ok {
+		return generatedBuilder{gen: g}
 	}
 	return Dockerfile{}
 }
