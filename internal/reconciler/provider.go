@@ -85,6 +85,8 @@ func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec,
 	client := &http.Client{Timeout: 3 * time.Second}
 	var runningSince time.Time
 	unreachableOnly := true
+	refused := false   // reachable host, nothing listening on spec.Port
+	serverErr := false // app answered but with 5xx
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -96,7 +98,7 @@ func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec,
 		}
 		state, _ := output(ctx, "docker", "inspect", "-f", "{{.State.Status}}", cid)
 		if state == "exited" || state == "dead" {
-			return fmt.Errorf("container exited during startup")
+			return fmt.Errorf("container exited during startup — check the app's logs")
 		}
 		if state != "running" {
 			time.Sleep(2 * time.Second)
@@ -116,9 +118,9 @@ func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec,
 					_, _ = fmt.Fprintf(log, "healthcheck ok: %s → %d\n", url, resp.StatusCode)
 					return nil
 				}
-				unreachableOnly = false // reachable but unhealthy — keep gating
+				unreachableOnly, serverErr = false, true // reachable but unhealthy — keep gating
 			} else if errors.Is(err, syscall.ECONNREFUSED) {
-				unreachableOnly = false // reachable host, app not listening yet
+				unreachableOnly, refused = false, true // reachable host, app not listening yet
 			}
 		}
 		// Probe network unreachable but container stable for 15s → accept.
@@ -128,7 +130,18 @@ func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec,
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return fmt.Errorf("healthcheck timed out after %s", d.HealthTimeout)
+	// Turn the opaque timeout into an actionable message.
+	switch {
+	case refused:
+		return fmt.Errorf("healthcheck timed out after %s: nothing is listening on port %d (connection refused). "+
+			"Set the app's exposed port to the one your app listens on", d.HealthTimeout, spec.Port)
+	case serverErr:
+		return fmt.Errorf("healthcheck timed out after %s: %s on port %d kept returning 5xx",
+			d.HealthTimeout, spec.HealthcheckPath, spec.Port)
+	default:
+		return fmt.Errorf("healthcheck timed out after %s (no response on port %d%s)",
+			d.HealthTimeout, spec.Port, spec.HealthcheckPath)
+	}
 }
 
 // firstIP extracts the first non-empty IPAddress from docker inspect's
