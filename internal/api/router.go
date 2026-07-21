@@ -100,6 +100,7 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Put("/settings/apps-domain-suffix", s.handlePutSuffix)
 			r.Put("/settings/smtp", s.handlePutSMTP)
 			r.Delete("/settings/smtp", s.handleDeleteSMTP)
+			r.Post("/settings/smtp/test", s.handleTestSMTP)
 			r.Get("/settings/oidc", s.handleGetOIDC)
 			r.Put("/settings/oidc", s.handlePutOIDC)
 			r.Delete("/settings/oidc", s.handleDeleteOIDC)

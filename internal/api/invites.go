@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -94,7 +95,8 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		} else if err := sendInviteEmail(*smtp, email, mailer.InviteData{
 			OrgName: orgName, Role: body.Role, InvitedBy: invitedBy, Link: link,
 		}); err != nil {
-			res.Link, res.Error = link, "email delivery failed"
+			slog.Error("invite email delivery failed", "to", email, "err", err)
+			res.Link, res.Error = link, "email delivery failed — see server logs or use the link above"
 		} else {
 			res.Sent = true
 		}

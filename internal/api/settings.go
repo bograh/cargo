@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
+	"github.com/bograh/cargo/internal/mailer"
 	"github.com/bograh/cargo/internal/settings"
 )
 
@@ -73,4 +75,26 @@ func (s *Server) handleDeleteSMTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+}
+
+// handleTestSMTP sends a test email to the requesting admin and returns the
+// concrete SMTP error on failure, so delivery problems are diagnosable from
+// the UI without digging through server logs.
+func (s *Server) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
+	cfg := s.smtpConfig(r.Context())
+	if cfg == nil {
+		Error(w, http.StatusBadRequest, "smtp_not_configured", "save SMTP settings before sending a test")
+		return
+	}
+	to := userFrom(r.Context()).Email
+	err := mailer.Send(*cfg, []string{to},
+		"Cargo SMTP test",
+		"<p>This is a test email from Cargo. If you can read this, SMTP delivery is working.</p>",
+		"This is a test email from Cargo. If you can read this, SMTP delivery is working.\n")
+	if err != nil {
+		slog.Warn("smtp test failed", "err", err)
+		Error(w, http.StatusBadGateway, "smtp_test_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent", "to": to})
 }

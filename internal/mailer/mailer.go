@@ -6,10 +6,13 @@ package mailer
 
 import (
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 )
 
@@ -27,9 +30,12 @@ var ErrNotConfigured = errors.New("smtp is not configured")
 
 // Send delivers one message to the given recipients. When textBody is
 // non-empty the message is multipart/alternative (text + HTML); otherwise it
-// is HTML-only. PLAIN auth is used when a username is set (net/smtp upgrades
-// to STARTTLS when the server advertises it, e.g. on port 587). Implicit-TLS
-// ports (465) are not supported.
+// is HTML-only.
+//
+// Transport is chosen by port: 465 uses implicit TLS; every other port dials
+// plaintext and upgrades via STARTTLS when the server advertises it (25/587).
+// PLAIN auth is used when a username is set. Errors are wrapped per stage
+// (connect / starttls / auth / from / rcpt / data) so failures are diagnosable.
 func Send(cfg SMTP, to []string, subject, htmlBody, textBody string) error {
 	if cfg.Host == "" || cfg.Port == 0 || cfg.From == "" {
 		return ErrNotConfigured
@@ -37,16 +43,65 @@ func Send(cfg SMTP, to []string, subject, htmlBody, textBody string) error {
 	if len(to) == 0 {
 		return errors.New("mailer: no recipients")
 	}
-	var auth smtp.Auth
-	if cfg.Username != "" {
-		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
-	}
 	msg, err := buildMessage(cfg.From, to, subject, htmlBody, textBody)
 	if err != nil {
 		return err
 	}
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	return smtp.SendMail(addr, auth, cfg.From, to, msg)
+	return deliver(cfg, to, msg)
+}
+
+func deliver(cfg SMTP, to []string, msg []byte) error {
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	tlsCfg := &tls.Config{ServerName: cfg.Host}
+
+	var client *smtp.Client
+	if cfg.Port == 465 {
+		conn, err := tls.Dial("tcp", addr, tlsCfg)
+		if err != nil {
+			return fmt.Errorf("smtp: TLS connect to %s failed: %w", addr, err)
+		}
+		if client, err = smtp.NewClient(conn, cfg.Host); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("smtp: handshake failed: %w", err)
+		}
+	} else {
+		var err error
+		if client, err = smtp.Dial(addr); err != nil {
+			return fmt.Errorf("smtp: connect to %s failed: %w", addr, err)
+		}
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(tlsCfg); err != nil {
+				_ = client.Close()
+				return fmt.Errorf("smtp: STARTTLS failed: %w", err)
+			}
+		}
+	}
+	defer func() { _ = client.Close() }()
+
+	if cfg.Username != "" {
+		if err := client.Auth(smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)); err != nil {
+			return fmt.Errorf("smtp: authentication failed: %w", err)
+		}
+	}
+	if err := client.Mail(cfg.From); err != nil {
+		return fmt.Errorf("smtp: MAIL FROM %q rejected: %w", cfg.From, err)
+	}
+	for _, rcpt := range to {
+		if err := client.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("smtp: recipient %q rejected: %w", rcpt, err)
+		}
+	}
+	wc, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("smtp: DATA rejected: %w", err)
+	}
+	if _, err := wc.Write(msg); err != nil {
+		return fmt.Errorf("smtp: writing message failed: %w", err)
+	}
+	if err := wc.Close(); err != nil {
+		return fmt.Errorf("smtp: server rejected message: %w", err)
+	}
+	return client.Quit()
 }
 
 // buildMessage assembles RFC 5322 headers and body. Header values are stripped
