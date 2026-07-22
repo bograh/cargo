@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,7 +123,16 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 		return err
 	}
 	_, _ = fmt.Fprintln(logw, "==> live")
-	return p.Deployments.Finish(ctx, depID, "live", "")
+	if err := p.Deployments.Finish(ctx, depID, "live", ""); err != nil {
+		return err
+	}
+	// Reclaim disk immediately: keep only the newest few deployments/images
+	// for this app rather than waiting for the daily prune. Best-effort — a
+	// prune failure never fails the (already successful) deploy.
+	if err := pruneApp(context.WithoutCancel(ctx), sqlc.New(p.Pool), p.Deployments, dep.AppID); err != nil {
+		slog.Warn("post-deploy prune failed", "app", appIDStr, "err", err)
+	}
+	return nil
 }
 
 func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer) error {

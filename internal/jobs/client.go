@@ -41,7 +41,8 @@ func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service) (*rive
 			river.NewPeriodicJob(
 				river.PeriodicInterval(24*time.Hour),
 				func() (river.JobArgs, *river.InsertOpts) { return PruneArgs{}, nil },
-				&river.PeriodicJobOpts{RunOnStart: false},
+				// Run on start too, to reclaim any image/log backlog promptly.
+				&river.PeriodicJobOpts{RunOnStart: true},
 			),
 			river.NewPeriodicJob(
 				river.PeriodicInterval(10*time.Minute),

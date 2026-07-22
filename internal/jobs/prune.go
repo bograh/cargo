@@ -8,6 +8,7 @@ import (
 
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 )
@@ -54,20 +55,31 @@ func RunPrune(ctx context.Context, pool *pgxpool.Pool, deps *deployments.Service
 		if err != nil {
 			return err
 		}
-		old, err := q.ListPrunableDeployments(ctx, sqlc.ListPrunableDeploymentsParams{
-			AppID: id, Offset: keepDeployments,
-		})
-		if err != nil {
-			return fmt.Errorf("list prunable for %s: %w", appID, err)
+		if err := pruneApp(ctx, q, deps, id); err != nil {
+			return fmt.Errorf("prune %s: %w", appID, err)
 		}
-		for _, dep := range old {
-			_ = os.Remove(deps.LogPath(uuidStr(dep.ID)))
-			if dep.ImageTag != "" {
-				_ = exec.CommandContext(ctx, "docker", "rmi", "-f", dep.ImageTag).Run()
-			}
-			if err := q.DeleteDeployment(ctx, dep.ID); err != nil {
-				return err
-			}
+	}
+	return nil
+}
+
+// pruneApp keeps the newest keepDeployments for one app and removes older
+// deployments' rows, log files, and images. Image removal is best-effort
+// (`docker rmi -f`); the live and recent-rollback images are always within
+// the kept window (ordered newest-first), so they are never removed.
+func pruneApp(ctx context.Context, q *sqlc.Queries, deps *deployments.Service, appID pgtype.UUID) error {
+	old, err := q.ListPrunableDeployments(ctx, sqlc.ListPrunableDeploymentsParams{
+		AppID: appID, Offset: keepDeployments,
+	})
+	if err != nil {
+		return err
+	}
+	for _, dep := range old {
+		_ = os.Remove(deps.LogPath(uuidStr(dep.ID)))
+		if dep.ImageTag != "" {
+			_ = exec.CommandContext(ctx, "docker", "rmi", "-f", dep.ImageTag).Run()
+		}
+		if err := q.DeleteDeployment(ctx, dep.ID); err != nil {
+			return err
 		}
 	}
 	return nil
