@@ -41,7 +41,7 @@ export function Sidebar() {
             <span className="md:hidden lg:inline">Cargo</span>
           </Link>
         </div>
-        <div className="flex-1 overflow-y-auto py-3">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden py-3">
           {!isAppScope && <OrgSwitcher />}
           {isAppScope ? <AppScopeNav /> : <OrgScopeNav />}
           {user?.is_instance_admin && !isAppScope && (
