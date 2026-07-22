@@ -65,6 +65,7 @@ func TestNodeDockerfile(t *testing.T) {
 		"pnpm install --frozen-lockfile",
 		"pnpm run build",
 		"pnpm prune --prod",
+		"rm -rf .git .next/cache", // drop caches/.git so the runtime image stays lean
 		"USER app",
 		`CMD ["npm","run","start"]`, // runtime uses npm (bundled), not pnpm
 	} {

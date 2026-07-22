@@ -90,6 +90,10 @@ func (Node) Dockerfile(dir string) (string, error) {
 	if pm.prune != "" {
 		fmt.Fprintf(&b, "RUN %s\n", pm.prune)
 	}
+	// Drop regenerable caches and the repo before copying into the runtime:
+	// Next's build cache and .git can be hundreds of MB and only bloat the
+	// image / slow the export.
+	b.WriteString("RUN rm -rf .git .next/cache node_modules/.cache 2>/dev/null || true\n")
 
 	// ---- runtime stage (only prod deps + built output) ----
 	fmt.Fprintf(&b, "\nFROM node:%s-alpine AS run\n", nodeVer)
