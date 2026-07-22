@@ -22,6 +22,7 @@ import (
 	"github.com/bograh/cargo/internal/events"
 	"github.com/bograh/cargo/internal/github"
 	"github.com/bograh/cargo/internal/jobs"
+	"github.com/bograh/cargo/internal/metrics"
 	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -78,7 +79,9 @@ func main() {
 		AppsDomainSuffix: appsDomainSuffix(pool),
 		DBEnv:            dbSvc.EnvFor,
 	}
-	client, err := jobs.NewClient(pool, pipeline, dbSvc)
+	traefikURL := getenvDefault("CARGO_TRAEFIK_METRICS_URL", "http://traefik:8082/metrics")
+	collector := metrics.NewCollector(pool, hub, provider, traefikURL)
+	client, err := jobs.NewClient(pool, pipeline, dbSvc, collector)
 	if err != nil {
 		slog.Error("job client init failed", "err", err)
 		os.Exit(1)
@@ -129,4 +132,11 @@ func appsDomainSuffix(pool *pgxpool.Pool) func(context.Context) string {
 		}
 		return v
 	}
+}
+
+func getenvDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

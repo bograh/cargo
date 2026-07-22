@@ -185,6 +185,35 @@ func (q *Queries) LatestAppMetric(ctx context.Context, appID pgtype.UUID) (AppMe
 	return i, err
 }
 
+const listAllAppIDs = `-- name: ListAllAppIDs :many
+SELECT id, slug FROM applications
+`
+
+type ListAllAppIDsRow struct {
+	ID   pgtype.UUID
+	Slug string
+}
+
+func (q *Queries) ListAllAppIDs(ctx context.Context) ([]ListAllAppIDsRow, error) {
+	rows, err := q.db.Query(ctx, listAllAppIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllAppIDsRow
+	for rows.Next() {
+		var i ListAllAppIDsRow
+		if err := rows.Scan(&i.ID, &i.Slug); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppMetricsSince = `-- name: ListAppMetricsSince :many
 SELECT app_id, created_at, cpu_pct, mem_bytes, mem_limit_bytes, net_rx_bytes, net_tx_bytes, req_rate, err_rate, p50_ms, p95_ms FROM app_metrics
 WHERE app_id = $1 AND created_at >= $2

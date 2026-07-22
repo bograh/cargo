@@ -227,7 +227,7 @@ func TestRiverMigrateAndClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbSvc := databases.NewService(f.pipeline.Pool, box, &fakeDBProvider{}, t.TempDir())
-	client, err := NewClient(f.pipeline.Pool, f.pipeline, dbSvc)
+	client, err := NewClient(f.pipeline.Pool, f.pipeline, dbSvc, nil)
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}

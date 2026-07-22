@@ -32,6 +32,9 @@ DELETE FROM applications WHERE id = $1;
 -- name: ListGitAppsByBranch :many
 SELECT * FROM applications WHERE source_type = 'git' AND git_branch = $1;
 
+-- name: ListAllAppIDs :many
+SELECT id, slug FROM applications;
+
 -- name: CreateAppMetric :exec
 INSERT INTO app_metrics (
     app_id, cpu_pct, mem_bytes, mem_limit_bytes,
