@@ -43,6 +43,10 @@ services:
       # TLS on websecure with no resolver: Traefik's self-signed default
       # certificate. App routers (generated websecure+tls=true) work as-is.
       - --entrypoints.websecure.http.tls=true
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+      - --metrics.prometheus.addServicesLabels=true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cargo-acme:/acme

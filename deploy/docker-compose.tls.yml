@@ -22,6 +22,10 @@ services:
       - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
       # Default cert for app routers.
       - --entrypoints.websecure.http.tls.certresolver=le
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+      - --metrics.prometheus.addServicesLabels=true
   controlplane:
     labels:
       - traefik.enable=true

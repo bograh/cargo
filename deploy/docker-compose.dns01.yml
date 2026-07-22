@@ -25,6 +25,10 @@ services:
       - --entrypoints.websecure.http.tls.certresolver=ledns
       - --entrypoints.websecure.http.tls.domains[0].main=${CARGO_APPS_SUFFIX}
       - --entrypoints.websecure.http.tls.domains[0].sans=*.${CARGO_APPS_SUFFIX}
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+      - --metrics.prometheus.addServicesLabels=true
     environment:
       CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
