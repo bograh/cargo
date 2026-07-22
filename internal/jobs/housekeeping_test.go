@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/bograh/cargo/internal/auth"
+	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestRunHousekeepingPurgesStaleRows(t *testing.T) {
@@ -44,5 +46,34 @@ func TestRunHousekeepingPurgesStaleRows(t *testing.T) {
 	}
 	if liveSessions == 0 {
 		t.Fatal("valid sessions were purged too")
+	}
+}
+
+func TestPurgeAppMetrics(t *testing.T) {
+	pool := startPool(t)
+	ctx := context.Background()
+	q := sqlc.New(pool)
+	// Seed an org+app to satisfy the FK.
+	var appID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		WITH o AS (INSERT INTO organizations (name, slug) VALUES ('m', 'm-metrics') RETURNING id)
+		INSERT INTO applications (org_id, name, slug, source_type, image_ref, exposed_port)
+		SELECT id, 'a', 'a-metrics', 'image', 'nginx', 80 FROM o RETURNING id`).Scan(&appID); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// One fresh row, one 49h-old row.
+	if err := q.CreateAppMetric(ctx, sqlc.CreateAppMetricParams{AppID: appID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO app_metrics (app_id, created_at) VALUES ($1, now() - interval '49 hours')`, appID); err != nil {
+		t.Fatal(err)
+	}
+	n, err := q.PurgeAppMetrics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("purged %d, want 1", n)
 	}
 }

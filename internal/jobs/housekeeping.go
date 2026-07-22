@@ -29,7 +29,8 @@ func (w *HousekeepingWorker) Work(ctx context.Context, _ *river.Job[Housekeeping
 	return nil
 }
 
-// RunHousekeeping deletes expired/stale sessions and dead invites.
+// RunHousekeeping deletes expired/stale sessions, dead invites, and metrics
+// older than the 48h retention window.
 func RunHousekeeping(ctx context.Context, pool *pgxpool.Pool) (sessions, invites int64, err error) {
 	q := sqlc.New(pool)
 	sessions, err = q.PurgeSessions(ctx)
@@ -37,5 +38,11 @@ func RunHousekeeping(ctx context.Context, pool *pgxpool.Pool) (sessions, invites
 		return 0, 0, err
 	}
 	invites, err = q.PurgeInvites(ctx)
-	return sessions, invites, err
+	if err != nil {
+		return sessions, invites, err
+	}
+	if _, err = q.PurgeAppMetrics(ctx); err != nil {
+		return sessions, invites, err
+	}
+	return sessions, invites, nil
 }
