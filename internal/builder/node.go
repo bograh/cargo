@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -35,7 +36,7 @@ type nodePkg struct {
 
 // pmSpec describes how to drive one package manager inside the Dockerfile.
 type pmSpec struct {
-	corepack   bool
+	setup      string   // command to provision the PM (or ""); e.g. "npm install -g pnpm@9"
 	lockFile   string   // "" if none present
 	install    string   // full install command
 	runv       []string // script runner prefix, e.g. ["pnpm","run"]
@@ -59,7 +60,7 @@ func (Node) Dockerfile(dir string) (string, error) {
 	if m := nodeMajorRe.FindString(pkg.Engines.Node); m != "" {
 		nodeVer = m
 	}
-	pm := detectPM(dir)
+	pm := detectPM(dir, pkg)
 	hasBuild := pkg.Scripts["build"] != ""
 
 	var b strings.Builder
@@ -69,8 +70,8 @@ func (Node) Dockerfile(dir string) (string, error) {
 	// ---- build stage ----
 	fmt.Fprintf(&b, "FROM node:%s-alpine AS build\n", nodeVer)
 	b.WriteString("WORKDIR /app\n")
-	if pm.corepack {
-		b.WriteString("RUN corepack enable\n")
+	if pm.setup != "" {
+		fmt.Fprintf(&b, "RUN %s\n", pm.setup)
 	}
 	if pm.lockFile != "" {
 		fmt.Fprintf(&b, "COPY package.json %s ./\n", pm.lockFile)
@@ -97,33 +98,47 @@ func (Node) Dockerfile(dir string) (string, error) {
 	b.WriteString("RUN addgroup -S app && adduser -S app -G app\n")
 	b.WriteString("COPY --from=build --chown=app:app /app ./\n")
 	b.WriteString("USER app\n")
-	fmt.Fprintf(&b, "CMD %s\n", nodeStart(pkg, pm))
+	fmt.Fprintf(&b, "CMD %s\n", nodeStart(pkg))
 	return b.String(), nil
 }
 
-// detectPM picks the package manager from the lockfiles present.
-func detectPM(dir string) pmSpec {
+// detectPM picks the package manager from the lockfiles present and how to
+// provision it. Corepack is used only when package.json pins a version via
+// "packageManager" (so it installs that exact version); otherwise the PM is
+// installed at a lockfile-appropriate version via npm. This avoids corepack's
+// default behavior of fetching the *latest* PM, which can be incompatible with
+// the project's Node (e.g. latest pnpm needs Node 20+, breaking a Node 18 app).
+func detectPM(dir string, pkg nodePkg) pmSpec {
 	switch {
 	case exists(filepath.Join(dir, "pnpm-lock.yaml")):
-		return pmSpec{
-			corepack:   true,
+		spec := pmSpec{
 			lockFile:   "pnpm-lock.yaml",
 			install:    "pnpm install --frozen-lockfile",
 			runv:       []string{"pnpm", "run"},
 			prune:      "pnpm prune --prod",
 			cacheMount: "--mount=type=cache,target=/root/.local/share/pnpm/store",
 		}
+		if strings.HasPrefix(pkg.PackageManager, "pnpm@") {
+			spec.setup = "corepack enable"
+		} else {
+			spec.setup = "npm install -g pnpm@" + pnpmMajor(dir)
+		}
+		return spec
 	case exists(filepath.Join(dir, "yarn.lock")):
-		// Plain `yarn install` works across yarn classic and berry; pruning
-		// differs between them, so keep all deps (correctness over a smaller
-		// image) — still far leaner than Nixpacks.
-		return pmSpec{
-			corepack:   true,
+		spec := pmSpec{
 			lockFile:   "yarn.lock",
-			install:    "yarn install --frozen-lockfile",
 			runv:       []string{"yarn", "run"},
 			cacheMount: "--mount=type=cache,target=/usr/local/share/.cache/yarn",
 		}
+		if yarnIsBerry(dir) || (strings.HasPrefix(pkg.PackageManager, "yarn@") && !strings.HasPrefix(pkg.PackageManager, "yarn@1")) {
+			// Berry manages itself via corepack; keep all deps (its prune model differs).
+			spec.setup = "corepack enable"
+			spec.install = "yarn install --immutable"
+		} else {
+			spec.setup = "npm install -g yarn@1"
+			spec.install = "yarn install --frozen-lockfile --production=false"
+		}
+		return spec
 	case exists(filepath.Join(dir, "package-lock.json")):
 		return pmSpec{
 			lockFile:   "package-lock.json",
@@ -142,11 +157,48 @@ func detectPM(dir string) pmSpec {
 	}
 }
 
-// nodeStart returns the CMD (JSON exec form): the start script if defined,
-// else `node <main|index.js>`.
-func nodeStart(pkg nodePkg, pm pmSpec) string {
+var pnpmLockVersionRe = regexp.MustCompile(`lockfileVersion:\s*['"]?(\d+)(?:\.(\d+))?`)
+
+// pnpmMajor maps pnpm-lock.yaml's lockfileVersion to a compatible pnpm major:
+// lockfile 9.x→pnpm 9, 6.x→pnpm 8, 5.x→pnpm 7. Defaults to 9.
+func pnpmMajor(dir string) string {
+	raw, err := os.ReadFile(filepath.Join(dir, "pnpm-lock.yaml"))
+	if err != nil {
+		return "9"
+	}
+	m := pnpmLockVersionRe.FindSubmatch(raw)
+	if m == nil {
+		return "9"
+	}
+	major, _ := strconv.Atoi(string(m[1]))
+	switch {
+	case major >= 9:
+		return "9"
+	case major == 6:
+		return "8"
+	case major == 5:
+		return "7"
+	default:
+		return "9"
+	}
+}
+
+// yarnIsBerry reports whether yarn.lock is a Yarn Berry (v2+) lockfile.
+func yarnIsBerry(dir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, "yarn.lock"))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(raw), "__metadata:")
+}
+
+// nodeStart returns the CMD (JSON exec form). It runs the start script via
+// npm — npm ships with the node runtime image, so this works regardless of
+// which package manager built the app (pnpm/yarn aren't in the runtime stage).
+// With no start script it runs node on the entrypoint directly.
+func nodeStart(pkg nodePkg) string {
 	if pkg.Scripts["start"] != "" {
-		return jsonArr(append(append([]string{}, pm.runv...), "start"))
+		return jsonArr([]string{"npm", "run", "start"})
 	}
 	main := pkg.Main
 	if main == "" {

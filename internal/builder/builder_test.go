@@ -61,16 +61,36 @@ func TestNodeDockerfile(t *testing.T) {
 		"# syntax=docker/dockerfile:1",
 		"FROM node:20-alpine AS build",
 		"FROM node:20-alpine AS run",
-		"corepack enable",
+		"npm install -g pnpm@9", // no packageManager pin → install pinned pnpm, not corepack-latest
 		"pnpm install --frozen-lockfile",
 		"pnpm run build",
 		"pnpm prune --prod",
 		"USER app",
-		`CMD ["pnpm","run","start"]`,
+		`CMD ["npm","run","start"]`, // runtime uses npm (bundled), not pnpm
 	} {
+		if strings.Contains(df, "corepack enable") {
+			t.Errorf("should not use corepack-latest without a packageManager pin:\n%s", df)
+		}
 		if !strings.Contains(df, want) {
 			t.Errorf("generated Dockerfile missing %q:\n%s", want, df)
 		}
+	}
+}
+
+func TestNodePnpmPinnedUsesCorepack(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "package.json"),
+		[]byte(`{"packageManager":"pnpm@8.15.0","scripts":{"start":"node x"}}`), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte("lockfileVersion: '6.0'\n"), 0o644)
+	df, err := (Node{}).Dockerfile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(df, "corepack enable") {
+		t.Errorf("pinned packageManager should use corepack:\n%s", df)
+	}
+	if strings.Contains(df, "npm install -g pnpm") {
+		t.Errorf("pinned packageManager should not npm-install pnpm:\n%s", df)
 	}
 }
 
