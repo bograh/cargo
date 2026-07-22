@@ -31,3 +31,23 @@ DELETE FROM applications WHERE id = $1;
 
 -- name: ListGitAppsByBranch :many
 SELECT * FROM applications WHERE source_type = 'git' AND git_branch = $1;
+
+-- name: CreateAppMetric :exec
+INSERT INTO app_metrics (
+    app_id, cpu_pct, mem_bytes, mem_limit_bytes,
+    net_rx_bytes, net_tx_bytes, req_rate, err_rate, p50_ms, p95_ms
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
+
+-- name: ListAppMetricsSince :many
+SELECT * FROM app_metrics
+WHERE app_id = $1 AND created_at >= $2
+ORDER BY created_at;
+
+-- name: LatestAppMetric :one
+SELECT * FROM app_metrics
+WHERE app_id = $1
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: PurgeAppMetrics :execrows
+DELETE FROM app_metrics WHERE created_at < now() - interval '48 hours';

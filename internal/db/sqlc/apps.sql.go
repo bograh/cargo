@@ -11,6 +11,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createAppMetric = `-- name: CreateAppMetric :exec
+INSERT INTO app_metrics (
+    app_id, cpu_pct, mem_bytes, mem_limit_bytes,
+    net_rx_bytes, net_tx_bytes, req_rate, err_rate, p50_ms, p95_ms
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+`
+
+type CreateAppMetricParams struct {
+	AppID         pgtype.UUID
+	CpuPct        float64
+	MemBytes      int64
+	MemLimitBytes int64
+	NetRxBytes    int64
+	NetTxBytes    int64
+	ReqRate       float64
+	ErrRate       float64
+	P50Ms         float64
+	P95Ms         float64
+}
+
+func (q *Queries) CreateAppMetric(ctx context.Context, arg CreateAppMetricParams) error {
+	_, err := q.db.Exec(ctx, createAppMetric,
+		arg.AppID,
+		arg.CpuPct,
+		arg.MemBytes,
+		arg.MemLimitBytes,
+		arg.NetRxBytes,
+		arg.NetTxBytes,
+		arg.ReqRate,
+		arg.ErrRate,
+		arg.P50Ms,
+		arg.P95Ms,
+	)
+	return err
+}
+
 const createApplication = `-- name: CreateApplication :one
 INSERT INTO applications (
     org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref,
@@ -123,6 +159,75 @@ func (q *Queries) GetApplication(ctx context.Context, id pgtype.UUID) (Applicati
 	return i, err
 }
 
+const latestAppMetric = `-- name: LatestAppMetric :one
+SELECT app_id, created_at, cpu_pct, mem_bytes, mem_limit_bytes, net_rx_bytes, net_tx_bytes, req_rate, err_rate, p50_ms, p95_ms FROM app_metrics
+WHERE app_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) LatestAppMetric(ctx context.Context, appID pgtype.UUID) (AppMetric, error) {
+	row := q.db.QueryRow(ctx, latestAppMetric, appID)
+	var i AppMetric
+	err := row.Scan(
+		&i.AppID,
+		&i.CreatedAt,
+		&i.CpuPct,
+		&i.MemBytes,
+		&i.MemLimitBytes,
+		&i.NetRxBytes,
+		&i.NetTxBytes,
+		&i.ReqRate,
+		&i.ErrRate,
+		&i.P50Ms,
+		&i.P95Ms,
+	)
+	return i, err
+}
+
+const listAppMetricsSince = `-- name: ListAppMetricsSince :many
+SELECT app_id, created_at, cpu_pct, mem_bytes, mem_limit_bytes, net_rx_bytes, net_tx_bytes, req_rate, err_rate, p50_ms, p95_ms FROM app_metrics
+WHERE app_id = $1 AND created_at >= $2
+ORDER BY created_at
+`
+
+type ListAppMetricsSinceParams struct {
+	AppID     pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListAppMetricsSince(ctx context.Context, arg ListAppMetricsSinceParams) ([]AppMetric, error) {
+	rows, err := q.db.Query(ctx, listAppMetricsSince, arg.AppID, arg.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AppMetric
+	for rows.Next() {
+		var i AppMetric
+		if err := rows.Scan(
+			&i.AppID,
+			&i.CreatedAt,
+			&i.CpuPct,
+			&i.MemBytes,
+			&i.MemLimitBytes,
+			&i.NetRxBytes,
+			&i.NetTxBytes,
+			&i.ReqRate,
+			&i.ErrRate,
+			&i.P50Ms,
+			&i.P95Ms,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationsForOrg = `-- name: ListApplicationsForOrg :many
 SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state FROM applications WHERE org_id = $1 ORDER BY created_at
 `
@@ -211,6 +316,18 @@ func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const purgeAppMetrics = `-- name: PurgeAppMetrics :execrows
+DELETE FROM app_metrics WHERE created_at < now() - interval '48 hours'
+`
+
+func (q *Queries) PurgeAppMetrics(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeAppMetrics)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setApplicationDesiredState = `-- name: SetApplicationDesiredState :one

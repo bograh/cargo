@@ -8,6 +8,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppMetric struct {
+	AppID         pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	CpuPct        float64
+	MemBytes      int64
+	MemLimitBytes int64
+	NetRxBytes    int64
+	NetTxBytes    int64
+	ReqRate       float64
+	ErrRate       float64
+	P50Ms         float64
+	P95Ms         float64
+}
+
 type Application struct {
 	ID               pgtype.UUID
 	OrgID            pgtype.UUID
