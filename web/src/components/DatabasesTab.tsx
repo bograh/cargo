@@ -393,9 +393,10 @@ function InstanceCard({
         <div className="mt-4 space-y-4 border-t border-border pt-4">
           <div>
             <h4 className="mb-2 text-sm font-medium text-text">Attach to an app</h4>
-            <div className="flex gap-2">
+            <div className="flex max-w-md gap-2">
               <Select
                 aria-label="attach app"
+                className="flex-1"
                 value={selectedAppId}
                 onChange={(e) => setSelectedAppId(e.target.value)}
               >

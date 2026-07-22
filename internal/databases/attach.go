@@ -339,19 +339,33 @@ func (s *Service) detachEngine(ctx context.Context, inst sqlc.DatabaseInstance, 
 	switch {
 	case inst.Engine == "postgres":
 		name := att.RoleName.String
+		id := uuidStr(inst.ID)
 		// Terminate the role's sessions, revoke connect, reassign owned
-		// objects (in postgres and in the app db) to postgres, then drop the
-		// role. The database itself is kept.
-		script := fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = '%[1]s';
+		// objects (in the app db and in postgres) to postgres, then drop the
+		// role. The database itself is kept so data survives.
+		//
+		// Each step is a separate psql invocation rather than one script with
+		// `\connect` mid-way: when psql reads a piped script it discards the
+		// unread stdin on reconnect, so everything after `\connect` silently
+		// never runs (the role was left behind), and a failed reconnect under
+		// ON_ERROR_STOP aborts the whole detach with a generic error.
+		revoke := fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = '%[1]s';
 REVOKE CONNECT ON DATABASE %[1]s FROM %[1]s;
-\connect %[1]s
-REASSIGN OWNED BY %[1]s TO postgres;
-DROP OWNED BY %[1]s;
-\connect postgres
-REASSIGN OWNED BY %[1]s TO postgres;
-DROP ROLE IF EXISTS %[1]s;
 `, name)
-		if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "postgres", script,
+		if _, err := s.provider.ExecDB(ctx, id, "postgres", revoke,
+			"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres"); err != nil {
+			return err
+		}
+		// Reassign/drop the role's objects while connected to its own db.
+		inApp := fmt.Sprintf("REASSIGN OWNED BY %[1]s TO postgres;\nDROP OWNED BY %[1]s;\n", name)
+		if _, err := s.provider.ExecDB(ctx, id, "postgres", inApp,
+			"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", name); err != nil {
+			return err
+		}
+		// Back in postgres, take over the database it owns (a shared object),
+		// then drop the now-unreferenced role.
+		dropRole := fmt.Sprintf("REASSIGN OWNED BY %[1]s TO postgres;\nDROP ROLE IF EXISTS %[1]s;\n", name)
+		if _, err := s.provider.ExecDB(ctx, id, "postgres", dropRole,
 			"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres"); err != nil {
 			return err
 		}
