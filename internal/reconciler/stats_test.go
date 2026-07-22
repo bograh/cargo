@@ -4,13 +4,13 @@ import "testing"
 
 func TestParseSize(t *testing.T) {
 	cases := map[string]int64{
-		"0B":       0,
-		"1B":       1,
-		"1kB":      1000,
-		"1.5kB":    1500,
-		"12MiB":    12 * 1024 * 1024,
-		"1GiB":     1024 * 1024 * 1024,
-		"1.05GB":   1_050_000_000,
+		"0B":     0,
+		"1B":     1,
+		"1kB":    1000,
+		"1.5kB":  1500,
+		"12MiB":  12 * 1024 * 1024,
+		"1GiB":   1024 * 1024 * 1024,
+		"1.05GB": 1_050_000_000,
 	}
 	for in, want := range cases {
 		got, err := parseSize(in)

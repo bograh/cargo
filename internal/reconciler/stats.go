@@ -27,7 +27,7 @@ type dockerStatsLine struct {
 }
 
 var sizeUnits = map[string]float64{
-	"B": 1,
+	"B":  1,
 	"kB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12,
 	"KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40,
 }
