@@ -106,6 +106,13 @@ type Server struct {
 	instanceSettings InstanceSettings
 	box              *crypto.Box
 	oidc             OIDCService
+	metrics          MetricStore
+}
+
+// MetricStore is satisfied by *metrics.Store.
+type MetricStore interface {
+	ListSince(ctx context.Context, appID pgtype.UUID, since time.Time) ([]sqlc.AppMetric, error)
+	Latest(ctx context.Context, appID pgtype.UUID) (sqlc.AppMetric, error)
 }
 
 // DatabaseService is satisfied by *databases.Service.
@@ -189,6 +196,9 @@ func (s *Server) WireDatabases(d DatabaseService) {
 		}
 	}
 }
+
+// WireMetrics attaches the metrics store used by the metrics endpoints.
+func (s *Server) WireMetrics(m MetricStore) { s.metrics = m }
 
 // NewServer builds a Server. pool/box may be nil in tests that stub dependencies.
 func NewServer(cfg config.Config, pool *pgxpool.Pool, box *crypto.Box) *Server {

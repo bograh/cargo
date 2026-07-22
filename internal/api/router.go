@@ -71,6 +71,8 @@ func NewRouter(s *Server) *chi.Mux {
 				r.Post("/start", s.handleStartApp)
 				r.Get("/deployments", s.handleListDeployments)
 				r.Get("/logs", s.handleAppLogs)
+				r.Get("/metrics", s.handleAppMetrics)
+				r.Get("/metrics/stream", s.handleAppMetricsStream)
 			})
 			r.Route("/deployments/{deploymentID}", func(r chi.Router) {
 				r.Get("/", s.handleGetDeployment)
