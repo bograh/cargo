@@ -74,16 +74,24 @@ func (d *Docker) Apply(ctx context.Context, spec Spec, log io.Writer) error {
 	return d.waitHealthy(ctx, composePath, spec, log)
 }
 
-// waitHealthy gates the deploy: the container must stay running and, once an
-// IP is known, answer an HTTP probe on the healthcheck path with status <500.
+// stableFor is how long a container must stay running (crash-free) to pass
+// the container-status gate when no HTTP healthcheck is configured.
+const stableFor = 10 * time.Second
+
+// waitHealthy gates the deploy. The container must start and stay running
+// (not exit or crash-loop). An HTTP readiness probe is opt-in: when the app
+// sets a HealthcheckPath, the deploy additionally waits for that path to
+// answer <500. With no path set, a container that stays up for a short
+// window is considered live — an HTTP 200 isn't required for every app.
 //
 // When the probe network is unreachable (dev hosts where container IPs are
-// not routable, e.g. Docker Desktop/WSL), the gate degrades to
+// not routable, e.g. Docker Desktop/WSL), the HTTP gate degrades to
 // "container stays running": in production the controlplane shares the
 // cargo-proxy network, so the HTTP gate is real there.
 func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec, log io.Writer) error {
 	deadline := time.Now().Add(d.HealthTimeout)
 	client := &http.Client{Timeout: 3 * time.Second}
+	httpCheck := spec.HealthcheckPath != ""
 	var runningSince time.Time
 	unreachableOnly := true
 	refused := false   // reachable host, nothing listening on spec.Port
@@ -105,9 +113,25 @@ func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec,
 			time.Sleep(2 * time.Second)
 			continue
 		}
+		// A restart during startup means the app crashed on boot.
+		if rc, _ := output(ctx, "docker", "inspect", "-f", "{{.RestartCount}}", cid); rc != "0" && rc != "" {
+			return fmt.Errorf("container keeps restarting (crash loop) — check the app's logs")
+		}
 		if runningSince.IsZero() {
 			runningSince = time.Now()
 		}
+
+		// No HTTP healthcheck configured: pass once the container has stayed
+		// running crash-free for a short window.
+		if !httpCheck {
+			if time.Since(runningSince) >= stableFor {
+				_, _ = fmt.Fprintln(log, "container up and stable — marking live")
+				return nil
+			}
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
 		ip, _ := output(ctx, "docker", "inspect", "-f",
 			`{{json .NetworkSettings.Networks}}`, cid)
 		if addr := firstIP(ip); addr != "" {
@@ -131,7 +155,15 @@ func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec,
 		}
 		time.Sleep(2 * time.Second)
 	}
-	// Turn the opaque timeout into an actionable message.
+	// Timed out. With no HTTP check, accept a container that reached running.
+	if !httpCheck {
+		if !runningSince.IsZero() {
+			_, _ = fmt.Fprintln(log, "container up — marking live")
+			return nil
+		}
+		return fmt.Errorf("container did not start within %s", d.HealthTimeout)
+	}
+	// Turn the opaque HTTP timeout into an actionable message.
 	switch {
 	case refused:
 		return fmt.Errorf("healthcheck timed out after %s: nothing is listening on port %d (connection refused). "+

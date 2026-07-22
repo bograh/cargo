@@ -32,7 +32,7 @@ export default function NewApp() {
   const [imageRef, setImageRef] = useState("");
   const [builder, setBuilder] = useState("auto");
   const [port, setPort] = useState(8080);
-  const [healthPath, setHealthPath] = useState("/");
+  const [healthPath, setHealthPath] = useState("");
   const [autoDeploy, setAutoDeploy] = useState(true);
   const [envRows, setEnvRows] = useState<EnvRow[]>([]);
   const [error, setError] = useState("");
@@ -216,7 +216,8 @@ export default function NewApp() {
             </div>
             <div>
               <Label htmlFor="health">Healthcheck path</Label>
-              <Input id="health" value={healthPath} onChange={(e) => setHealthPath(e.target.value)} />
+              <Input id="health" value={healthPath} onChange={(e) => setHealthPath(e.target.value)} placeholder="/health (optional)" />
+              <p className="mt-1 text-xs text-muted">Optional. Leave blank to mark live once the container is up; set a path to also require an HTTP 2xx–4xx.</p>
             </div>
           </div>
           <label className="flex items-center gap-2 text-sm text-muted">

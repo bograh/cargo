@@ -103,7 +103,8 @@ export function SettingsTab({ app }: { app: App }) {
             </div>
             <div>
               <Label htmlFor="s-health">Healthcheck path</Label>
-              <Input id="s-health" value={healthPath} onChange={(e) => setHealthPath(e.target.value)} />
+              <Input id="s-health" value={healthPath} onChange={(e) => setHealthPath(e.target.value)} placeholder="/health (optional)" />
+              <p className="mt-1 text-xs text-muted">Blank = live once the container is up; set a path to also require an HTTP check.</p>
             </div>
           </div>
           <label className="flex items-center gap-2 text-sm text-muted">
