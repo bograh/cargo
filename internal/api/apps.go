@@ -31,6 +31,7 @@ func appJSON(a sqlc.Application) map[string]any {
 		"dockerfile_path":          a.DockerfilePath,
 		"build_args":               json.RawMessage(a.BuildArgs),
 		"has_registry_credentials": len(a.RegistryCredsEnc) > 0,
+		"desired_state":            a.DesiredState,
 		"created_at":               a.CreatedAt,
 		"updated_at":               a.UpdatedAt,
 	}
@@ -197,6 +198,61 @@ func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func uuidString(id pgtype.UUID) string {
+	v, _ := id.Value()
+	s, _ := v.(string)
+	return s
+}
+
+func (s *Server) handleStopApp(w http.ResponseWriter, r *http.Request) {
+	id, ok := appIDParam(w, r)
+	if !ok {
+		return
+	}
+	s.setAppRunState(w, r, id, "stopped")
+}
+
+func (s *Server) handleStartApp(w http.ResponseWriter, r *http.Request) {
+	id, ok := appIDParam(w, r)
+	if !ok {
+		return
+	}
+	s.setAppRunState(w, r, id, "running")
+}
+
+// setAppRunState records the desired run state (role-gated), performs the
+// matching provider action, and rolls the recorded intent back if that action
+// fails so the stored state matches reality.
+func (s *Server) setAppRunState(w http.ResponseWriter, r *http.Request, id pgtype.UUID, state string) {
+	ctx := r.Context()
+	app, err := s.apps.SetDesiredState(ctx, id, userFrom(ctx).ID, state)
+	if err != nil {
+		appError(w, err)
+		return
+	}
+	if s.provider == nil {
+		writeJSON(w, http.StatusOK, appJSON(app))
+		return
+	}
+	var perr error
+	if state == "stopped" {
+		perr = s.provider.Stop(ctx, uuidString(id), io.Discard)
+	} else {
+		perr = s.provider.Start(ctx, uuidString(id), io.Discard)
+	}
+	if perr != nil {
+		prev := "running"
+		if state == "running" {
+			prev = "stopped"
+		}
+		_ = s.apps.SetDesiredStateRaw(ctx, id, prev)
+		slog.Warn("app run-state change failed", "app", app.Slug, "state", state, "err", perr)
+		Error(w, http.StatusInternalServerError, "internal", perr.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, appJSON(app))
 }
 
 func (s *Server) handleListEnvKeys(w http.ResponseWriter, r *http.Request) {

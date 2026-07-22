@@ -30,6 +30,8 @@ const ICONS = {
   logout: (<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>),
   search: (<><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></>),
   "git-branch": (<><line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></>),
+  stop: (<rect x="5" y="5" width="14" height="14" rx="2" />),
+  play: (<polygon points="6 4 20 12 6 20 6 4" />),
 } as const satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

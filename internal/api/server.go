@@ -77,6 +77,8 @@ type AppService interface {
 	Get(ctx context.Context, appID, actor pgtype.UUID) (sqlc.Application, error)
 	Update(ctx context.Context, appID, actor pgtype.UUID, in apps.UpdateInput) (sqlc.Application, error)
 	Delete(ctx context.Context, appID, actor pgtype.UUID) error
+	SetDesiredState(ctx context.Context, appID, actor pgtype.UUID, state string) (sqlc.Application, error)
+	SetDesiredStateRaw(ctx context.Context, appID pgtype.UUID, state string) error
 	SetEnvVars(ctx context.Context, appID, actor pgtype.UUID, vars map[string]string) error
 	ListEnvKeys(ctx context.Context, appID, actor pgtype.UUID) ([]string, error)
 	DeleteEnvVar(ctx context.Context, appID, actor pgtype.UUID, key string) error

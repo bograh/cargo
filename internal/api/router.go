@@ -67,6 +67,8 @@ func NewRouter(s *Server) *chi.Mux {
 				r.Delete("/domains/{domainID}", s.handleRemoveDomain)
 				r.Post("/deploy", s.handleDeploy)
 				r.Post("/rollback", s.handleRollback)
+				r.Post("/stop", s.handleStopApp)
+				r.Post("/start", s.handleStartApp)
 				r.Get("/deployments", s.handleListDeployments)
 				r.Get("/logs", s.handleAppLogs)
 			})

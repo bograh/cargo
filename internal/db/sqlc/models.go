@@ -28,6 +28,7 @@ type Application struct {
 	KeyVersion       int32
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	DesiredState     string
 }
 
 type AuthIdentity struct {

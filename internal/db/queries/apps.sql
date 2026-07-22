@@ -21,6 +21,11 @@ UPDATE applications SET
 WHERE id = $1
 RETURNING *;
 
+-- name: SetApplicationDesiredState :one
+UPDATE applications SET desired_state = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: DeleteApplication :exec
 DELETE FROM applications WHERE id = $1;
 

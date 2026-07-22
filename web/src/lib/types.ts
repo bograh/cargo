@@ -42,6 +42,7 @@ export interface App {
   build_context: string;
   dockerfile_path: string;
   has_registry_credentials: boolean;
+  desired_state: "running" | "stopped";
   created_at?: unknown;
   updated_at?: unknown;
 }

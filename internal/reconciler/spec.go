@@ -24,6 +24,10 @@ type Spec struct {
 type DeployProvider interface {
 	Apply(ctx context.Context, spec Spec, log io.Writer) error
 	Teardown(ctx context.Context, appID, slug string, log io.Writer) error
+	// Stop halts the app's running container(s) without discarding the compose
+	// project, so a later Start can bring it back. Start resumes a stopped app.
+	Stop(ctx context.Context, appID string, log io.Writer) error
+	Start(ctx context.Context, appID string, log io.Writer) error
 }
 
 // DBSpec describes a managed database instance.

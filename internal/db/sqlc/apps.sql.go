@@ -17,7 +17,7 @@ INSERT INTO applications (
     registry_creds_enc, exposed_port, healthcheck_path, auto_deploy,
     build_context, dockerfile_path, build_args
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state
 `
 
 type CreateApplicationParams struct {
@@ -77,6 +77,7 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.KeyVersion,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DesiredState,
 	)
 	return i, err
 }
@@ -91,7 +92,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at FROM applications WHERE id = $1
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id pgtype.UUID) (Application, error) {
@@ -117,12 +118,13 @@ func (q *Queries) GetApplication(ctx context.Context, id pgtype.UUID) (Applicati
 		&i.KeyVersion,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DesiredState,
 	)
 	return i, err
 }
 
 const listApplicationsForOrg = `-- name: ListApplicationsForOrg :many
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at FROM applications WHERE org_id = $1 ORDER BY created_at
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state FROM applications WHERE org_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID) ([]Application, error) {
@@ -154,6 +156,7 @@ func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID)
 			&i.KeyVersion,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DesiredState,
 		); err != nil {
 			return nil, err
 		}
@@ -166,7 +169,7 @@ func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID)
 }
 
 const listGitAppsByBranch = `-- name: ListGitAppsByBranch :many
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at FROM applications WHERE source_type = 'git' AND git_branch = $1
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state FROM applications WHERE source_type = 'git' AND git_branch = $1
 `
 
 func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]Application, error) {
@@ -198,6 +201,7 @@ func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]
 			&i.KeyVersion,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DesiredState,
 		); err != nil {
 			return nil, err
 		}
@@ -209,6 +213,45 @@ func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]
 	return items, nil
 }
 
+const setApplicationDesiredState = `-- name: SetApplicationDesiredState :one
+UPDATE applications SET desired_state = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state
+`
+
+type SetApplicationDesiredStateParams struct {
+	ID           pgtype.UUID
+	DesiredState string
+}
+
+func (q *Queries) SetApplicationDesiredState(ctx context.Context, arg SetApplicationDesiredStateParams) (Application, error) {
+	row := q.db.QueryRow(ctx, setApplicationDesiredState, arg.ID, arg.DesiredState)
+	var i Application
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.Slug,
+		&i.SourceType,
+		&i.Builder,
+		&i.GitRepoUrl,
+		&i.GitBranch,
+		&i.ImageRef,
+		&i.RegistryCredsEnc,
+		&i.ExposedPort,
+		&i.HealthcheckPath,
+		&i.AutoDeploy,
+		&i.BuildContext,
+		&i.DockerfilePath,
+		&i.BuildArgs,
+		&i.KeyVersion,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DesiredState,
+	)
+	return i, err
+}
+
 const updateApplication = `-- name: UpdateApplication :one
 UPDATE applications SET
     name = $2, builder = $3, git_branch = $4, image_ref = $5,
@@ -216,7 +259,7 @@ UPDATE applications SET
     build_context = $9, dockerfile_path = $10, build_args = $11,
     registry_creds_enc = $12, updated_at = now()
 WHERE id = $1
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state
 `
 
 type UpdateApplicationParams struct {
@@ -270,6 +313,7 @@ func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationPa
 		&i.KeyVersion,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DesiredState,
 	)
 	return i, err
 }

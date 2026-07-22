@@ -207,7 +207,15 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		Domains:         domains,
 		Networks:        networks,
 	}
-	return p.Provider.Apply(ctx, spec, logw)
+	if err := p.Provider.Apply(ctx, spec, logw); err != nil {
+		return err
+	}
+	// A successful deploy means the app should be up: clear any prior "stopped"
+	// intent so a stopped app that gets redeployed comes back running.
+	if err := p.Apps.SetDesiredStateRaw(ctx, app.ID, "running"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (p *Pipeline) buildFromGit(ctx context.Context, app sqlc.Application, dep sqlc.Deployment, deploymentID string, logw io.Writer) (string, error) {

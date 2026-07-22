@@ -164,3 +164,45 @@ func TestRegistryCredsEncrypted(t *testing.T) {
 		t.Fatalf("creds = %v, %v", creds, err)
 	}
 }
+
+func TestSetDesiredState(t *testing.T) {
+	f, _ := setup(t)
+	ctx := context.Background()
+	app, err := f.svc.Create(ctx, f.orgID, f.owner, imageInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// New apps default to running.
+	if app.DesiredState != "running" {
+		t.Fatalf("new app desired_state = %q, want running", app.DesiredState)
+	}
+	// Owner can stop.
+	stopped, err := f.svc.SetDesiredState(ctx, app.ID, f.owner, "stopped")
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if stopped.DesiredState != "stopped" {
+		t.Fatalf("desired_state = %q, want stopped", stopped.DesiredState)
+	}
+	// Invalid state rejected.
+	if _, err := f.svc.SetDesiredState(ctx, app.ID, f.owner, "paused"); !errors.Is(err, ErrValidation) {
+		t.Fatalf("invalid state err = %v, want ErrValidation", err)
+	}
+	// Viewer cannot change run state.
+	if _, err := f.svc.SetDesiredState(ctx, app.ID, f.viewer, "running"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer err = %v, want ErrForbidden", err)
+	}
+	// State persists (still stopped after the rejected viewer call).
+	got, err := f.svc.Get(ctx, app.ID, f.owner)
+	if err != nil || got.DesiredState != "stopped" {
+		t.Fatalf("get after viewer attempt: state=%q err=%v", got.DesiredState, err)
+	}
+	// Raw setter (pipeline/rollback path) brings it back to running.
+	if err := f.svc.SetDesiredStateRaw(ctx, app.ID, "running"); err != nil {
+		t.Fatalf("raw: %v", err)
+	}
+	got, _ = f.svc.Get(ctx, app.ID, f.owner)
+	if got.DesiredState != "running" {
+		t.Fatalf("after raw = %q, want running", got.DesiredState)
+	}
+}

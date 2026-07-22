@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, post } from "../lib/api";
 import { useApp, useInstanceInfo } from "../lib/hooks";
 import { relativeTime } from "../lib/time";
-import { isActive, type Deployment } from "../lib/types";
+import { isActive, type App, type Deployment } from "../lib/types";
 import { Badge, Button, Card, EmptyState, Icon, PageHeader, Skeleton, StatusDot, useToast } from "../components/ui";
 import { StatusBadge } from "../components/StatusBadge";
 
@@ -28,6 +28,16 @@ export default function AppOverview() {
     },
     onError: (e) => toast(e instanceof Error ? e.message : "deploy failed", "error"),
   });
+  const setRunState = (action: "stop" | "start") => ({
+    mutationFn: () => post<App>(`/apps/${appId}/${action}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["app", appId] });
+      toast(action === "stop" ? "Application stopped" : "Application started");
+    },
+    onError: (e: unknown) => toast(e instanceof Error ? e.message : `${action} failed`, "error"),
+  });
+  const stop = useMutation(setRunState("stop"));
+  const start = useMutation(setRunState("start"));
 
   if (isLoading) {
     return (
@@ -41,6 +51,8 @@ export default function AppOverview() {
 
   const latest = deployments?.[0];
   const url = info ? `${app.slug}.${info.apps_domain_suffix}` : null;
+  const stopped = app.desired_state === "stopped";
+  const deployed = !!latest;
 
   return (
     <div>
@@ -49,17 +61,37 @@ export default function AppOverview() {
         title={app.name}
         back={{ to: `/orgs/${app.org_id}`, label: "All apps" }}
         actions={
-          <Button onClick={() => deploy.mutate()} disabled={deploy.isPending}>
-            <Icon name="rocket" size={14} /> Deploy
-          </Button>
+          <>
+            {stopped ? (
+              <Button variant="secondary" onClick={() => start.mutate()} disabled={start.isPending || !deployed}>
+                <Icon name="play" size={14} /> Start
+              </Button>
+            ) : (
+              <Button variant="secondary" onClick={() => stop.mutate()} disabled={stop.isPending || !deployed}>
+                <Icon name="stop" size={14} /> Stop
+              </Button>
+            )}
+            <Button onClick={() => deploy.mutate()} disabled={deploy.isPending}>
+              <Icon name="rocket" size={14} /> Deploy
+            </Button>
+          </>
         }
       />
       <Card className="corrugated">
         <div className="flex flex-wrap items-center gap-3">
-          {latest ? <StatusDot status={latest.status} /> : null}
-          <span className="font-display text-lg font-semibold">{latest ? latest.status : "not deployed"}</span>
+          {stopped ? (
+            <>
+              <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-muted" />
+              <span className="font-display text-lg font-semibold text-muted">stopped</span>
+            </>
+          ) : (
+            <>
+              {latest ? <StatusDot status={latest.status} /> : null}
+              <span className="font-display text-lg font-semibold">{latest ? latest.status : "not deployed"}</span>
+            </>
+          )}
           <Badge tone={app.source_type === "git" ? "amber" : "neutral"}>{app.source_type}</Badge>
-          {latest && <span className="text-xs text-muted">deployed {relativeTime(latest.created_at)}</span>}
+          {latest && !stopped && <span className="text-xs text-muted">deployed {relativeTime(latest.created_at)}</span>}
         </div>
         {url && (
           <a

@@ -216,6 +216,27 @@ func (d *Docker) AppLogs(ctx context.Context, appID string, tail int) (io.ReadCl
 	return pr, nil
 }
 
+// Stop halts the app's containers but leaves the compose project on disk so
+// Start can bring them back. It's a no-op-with-error if the app was never
+// deployed (no compose project exists).
+func (d *Docker) Stop(ctx context.Context, appID string, log io.Writer) error {
+	composePath := filepath.Join(d.projectDir(appID), "compose.yaml")
+	if _, err := os.Stat(composePath); err != nil {
+		return fmt.Errorf("app is not running")
+	}
+	return run(ctx, log, "docker", "compose", "-f", composePath, "stop")
+}
+
+// Start resumes a previously stopped app's containers.
+func (d *Docker) Start(ctx context.Context, appID string, log io.Writer) error {
+	composePath := filepath.Join(d.projectDir(appID), "compose.yaml")
+	if _, err := os.Stat(composePath); err != nil {
+		return fmt.Errorf("app has not been deployed")
+	}
+	d.ensureNetwork(ctx)
+	return run(ctx, log, "docker", "compose", "-f", composePath, "start")
+}
+
 func (d *Docker) Teardown(ctx context.Context, appID, slug string, log io.Writer) error {
 	dir := d.projectDir(appID)
 	composePath := filepath.Join(dir, "compose.yaml")

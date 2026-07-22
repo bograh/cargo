@@ -29,6 +29,10 @@ func (s stubApps) Update(_ context.Context, _, _ pgtype.UUID, _ apps.UpdateInput
 	return s.app, s.err
 }
 func (s stubApps) Delete(_ context.Context, _, _ pgtype.UUID) error { return s.err }
+func (s stubApps) SetDesiredState(_ context.Context, _, _ pgtype.UUID, _ string) (sqlc.Application, error) {
+	return s.app, s.err
+}
+func (s stubApps) SetDesiredStateRaw(_ context.Context, _ pgtype.UUID, _ string) error { return s.err }
 func (s stubApps) SetEnvVars(_ context.Context, _, _ pgtype.UUID, _ map[string]string) error {
 	return s.err
 }

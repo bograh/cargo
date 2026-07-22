@@ -277,6 +277,28 @@ func (s *Service) Delete(ctx context.Context, appID, actor pgtype.UUID) error {
 	return s.q.DeleteApplication(ctx, app.ID)
 }
 
+// SetDesiredState records whether an app should be running or stopped. It
+// gates on the "member" role (same as deploy) and returns the updated app.
+// The caller is responsible for the matching provider action (Stop/Start).
+func (s *Service) SetDesiredState(ctx context.Context, appID, actor pgtype.UUID, state string) (sqlc.Application, error) {
+	if state != "running" && state != "stopped" {
+		return sqlc.Application{}, fmt.Errorf("%w: desired_state must be running or stopped", ErrValidation)
+	}
+	app, err := s.appFor(ctx, appID, actor, "member")
+	if err != nil {
+		return sqlc.Application{}, err
+	}
+	return s.q.SetApplicationDesiredState(ctx, sqlc.SetApplicationDesiredStateParams{ID: app.ID, DesiredState: state})
+}
+
+// SetDesiredStateRaw sets desired_state without an actor check. Pipeline-facing
+// (a successful deploy implies the app should be up) and used to roll back the
+// recorded intent when a provider Stop/Start fails.
+func (s *Service) SetDesiredStateRaw(ctx context.Context, appID pgtype.UUID, state string) error {
+	_, err := s.q.SetApplicationDesiredState(ctx, sqlc.SetApplicationDesiredStateParams{ID: appID, DesiredState: state})
+	return err
+}
+
 func (s *Service) SetEnvVars(ctx context.Context, appID, actor pgtype.UUID, vars map[string]string) error {
 	app, err := s.appFor(ctx, appID, actor, "member")
 	if err != nil {
