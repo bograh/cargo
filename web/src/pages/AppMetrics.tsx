@@ -43,6 +43,8 @@ export default function AppMetrics() {
 
   useEffect(() => {
     if (!appId) return;
+    setLive([]);
+    seeded.current = false;
     const es = new EventSource(`/api/v1/apps/${appId}/metrics/stream`);
     es.onopen = () => setConnected(true);
     es.onmessage = (e) => {
@@ -59,6 +61,7 @@ export default function AppMetrics() {
 
   if (isLoading) return <Skeleton className="h-64" />;
   if (error || !app) return <EmptyState title="Application not found" />;
+  if (history === undefined) return <Skeleton className="h-64" />;
 
   const latest = live[live.length - 1];
   const series = (sel: (m: AppMetric) => number) => live.map(sel);
