@@ -29,7 +29,7 @@ export function ConfirmModal({
       {requireText && (
         <div className="mt-3">
           <Label htmlFor="confirm-typed">
-            Type <span className="font-mono text-text">{requireText}</span> to confirm
+            Type <span className="font-mono normal-case text-text">{requireText}</span> to confirm
           </Label>
           <Input id="confirm-typed" value={typed} onChange={(e) => setTyped(e.target.value)} />
         </div>
