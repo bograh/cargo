@@ -15,12 +15,15 @@ export function mockApi(routes: Record<string, RouteHandler | { status: number; 
     vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       const path = url.replace("/api/v1", "");
+      const pathNoQuery = path.split("?")[0];
       calls.push({
         method,
         path,
         body: init?.body ? JSON.parse(init.body as string) : undefined,
       });
-      const handler = routes[`${method} ${path}`];
+      // Fall back to matching without the query string so callers can mock
+      // "/foo" and still handle requests like "/foo?window=24h".
+      const handler = routes[`${method} ${path}`] ?? routes[`${method} ${pathNoQuery}`];
       const result =
         typeof handler === "function" ? handler(init) : handler ?? {
           status: 404,

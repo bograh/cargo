@@ -49,6 +49,7 @@ export function AppScopeNav() {
         <NavItem to={`/apps/${appId}`} icon="box" label="Overview" end />
         <NavItem to={`/apps/${appId}/deployments`} icon="rocket" label="Deployments" />
         <NavItem to={`/apps/${appId}/logs`} icon="list" label="Logs" />
+        <NavItem to={`/apps/${appId}/metrics`} icon="activity" label="Metrics" />
         <NavItem to={`/apps/${appId}/env`} icon="key" label="Environment" />
         <NavItem to={`/apps/${appId}/domains`} icon="globe" label="Domains" />
         <NavItem to={`/apps/${appId}/settings`} icon="settings" label="Settings" />

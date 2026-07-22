@@ -32,6 +32,7 @@ const ICONS = {
   "git-branch": (<><line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></>),
   stop: (<rect x="5" y="5" width="14" height="14" rx="2" />),
   play: (<polygon points="6 4 20 12 6 20 6 4" />),
+  activity: (<polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />),
 } as const satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

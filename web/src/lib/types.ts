@@ -92,6 +92,19 @@ export interface Snapshot {
   created_at: string;
 }
 
+export interface AppMetric {
+  ts: string;
+  cpu_pct: number;
+  mem_bytes: number;
+  mem_limit_bytes: number;
+  net_rx_bytes: number;
+  net_tx_bytes: number;
+  req_rate: number;
+  err_rate: number;
+  p50_ms: number;
+  p95_ms: number;
+}
+
 export const ACTIVE_STATUSES = ["queued", "building", "deploying"] as const;
 
 export function isActive(status: Deployment["status"]): boolean {
