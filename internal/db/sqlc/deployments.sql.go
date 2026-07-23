@@ -204,3 +204,18 @@ func (q *Queries) SetDeploymentBuildInfo(ctx context.Context, arg SetDeploymentB
 	_, err := q.db.Exec(ctx, setDeploymentBuildInfo, arg.ID, arg.CommitSha, arg.ImageTag)
 	return err
 }
+
+const supersedePriorLiveDeployments = `-- name: SupersedePriorLiveDeployments :exec
+UPDATE deployments SET status = 'superseded'
+WHERE app_id = $1 AND id <> $2 AND status = 'live'
+`
+
+type SupersedePriorLiveDeploymentsParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) SupersedePriorLiveDeployments(ctx context.Context, arg SupersedePriorLiveDeploymentsParams) error {
+	_, err := q.db.Exec(ctx, supersedePriorLiveDeployments, arg.AppID, arg.ID)
+	return err
+}

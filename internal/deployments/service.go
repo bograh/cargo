@@ -15,7 +15,7 @@ var (
 	ErrNotFound          = errors.New("deployment not found")
 	ErrForbidden         = errors.New("insufficient role")
 	ErrBadTransition     = errors.New("illegal status transition")
-	ErrBadRollbackTarget = errors.New("rollback target must be a previous live deployment")
+	ErrBadRollbackTarget = errors.New("rollback target must be a live or superseded deployment")
 )
 
 var roleRank = map[string]int{"viewer": 0, "member": 1, "admin": 2, "owner": 3}
@@ -93,7 +93,11 @@ func (s *Service) Rollback(ctx context.Context, appID, actor, targetID pgtype.UU
 	if err != nil {
 		return sqlc.Deployment{}, err
 	}
-	if target.AppID != app.ID || target.ImageTag == "" || target.Status != "live" {
+	// A rollback target is any of the app's successfully-built deployments with
+	// an image still on disk: the currently-serving "live" row or an older
+	// "superseded" one demoted when a newer deploy took over.
+	if target.AppID != app.ID || target.ImageTag == "" ||
+		(target.Status != "live" && target.Status != "superseded") {
 		return sqlc.Deployment{}, ErrBadRollbackTarget
 	}
 	return s.q.CreateDeployment(ctx, sqlc.CreateDeploymentParams{
@@ -154,6 +158,16 @@ func (s *Service) Finish(ctx context.Context, id pgtype.UUID, status, errMsg str
 		return ErrBadTransition
 	}
 	return s.q.FinishDeployment(ctx, sqlc.FinishDeploymentParams{ID: id, Status: status, Error: errMsg})
+}
+
+// Supersede demotes an app's prior live deployment(s) to "superseded", leaving
+// exceptID (the deployment that just went live) as the only live row. Their
+// images are retained so they stay valid rollback targets. Callers hold the
+// per-app deploy lock, so this races with no concurrent deploy of the same app.
+func (s *Service) Supersede(ctx context.Context, appID, exceptID pgtype.UUID) error {
+	return s.q.SupersedePriorLiveDeployments(ctx, sqlc.SupersedePriorLiveDeploymentsParams{
+		AppID: appID, ID: exceptID,
+	})
 }
 
 func (s *Service) SetBuildInfo(ctx context.Context, id pgtype.UUID, commitSHA, imageTag string) error {

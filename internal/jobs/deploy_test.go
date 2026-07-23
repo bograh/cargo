@@ -144,6 +144,36 @@ func TestPipelineImageDeploySuccess(t *testing.T) {
 	}
 }
 
+func TestPipelineSupersedesPriorLive(t *testing.T) {
+	f := setup(t, "image")
+	ctx := context.Background()
+
+	first, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, first.ID)); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	second, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, second.ID)); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	got1, _ := f.deps.GetRaw(ctx, first.ID)
+	got2, _ := f.deps.GetRaw(ctx, second.ID)
+	if got1.Status != "superseded" {
+		t.Fatalf("first status = %s, want superseded", got1.Status)
+	}
+	if got2.Status != "live" {
+		t.Fatalf("second status = %s, want live (only newest serves)", got2.Status)
+	}
+}
+
 func TestPipelineFailureMarksFailed(t *testing.T) {
 	f := setup(t, "image")
 	f.provider.err = io.ErrUnexpectedEOF

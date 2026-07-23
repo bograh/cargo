@@ -126,6 +126,14 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 	if err := p.Deployments.Finish(ctx, depID, "live", ""); err != nil {
 		return err
 	}
+	// This deployment now serves the app; demote the app's previously-live
+	// deployment(s) to "superseded" so exactly one row reads as live. Best-effort
+	// (like prune below): the container is already up, and stale "live" bookkeeping
+	// must never fail an otherwise-successful deploy. Their images are retained,
+	// so they remain valid rollback targets.
+	if err := p.Deployments.Supersede(context.WithoutCancel(ctx), dep.AppID, depID); err != nil {
+		slog.Warn("supersede prior live deployment failed", "app", appIDStr, "err", err)
+	}
 	// Reclaim disk immediately: keep only the newest few deployments/images
 	// for this app rather than waiting for the daily prune. Best-effort — a
 	// prune failure never fails the (already successful) deploy.

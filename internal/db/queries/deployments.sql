@@ -20,6 +20,10 @@ WHERE id = $1;
 -- name: FinishDeployment :exec
 UPDATE deployments SET status = $2, error = $3, finished_at = now() WHERE id = $1;
 
+-- name: SupersedePriorLiveDeployments :exec
+UPDATE deployments SET status = 'superseded'
+WHERE app_id = $1 AND id <> $2 AND status = 'live';
+
 -- name: ListPrunableDeployments :many
 SELECT * FROM deployments WHERE app_id = $1 ORDER BY created_at DESC OFFSET $2;
 

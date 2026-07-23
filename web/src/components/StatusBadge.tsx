@@ -6,6 +6,7 @@ const TONES: Record<Deployment["status"], BadgeTone> = {
   building: "amber",
   deploying: "amber",
   live: "live",
+  superseded: "neutral",
   failed: "danger",
   cancelled: "neutral",
 };

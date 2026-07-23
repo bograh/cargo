@@ -51,7 +51,7 @@ export interface Deployment {
   id: string;
   app_id: string;
   trigger: "manual" | "webhook" | "rollback";
-  status: "queued" | "building" | "deploying" | "live" | "failed" | "cancelled";
+  status: "queued" | "building" | "deploying" | "live" | "superseded" | "failed" | "cancelled";
   commit_sha: string;
   image_tag: string;
   error: string;

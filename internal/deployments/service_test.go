@@ -133,6 +133,56 @@ func TestRollback(t *testing.T) {
 	}
 }
 
+// liveDeploy drives a fresh deployment all the way to live and returns it.
+func liveDeploy(t *testing.T, f *fixture, imageTag string) sqlc.Deployment {
+	t.Helper()
+	ctx := context.Background()
+	dep, err := f.svc.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.SetBuildInfo(ctx, dep.ID, "sha", imageTag); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.SetStatus(ctx, dep.ID, "deploying"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Finish(ctx, dep.ID, "live", ""); err != nil {
+		t.Fatal(err)
+	}
+	return dep
+}
+
+func TestSupersedeDemotesPriorLive(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	first := liveDeploy(t, f, "app-web:d1")
+	second := liveDeploy(t, f, "app-web:d2")
+
+	// The second deploy takes over: demote everything else that was live.
+	if err := f.svc.Supersede(ctx, f.app.ID, second.ID); err != nil {
+		t.Fatalf("supersede: %v", err)
+	}
+
+	got1, _ := f.svc.Get(ctx, first.ID, f.owner)
+	got2, _ := f.svc.Get(ctx, second.ID, f.owner)
+	if got1.Status != "superseded" {
+		t.Fatalf("first status = %s, want superseded", got1.Status)
+	}
+	if got2.Status != "live" {
+		t.Fatalf("second status = %s, want live", got2.Status)
+	}
+
+	// A superseded deployment must still be rollback-eligible (image retained).
+	rb, err := f.svc.Rollback(ctx, f.app.ID, f.owner, first.ID)
+	if err != nil {
+		t.Fatalf("rollback to superseded: %v", err)
+	}
+	if rb.ImageTag != "app-web:d1" {
+		t.Fatalf("rollback image = %s", rb.ImageTag)
+	}
+}
+
 func TestLogWriterFileAndHub(t *testing.T) {
 	f := setup(t)
 	ch, cancel := f.hub.Subscribe("deploy:dep-42")

@@ -86,7 +86,7 @@ export function DeploymentsTab({ app }: { app: App }) {
                   <Link to={`/deployments/${d.id}`} className="text-amber hover:underline">
                     Logs
                   </Link>
-                  {d.status === "live" && d.image_tag && (
+                  {(d.status === "live" || d.status === "superseded") && d.image_tag && (
                     <Button variant="secondary" onClick={() => setRollbackTarget(d)}>
                       Rollback
                     </Button>
