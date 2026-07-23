@@ -33,14 +33,6 @@ export default function AppMetrics() {
     enabled: !!appId,
   });
 
-  // Seed the live buffer from history once.
-  useEffect(() => {
-    if (history && !seeded.current) {
-      setLive(history.slice(-MAX_POINTS));
-      seeded.current = true;
-    }
-  }, [history]);
-
   useEffect(() => {
     if (!appId) return;
     setLive([]);
@@ -58,6 +50,14 @@ export default function AppMetrics() {
     es.onerror = () => setConnected(false);
     return () => es.close();
   }, [appId]);
+
+  // Seed the live buffer from history once.
+  useEffect(() => {
+    if (history && !seeded.current) {
+      setLive(history.slice(-MAX_POINTS));
+      seeded.current = true;
+    }
+  }, [history]);
 
   if (isLoading) return <Skeleton className="h-64" />;
   if (error || !app) return <EmptyState title="Application not found" />;

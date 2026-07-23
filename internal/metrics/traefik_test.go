@@ -54,3 +54,20 @@ func TestHistogramQuantile(t *testing.T) {
 		t.Errorf("p95 = %v, want 0.5 (cumulative reaches 95 exactly at le=0.5)", p95)
 	}
 }
+
+// TestHistogramQuantileInfClamp ensures an inconsistent histogram (where the
+// cumulative count never reaches `total` even at +Inf) never causes
+// histogramQuantile to return +Inf; it must clamp to the highest finite le.
+func TestHistogramQuantileInfClamp(t *testing.T) {
+	buckets := map[float64]float64{
+		0.1:         5,
+		math.Inf(1): 5,
+	}
+	got := histogramQuantile(0.95, buckets, 10)
+	if math.IsInf(got, 0) {
+		t.Fatalf("histogramQuantile returned non-finite value: %v", got)
+	}
+	if got != 0.1 {
+		t.Errorf("histogramQuantile = %v, want 0.1 (highest finite le)", got)
+	}
+}

@@ -36,8 +36,8 @@ func (f *fakeProvider) Apply(_ context.Context, spec reconciler.Spec, _ io.Write
 }
 
 func (f *fakeProvider) Teardown(_ context.Context, _, _ string, _ io.Writer) error { return nil }
-func (f *fakeProvider) Stop(_ context.Context, _ string, _ io.Writer) error         { return nil }
-func (f *fakeProvider) Start(_ context.Context, _ string, _ io.Writer) error        { return nil }
+func (f *fakeProvider) Stop(_ context.Context, _ string, _ io.Writer) error        { return nil }
+func (f *fakeProvider) Start(_ context.Context, _ string, _ io.Writer) error       { return nil }
 
 type fakeBuilder struct{ called bool }
 

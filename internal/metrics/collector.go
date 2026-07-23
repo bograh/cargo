@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -46,6 +47,8 @@ type Collector struct {
 	mu   sync.Mutex
 	prev map[string]TrafficCounters // service label -> last counters
 	last time.Time
+
+	runMu sync.Mutex // guards against overlapping CollectOnce ticks
 }
 
 func NewCollector(pool *pgxpool.Pool, hub *events.Hub, stats StatSource, traefikURL string) *Collector {
@@ -80,11 +83,25 @@ func (c *Collector) sampleTraffic(prev, cur TrafficCounters, dt float64) (reqRat
 		p50 = histogramQuantile(0.5, cur.Buckets, cur.DurationCount) * 1000
 		p95 = histogramQuantile(0.95, cur.Buckets, cur.DurationCount) * 1000
 	}
-	return reqRate, errRate, p50, p95
+	return finite(reqRate), finite(errRate), finite(p50), finite(p95)
+}
+
+// finite clamps non-finite floats to 0 so bad upstream data (e.g. an
+// inconsistent +Inf histogram bucket) can never be persisted or published.
+func finite(x float64) float64 {
+	if math.IsInf(x, 0) || math.IsNaN(x) {
+		return 0
+	}
+	return x
 }
 
 // CollectOnce samples every app, writes rows, and publishes live samples.
 func (c *Collector) CollectOnce(ctx context.Context) error {
+	if !c.runMu.TryLock() {
+		return nil // a previous tick is still running; skip this one
+	}
+	defer c.runMu.Unlock()
+
 	q := sqlc.New(c.pool)
 	apps, err := q.ListAllAppIDs(ctx)
 	if err != nil {
@@ -112,7 +129,10 @@ func (c *Collector) CollectOnce(ctx context.Context) error {
 			continue // not running or transient docker error — skip this tick
 		}
 		svc := "app-" + a.Slug + "@docker"
-		reqRate, errRate, p50, p95 := c.sampleTraffic(prevAll[svc], traffic[svc], dt)
+		var reqRate, errRate, p50, p95 float64
+		if prev, ok := prevAll[svc]; ok {
+			reqRate, errRate, p50, p95 = c.sampleTraffic(prev, traffic[svc], dt)
+		}
 
 		if err := q.CreateAppMetric(ctx, sqlc.CreateAppMetricParams{
 			AppID: a.ID, CpuPct: rs.CPUPercent,

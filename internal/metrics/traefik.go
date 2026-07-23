@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -144,14 +145,20 @@ func histogramQuantile(q float64, buckets map[float64]float64, total float64) fl
 			}
 			// interpolate within (prevLe, le]
 			frac := (rank - prevCount) / (count - prevCount)
-			if le > 1e300 { // +Inf bucket: no upper bound, return prevLe
+			if math.IsInf(le, 1) { // +Inf bucket: no upper bound, return prevLe
 				return prevLe
 			}
 			return prevLe + frac*(le-prevLe)
 		}
 		prevLe, prevCount = le, count
 	}
-	return les[len(les)-1]
+	// Fallback: return the highest finite le (never +Inf).
+	for i := len(les) - 1; i >= 0; i-- {
+		if !math.IsInf(les[i], 1) {
+			return les[i]
+		}
+	}
+	return 0
 }
 
 // ScrapeTraefik fetches and parses Traefik's Prometheus endpoint.
