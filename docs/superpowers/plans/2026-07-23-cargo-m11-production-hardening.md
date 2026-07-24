@@ -14,9 +14,12 @@ compose generation gains limits/logging/security_opt; two new periodic River job
 `internal/api`; new `internal/notify` and `internal/audit` packages; new `readyz`/`metrics`
 endpoints; small schema additions (`applications` limit columns, `audit_log` table).
 
-**Tech stack:** No new runtime services. New Go deps: `prometheus/client_golang` (self-
-metrics), `golang.org/x/time/rate` (already common; general limiter). Everything else reuses
-docker CLI helpers, River, `crypto.Box`, sqlc, chi, the existing `mailer`, React Query.
+**Tech stack:** No new runtime services. Only one new Go dep: `prometheus/client_golang`
+(self-metrics). `golang.org/x/time` is **already in `go.mod`** (v0.15.0) — the general
+limiter uses its `rate` subpackage, no `go get` needed. Everything else reuses docker CLI
+helpers, River, `crypto.Box`, sqlc, chi, the existing `mailer`, React Query. Backups and the
+control-DB dump go through the Docker socket (`docker exec`/`docker cp`), since the image
+ships no `pg_dump` and certs live in Traefik's `cargo-acme` volume — not the controlplane FS.
 
 ## Global Constraints
 
@@ -74,18 +77,29 @@ docker CLI helpers, River, `crypto.Box`, sqlc, chi, the existing `mailer`, React
 - Commit `feat(apps): per-app resource limits, log rotation, no-new-privileges`
 
 ### Task 3: Control-plane backup & DR (spec §2.3)
+- **Preflight (do first):** the runtime image has **no `pg_dump`** (`Dockerfile:20` = docker
+  CLI + git/curl only) and `acme.json` is **not** under `<dataDir>` — it lives in the
+  `cargo-acme` volume at `/acme` in the Traefik container (plus `acme-dns.json` in dns01
+  mode). Both the dump and the cert copy therefore go through the Docker socket, not the
+  controlplane FS. Add `CARGO_PLATFORM_DB_CONTAINER` (default `db`) to `internal/config`.
 - `internal/jobs/platformbackup.go`: `PlatformBackupArgs{}` kind `platform_backup`; worker
-  runs `pg_dump -Fc` (URL from `cfg.DatabaseURL`) → `<dataDir>/platform-backups/<RFC3339>.dump`,
-  tars `<dataDir>/acme/acme.json` → `<same>.certs.tar` when present, writes
-  `<same>.keyfp` (SHA-256 of master key), prunes to `CARGO_PLATFORM_BACKUP_KEEP`. Failures
-  fire a `backup_failed` alert (Task 8) and return the error for retry.
+  (a) dumps via `docker exec -i <CARGO_PLATFORM_DB_CONTAINER> pg_dump -Fc -U <user> <db>`
+  (user/db parsed from `cfg.DatabaseURL`) streamed to
+  `<dataDir>/platform-backups/<RFC3339>.dump` — same `docker exec` pattern as m10
+  `SnapshotDB`, reusing the reconciler `run`/`output` helpers; (b) copies certs via
+  `docker cp <traefik-container>:/acme/. <dataDir>/platform-backups/<RFC3339>.certs/`
+  (best-effort — skip with a log line if the container/path is absent); (c) writes
+  `<RFC3339>.keyfp` (SHA-256 of master key); (d) prunes to `CARGO_PLATFORM_BACKUP_KEEP`.
+  Failures fire a `backup_failed` alert (Task 8) and return the error for retry.
 - `internal/jobs/client.go`: register worker + daily `PeriodicJob` (`RunOnStart:false`).
 - API: `POST /admin/backups` (run now, 202), `GET /admin/backups` (list name/size/time);
   handlers gated by `requireInstanceAdmin`.
 - `web/src/pages/Admin.tsx`: read-only Backups panel with list + "Run backup now".
 - `scripts/backup-restore-test.sh`: seed a row, `pg_dump`, `pg_restore` into a scratch DB,
   assert the row survives; wire into CI (`.github/workflows/ci.yml`).
-- `README.md` + `docs/`: restore runbook + a hard master-key-custody section.
+- `README.md` + `docs/`: restore runbook (`pg_restore` via `docker exec`; restore the
+  `cargo-acme` volume — both `acme.json` and `acme-dns.json` — from the `.certs/` copy; set
+  the *same* master key) + a hard master-key-custody section.
 - Tests: worker unit test with a temp dir (dump command stubbed/real against testcontainer),
   retention keeps exactly N; handler role-gating test.
 - Commit `feat(ops): scheduled control-plane backups and restore runbook`
@@ -128,14 +142,20 @@ docker CLI helpers, River, `crypto.Box`, sqlc, chi, the existing `mailer`, React
 - Commit `feat(ops): readiness probe, bounded shutdown, orphaned-deploy reaper`
 
 ### Task 7: Control-plane self-metrics (spec §2.8, metrics half)
-- Add `github.com/prometheus/client_golang`.
+- Add `github.com/prometheus/client_golang` (only new dep — `x/time` is already in `go.mod`).
 - `internal/api/metrics_self.go`: register collectors — River queue depth/job counts
   (query River tables), deploy success/failure counters + duration histogram (incremented
   from `internal/jobs/deploy.go` on terminal transitions), `pgxpool` stats.
-- `internal/api/router.go`: `GET /metrics` gated to loopback / internal (mirror the Traefik
-  `:8082` internal pattern; not on the public entrypoint). Document the scrape target.
-- Tests: `/metrics` exposes expected series names; access gating (non-internal → 403/404).
-- Commit `feat(ops): prometheus self-metrics for the control plane`
+- **Exposure:** the controlplane's `:8080` is routed publicly by Traefik, so `/metrics` must
+  NOT be registered on the main router. Instead start a **second internal-only HTTP server**
+  bound to `CARGO_METRICS_ADDR` (default `:9090`, add to `internal/config`) in
+  `cmd/server/main.go`, serving only `promhttp.Handler()` at `/metrics`. The compose stack
+  publishes no host port for it (reachable only inside the docker networks by a scraper);
+  mirror Traefik's `:8082` internal pattern. Bound its shutdown with the same 30 s context as
+  the main server (Task 6).
+- Tests: the metrics server exposes expected series names; `/metrics` is absent from the main
+  `:8080` router (assert 404 on the public mux).
+- Commit `feat(ops): prometheus self-metrics on an internal listener`
 
 ### Task 8: Notifications / alerting (spec §2.8, notify half)
 - `internal/db/migrations/00015_notify.sql`: `webhook_url_enc BYTEA` in instance settings
@@ -196,5 +216,5 @@ docker CLI helpers, River, `crypto.Box`, sqlc, chi, the existing `mailer`, React
   (`no-new-privileges` only) to avoid breaking app images; backups are local-disk only (S3
   deferred); restore is a tested runbook, not a UI; alerting is event-fixed, not a rules
   engine — all noted as follow-ups in the spec non-goals.
-- New deps limited to `prometheus/client_golang` and `x/time/rate`; no new runtime container
+- Only one new dep (`prometheus/client_golang`); `x/time` already vendored; no new runtime container
   (NFR-3's "3 containers" invariant preserved).

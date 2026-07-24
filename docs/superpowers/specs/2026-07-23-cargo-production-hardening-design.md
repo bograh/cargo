@@ -73,19 +73,30 @@ No backup of the control DB, `acme.json`, or the master key exists.
 
 **Design:**
 - **Scheduled logical backup:** a new periodic River job `platform_backup` (daily,
-  `RunOnStart` false) runs `pg_dump -Fc` of the control database into
+  `RunOnStart` false) dumps the control database into
   `<dataDir>/platform-backups/<RFC3339>.dump`, keeping the last N (default 14, config
-  `CARGO_PLATFORM_BACKUP_KEEP`). It connects using the controlplane's own
-  `CARGO_DATABASE_URL` via `pg_dump` in the image (the image already bundles the postgres
-  client for managed DBs).
-- **Cert + key safety:** the same job writes a `certs.tar` of `acme.json` alongside the
-  dump, and writes a `master-key.fingerprint` (SHA-256 of the key) so an operator can
-  verify which key a backup set belongs to. The **master key itself is never written to
-  disk by the job** — the install script remains the source of truth and the README gets a
-  hard "store the key in a password manager; a backup is useless without it" section.
-- **Restore runbook** (`docs/` + README): stop stack → restore volume or `pg_restore`
-  into a fresh DB → restore `acme.json` → set the *same* master key → `up -d`. A test in
-  `scripts/` exercises dump→`pg_restore` into a scratch database in CI.
+  `CARGO_PLATFORM_BACKUP_KEEP`). **The runtime image does not bundle `pg_dump`** (Dockerfile
+  installs only the docker CLI + git/curl), so — mirroring how m10 managed-DB snapshots work
+  — the job runs `pg_dump -Fc` **via `docker exec` into the platform `db` container**
+  (`docker exec -i <db> pg_dump -Fc -U <user> <db>` streamed to the dump file), not from the
+  controlplane's own filesystem. The db container/service name is resolved from the platform
+  compose project (config `CARGO_PLATFORM_DB_CONTAINER`, default the compose service `db`).
+  *Alternative considered and rejected:* adding `postgresql-client` to the image — heavier
+  image, and the `docker exec` path already exists and is proven for managed DBs.
+- **Cert + key safety:** certs do **not** live under `<dataDir>` — they're in the separate
+  `cargo-acme` volume mounted at `/acme` in the **Traefik** container (`acme.json`, plus
+  `acme-dns.json` in dns01 mode). To reach them, the backup job copies via
+  `docker cp <traefik>:/acme/. <dataDir>/platform-backups/<RFC3339>.certs/` (or the compose
+  stack mounts `cargo-acme` read-only into the controlplane at `/acme-ro` — decide in the
+  plan; `docker cp` avoids a compose change). The job also writes a `master-key.fingerprint`
+  (SHA-256 of the key) so an operator can verify which key a backup set belongs to. The
+  **master key itself is never written to disk by the job** — the install script remains the
+  source of truth and the README gets a hard "store the key in a password manager; a backup
+  is useless without it" section.
+- **Restore runbook** (`docs/` + README): stop stack → `pg_restore` the dump into a fresh DB
+  (via `docker exec` into the db container) → restore the `cargo-acme` volume from the
+  `.certs/` copy (both `acme.json` and `acme-dns.json` when present) → set the *same* master
+  key → `up -d`. A test in `scripts/` exercises dump→`pg_restore` into a scratch database in CI.
 - Admin UI: a read-only "Backups" panel listing the backup files with size/time and a
   "run backup now" button (`POST /admin/backups`).
 
@@ -144,10 +155,16 @@ The platform scrapes Traefik/Docker for tenant apps but exposes nothing about it
 has no alerting path.
 
 **Design:**
-- **`GET /metrics` (Prometheus)** on the controlplane, gated to loopback / an internal
-  entrypoint (not public): River queue depth & job counts, deploy success/failure counters,
-  deploy duration histogram, DB pool stats. Uses the Prometheus client already implied by
-  the Traefik scrape (add `prometheus/client_golang`).
+- **`GET /metrics` (Prometheus)** on the controlplane: River queue depth & job counts,
+  deploy success/failure counters, deploy duration histogram, DB pool stats
+  (`prometheus/client_golang`). **Exposure mechanism:** the controlplane's single `:8080`
+  listener is routed publicly by Traefik (entrypoints `web,websecure`), so `/metrics` cannot
+  simply live there. Serve it on a **second, internal-only listener** — a dedicated metrics
+  HTTP server bound to `CARGO_METRICS_ADDR` (default `:9090`) started alongside the main
+  server — that Traefik does not route and that publishes no host port (reachable only from
+  inside the `cargo-system`/`cargo-proxy` networks by a scraper container). This mirrors
+  Traefik's own `:8082` internal metrics entrypoint. `/metrics` is therefore never registered
+  on the public `:8080` router at all, which is stronger than source-IP gating.
 - **Notifications/alerting:** a small `internal/notify` service with two sinks — email (via
   the existing `mailer`) and an outbound webhook (Slack/Discord-compatible JSON), URL
   stored encrypted in instance settings. Events in m11: **deployment failed**, **disk low**,
@@ -177,8 +194,10 @@ config `CARGO_AUDIT_RETENTION_DAYS`).
 | `CARGO_DEFAULT_CPU_LIMIT` | `1` | per-app CPU cap default |
 | `CARGO_DEFAULT_PIDS_LIMIT` | `512` | per-app PID cap default |
 | `CARGO_PLATFORM_BACKUP_KEEP` | `14` | control-DB backups retained |
+| `CARGO_PLATFORM_DB_CONTAINER` | `db` | platform DB container/service for `docker exec` dumps |
 | `CARGO_DISK_MIN_FREE_PCT` | `10` | warn/alert threshold |
 | `CARGO_API_RATELIMIT_RPS` | `20` | general API limiter |
+| `CARGO_METRICS_ADDR` | `:9090` | internal-only listener for `/metrics` |
 | `CARGO_AUDIT_RETENTION_DAYS` | `180` | audit-log retention |
 
 ## 4. Security model summary
