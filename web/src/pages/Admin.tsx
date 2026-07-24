@@ -396,6 +396,41 @@ function OIDCForm() {
   );
 }
 
+interface DiskStatus {
+  path: string;
+  free_pct: number;
+  free_bytes: number;
+  total_bytes: number;
+  min_free_pct: number;
+}
+
+function DiskCard() {
+  const { data } = useQuery({
+    queryKey: ["admin", "disk"],
+    queryFn: () => api<DiskStatus>("/admin/disk"),
+  });
+  if (!data) return null;
+  const gb = (n: number) => `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  const usedPct = Math.min(100, Math.max(0, 100 - data.free_pct));
+  const low = data.free_pct < data.min_free_pct;
+  return (
+    <Card>
+      <SectionHeading
+        eyebrow="operations"
+        title="Disk"
+        aside={low ? <Badge tone="danger">low — {data.free_pct.toFixed(1)}% free</Badge> : <Badge tone="live">{data.free_pct.toFixed(1)}% free</Badge>}
+      />
+      <div className="h-2 w-full overflow-hidden rounded-full bg-border">
+        <div className={`h-full ${low ? "bg-danger" : "bg-amber"}`} style={{ width: `${usedPct}%` }} />
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        {gb(data.free_bytes)} free of {gb(data.total_bytes)} on <code className="font-mono text-text">{data.path}</code>.
+        Warns below {data.min_free_pct}%.
+      </p>
+    </Card>
+  );
+}
+
 interface Backup {
   name: string;
   size_bytes: number;
@@ -518,6 +553,7 @@ export default function Admin() {
       <InstanceSettingsCard />
       <GithubAppForm />
       <OIDCForm />
+      <DiskCard />
       <BackupsCard />
       <Card>
         <SectionHeading eyebrow="people" title="Users" />

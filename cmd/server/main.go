@@ -93,7 +93,13 @@ func main() {
 		DBService:   cfg.PlatformDBService,
 		// Alerter wired in m11 Task 8 (notifications); nil = no alerts for now.
 	}
-	client, err := jobs.NewClient(pool, pipeline, dbSvc, collector, backuper)
+	diskChecker := &jobs.DiskChecker{
+		Pool:       pool,
+		DataDir:    cfg.DataDir,
+		MinFreePct: cfg.DiskMinFreePct,
+		// Alerter wired in m11 Task 8.
+	}
+	client, err := jobs.NewClient(pool, pipeline, dbSvc, collector, backuper, diskChecker)
 	if err != nil {
 		slog.Error("job client init failed", "err", err)
 		os.Exit(1)

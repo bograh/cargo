@@ -60,10 +60,11 @@ Daily `pg_dump -Fc` of the control DB + `acme.json` bundle + master-key fingerpr
 - ✅ README documents restore + hard master-key-custody guidance (key never written; only a SHA-256 fingerprint)
 - Approach: dump via `docker exec` into the DB container + certs via `docker cp` from Traefik (image ships no pg_dump; certs live in the `cargo-acme` volume); containers found by compose project+service labels (self-discovered). Alert-on-failure seam (`Alerter`) wired nil until 10.8.
 
-### 10.4 Disk-space guardrail ⬜ (Tier-1)
-Periodic `statfs` on `<dataDir>` + Docker root; warn/alert below threshold (default 10%),
-aggressive prune below 5%; admin gauge.
-- Crossing the threshold logs, records status, and fires one alert; recovery clears it
+### 10.4 Disk-space guardrail ✅ (Tier-1)
+Periodic `statfs` on `<dataDir>` (reflects the host fs for the default local-volume install);
+warn/alert below threshold (default 10%), aggressive dangling-image prune below 5%; admin gauge.
+- ✅ Crossing the threshold logs, records status (`instance_settings`), and fires **one** `disk_low` alert; recovery clears the flag (pure `evalDisk` unit-tested)
+- ✅ 10-min periodic `disk_check` job; `GET /admin/disk` live gauge in the Admin UI; `CARGO_DISK_MIN_FREE_PCT` config; reuses the 10.3 `Alerter` seam (nil until 10.8)
 
 ### 10.5 HTTP security middleware ⬜ (Tier-2)
 Security headers (incl. HSTS in production, CSP for the SPA), `MaxBytesReader` body cap,

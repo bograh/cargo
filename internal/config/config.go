@@ -22,6 +22,8 @@ type Config struct {
 	PlatformBackupKeep int    // backups retained (default 14)
 	ComposeProject     string // compose project for container discovery ("" = self-discover)
 	PlatformDBService  string // compose service name of the platform DB (default "db")
+	// Disk guardrail: warn/alert below this free-space percentage (default 10).
+	DiskMinFreePct float64
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -35,6 +37,7 @@ func Load(getenv func(string) string) (Config, error) {
 		DefaultPidsLimit:   512,
 		PlatformBackupKeep: 14,
 		PlatformDBService:  "db",
+		DiskMinFreePct:     10,
 	}
 	if v := getenv("CARGO_HTTP_ADDR"); v != "" {
 		cfg.HTTPAddr = v
@@ -70,6 +73,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if v := getenv("CARGO_PLATFORM_DB_CONTAINER"); v != "" {
 		cfg.PlatformDBService = v
+	}
+	if v := getenv("CARGO_DISK_MIN_FREE_PCT"); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 && n < 100 {
+			cfg.DiskMinFreePct = n
+		} else {
+			return Config{}, fmt.Errorf("CARGO_DISK_MIN_FREE_PCT must be a number between 0 and 100, got %q", v)
+		}
 	}
 
 	if cfg.DatabaseURL == "" {

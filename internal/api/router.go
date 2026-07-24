@@ -111,6 +111,7 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Delete("/settings/oidc", s.handleDeleteOIDC)
 			r.Post("/backups", s.handleRunBackup)
 			r.Get("/backups", s.handleListBackups)
+			r.Get("/disk", s.handleDiskStatus)
 		})
 
 		r.Post("/webhooks/github", s.handleGithubWebhook)

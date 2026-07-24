@@ -28,3 +28,20 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, list)
 }
+
+// handleDiskStatus reports live free space on the data directory plus the
+// configured warning threshold (instance admin).
+func (s *Server) handleDiskStatus(w http.ResponseWriter, r *http.Request) {
+	usage, err := jobs.StatfsUsage(s.cfg.DataDir)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "internal", "could not read disk usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"path":         usage.Path,
+		"free_pct":     usage.FreePct,
+		"free_bytes":   usage.FreeBytes,
+		"total_bytes":  usage.TotalBytes,
+		"min_free_pct": s.cfg.DiskMinFreePct,
+	})
+}

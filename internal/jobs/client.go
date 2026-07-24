@@ -26,7 +26,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 // NewClient builds the River client with the deploy queue (build concurrency
 // cap: 2 workers, FR-4.4) and a daily retention prune. collector may be nil
 // (metrics disabled).
-func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collector *metrics.Collector, backuper *PlatformBackuper) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collector *metrics.Collector, backuper *PlatformBackuper, diskChecker *DiskChecker) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &DeployWorker{P: p})
 	river.AddWorker(workers, &PruneWorker{Pool: pool, Deps: p.Deployments})
@@ -38,6 +38,9 @@ func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collec
 	}
 	if backuper != nil {
 		river.AddWorker(workers, &PlatformBackupWorker{B: backuper})
+	}
+	if diskChecker != nil {
+		river.AddWorker(workers, &DiskCheckWorker{D: diskChecker})
 	}
 	periodic := []*river.PeriodicJob{
 		river.NewPeriodicJob(
@@ -71,6 +74,13 @@ func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collec
 			river.PeriodicInterval(24*time.Hour),
 			func() (river.JobArgs, *river.InsertOpts) { return PlatformBackupArgs{}, nil },
 			&river.PeriodicJobOpts{RunOnStart: false},
+		))
+	}
+	if diskChecker != nil {
+		periodic = append(periodic, river.NewPeriodicJob(
+			river.PeriodicInterval(10*time.Minute),
+			func() (river.JobArgs, *river.InsertOpts) { return DiskCheckArgs{}, nil },
+			&river.PeriodicJobOpts{RunOnStart: true},
 		))
 	}
 	return river.NewClient(riverpgxv5.New(pool), &river.Config{
