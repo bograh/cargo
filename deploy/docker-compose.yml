@@ -74,7 +74,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - cargo-data:/var/lib/cargo
     networks:
+      # cargo-proxy: routed by Traefik and used to reach app containers for
+      # health probes. cargo-system: private link to the platform DB (below).
       - cargo-proxy
+      - cargo-system
     labels:
       # The platform UI is routed through Traefik like any app (dogfooded).
       # No tls/certresolver here: plain HTTP on web, default cert on
@@ -99,7 +102,10 @@ services:
       timeout: 3s
       retries: 30
     networks:
-      - cargo-proxy
+      # The platform DB is reachable ONLY over cargo-system — never from
+      # cargo-proxy, which tenant app containers join. This keeps a deployed
+      # user app from opening a socket to the control-plane database.
+      - cargo-system
 
 networks:
   cargo-proxy:
@@ -110,6 +116,12 @@ networks:
     # install.sh ensures it exists before `up`.
     name: cargo-proxy
     external: true
+  cargo-system:
+    # Private controlplane<->DB link. Compose-managed (not external): only the
+    # platform stack's own services use it, never dynamically-created app
+    # containers, so it needs no external lifecycle. internal:true denies the
+    # DB any route off this network (no gateway / no outbound).
+    internal: true
 
 volumes:
   cargo-db:

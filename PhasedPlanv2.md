@@ -39,11 +39,11 @@ containers per app, making resource limits and network isolation matter more.*
 
 The 14 audited gaps (`2026-07-23-cargo-production-readiness.md`) resolved as ten tasks.
 
-### 10.1 Network isolation — `cargo-system` ⬜ (Tier-0)
+### 10.1 Network isolation — `cargo-system` ✅ (Tier-0)
 Move the platform DB off `cargo-proxy` onto a dedicated `cargo-system` network so tenant
 apps can no longer reach `db:5432`.
-- A tenant app container cannot open the control-DB port; the controlplane still connects
-- `install.sh` and all compose overlays create/attach `cargo-system`
+- ✅ A tenant app container cannot open the control-DB port (runtime-verified: can't even resolve `db`); the controlplane still connects
+- ✅ `cargo-system` is compose-managed + `internal: true` (deviation from "external"; carries only platform stack traffic — no install.sh step needed); overlays inherit the topology
 
 ### 10.2 App stability limits, log rotation, hardening ⬜ (Tier-1)
 Per-app memory/CPU/PID caps (config defaults, per-app override), `json-file` log rotation,

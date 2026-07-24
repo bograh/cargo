@@ -40,17 +40,29 @@ ships no `pg_dump` and certs live in Traefik's `cargo-acme` volume — not the c
 ## Tasks
 
 ### Task 1: Network isolation — `cargo-system` (spec §2.1)
-- `deploy/docker-compose.yml`: add external network `cargo-system`; move the platform `db`
-  service off `cargo-proxy` onto **only** `cargo-system`; add `cargo-system` to the
-  `controlplane` service (keep `cargo-proxy` + `cargo-data`). Traefik unchanged
-  (`cargo-proxy` only).
-- `deploy/docker-compose.dev.yml`, `*.tls.yml`, `*.dns01.yml`: mirror the network topology.
-- `deploy/install.sh`: `docker network create cargo-system` alongside the existing
-  `cargo-proxy`/`cargo-data` creation (idempotent `|| true`).
+- `deploy/docker-compose.yml`: add a **compose-managed `internal: true`** network
+  `cargo-system` (NOT external — see deviation below); move the platform `db` service off
+  `cargo-proxy` onto **only** `cargo-system`; add `cargo-system` to the `controlplane`
+  service (keep `cargo-proxy`). Traefik unchanged (`cargo-proxy` only).
+- `deploy/docker-compose.dev.yml`: mirror — `db` on `cargo-system` only; controlplane on
+  `default` (for outbound internet, since dev has no `cargo-proxy` at startup) + `cargo-system`.
+- `*.tls.yml`, `*.dns01.yml`: no change needed — they only override Traefik command +
+  controlplane labels, so they inherit the base network topology (verified via
+  `docker compose config`).
+- **No `install.sh` change** — `cargo-system` is compose-managed, so `docker compose up`
+  creates it; unlike `cargo-proxy`/`cargo-data` it is never referenced by externally-created
+  app containers, so it needs no external lifecycle.
 - No `reconciler/compose.go` change — apps already default to `cargo-proxy`; isolation comes
   from the DB leaving that network.
-- Verify manually per spec §5 (tenant container cannot reach control DB; controlplane can);
-  document the check in `deploy/README.md`.
+- Verified per spec §5: `docker compose config` topology + a runtime throwaway-container
+  proof (controlplane on both nets reaches `db:5432`; a container on `cargo-proxy` only
+  cannot even resolve `db`). Documented in `deploy/README.md`.
+- **Deliberate deviation:** `cargo-system` is compose-managed + `internal: true` rather than
+  the external network the pre-implementation plan named. Rationale: it carries only the
+  platform stack's own controlplane↔DB traffic (no dynamically-created app container ever
+  joins it), so external lifecycle management is unnecessary, and `internal: true` denies the
+  DB any outbound route as extra defense in depth. Net effect matches the spec's isolation
+  goal with less operational surface (no install.sh step).
 - Commit `fix(deploy): isolate platform database on cargo-system network`
 
 ### Task 2: App compose limits, log rotation, hardening (spec §2.2)

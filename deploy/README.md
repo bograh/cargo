@@ -53,6 +53,30 @@ First registered account becomes the instance admin.
 
 Custom domains always use HTTP-01 once their DNS points at the server.
 
+### Network topology & database isolation
+
+The stack uses three Docker networks so a deployed user app can never reach
+the control-plane database:
+
+- **`cargo-proxy`** (external, shared) — Traefik, the controlplane, and every
+  tenant app container. This is the routing/traffic network.
+- **`cargo-system`** (compose-managed, `internal`) — a private link carrying
+  only controlplane↔platform-DB traffic. The `db` service joins **only** this
+  network, so it has no address on `cargo-proxy`; `internal: true` also denies
+  it any outbound route. Tenant apps are never attached here.
+- **`cargo-data`** (external) — managed-database instances; an app joins it
+  only when it has a database attachment.
+
+Verify the isolation on a running stack (the DB must be reachable from the
+controlplane but not from a tenant app):
+
+```bash
+# controlplane -> DB : succeeds
+docker compose exec controlplane sh -c 'nc -z -w3 db 5432 && echo reachable'
+# a container on cargo-proxy (like any app) -> DB : fails to resolve/connect
+docker run --rm --network cargo-proxy alpine sh -c 'nc -z -w3 db 5432 || echo isolated'
+```
+
 ### Upgrades (NFR-8)
 
 ```bash

@@ -12,6 +12,9 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+    networks:
+      # Mirror production: the DB is reachable only over cargo-system.
+      - cargo-system
 
   controlplane:
     build:
@@ -30,6 +33,15 @@ services:
       - cargo-dev-data:/var/lib/cargo
     ports:
       - "${CARGO_DEV_PORT:-8080}:8080"
+    networks:
+      # cargo-system reaches the DB; default keeps outbound internet (git
+      # clone, image pull, nixpacks) since dev has no cargo-proxy at startup.
+      - default
+      - cargo-system
+
+networks:
+  cargo-system:
+    internal: true
 
 volumes:
   cargo-dev-db:
