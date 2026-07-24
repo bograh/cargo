@@ -32,9 +32,28 @@ func appJSON(a sqlc.Application) map[string]any {
 		"build_args":               json.RawMessage(a.BuildArgs),
 		"has_registry_credentials": len(a.RegistryCredsEnc) > 0,
 		"desired_state":            a.DesiredState,
+		"mem_limit":                textOrNil(a.MemLimit),
+		"cpu_limit":                textOrNil(a.CpuLimit),
+		"pids_limit":               int4OrNil(a.PidsLimit),
 		"created_at":               a.CreatedAt,
 		"updated_at":               a.UpdatedAt,
 	}
+}
+
+// textOrNil / int4OrNil render a nullable column as its value or JSON null, so
+// the UI can tell "uses the instance default" (null) from an explicit override.
+func textOrNil(t pgtype.Text) any {
+	if !t.Valid {
+		return nil
+	}
+	return t.String
+}
+
+func int4OrNil(n pgtype.Int4) any {
+	if !n.Valid {
+		return nil
+	}
+	return n.Int32
 }
 
 func appError(w http.ResponseWriter, err error) {
@@ -73,6 +92,9 @@ type appBody struct {
 	DockerfilePath  *string             `json:"dockerfile_path"`
 	BuildArgs       map[string]string   `json:"build_args"`
 	RegistryCreds   *apps.RegistryCreds `json:"registry_credentials"`
+	MemLimit        *string             `json:"mem_limit"`
+	CPULimit        *string             `json:"cpu_limit"`
+	PidsLimit       *int32              `json:"pids_limit"`
 }
 
 func str(p *string) string {
@@ -104,10 +126,15 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		DockerfilePath:  str(body.DockerfilePath),
 		BuildArgs:       body.BuildArgs,
 		RegistryCreds:   body.RegistryCreds,
+		MemLimit:        str(body.MemLimit),
+		CPULimit:        str(body.CPULimit),
 		AutoDeploy:      true,
 	}
 	if body.ExposedPort != nil {
 		in.ExposedPort = *body.ExposedPort
+	}
+	if body.PidsLimit != nil {
+		in.PidsLimit = *body.PidsLimit
 	}
 	if body.AutoDeploy != nil {
 		in.AutoDeploy = *body.AutoDeploy
@@ -166,6 +193,7 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 		BuildContext: body.BuildContext, DockerfilePath: body.DockerfilePath,
 		ExposedPort: body.ExposedPort, AutoDeploy: body.AutoDeploy,
 		BuildArgs: body.BuildArgs, RegistryCreds: body.RegistryCreds,
+		MemLimit: body.MemLimit, CPULimit: body.CPULimit, PidsLimit: body.PidsLimit,
 	}
 	app, err := s.apps.Update(r.Context(), id, userFrom(r.Context()).ID, in)
 	if err != nil {

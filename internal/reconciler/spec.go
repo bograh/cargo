@@ -19,6 +19,12 @@ type Spec struct {
 	// Networks lists the compose networks the app service joins. Empty
 	// defaults to ["cargo-proxy"] to keep existing output unchanged.
 	Networks []string
+	// Resource caps rendered into the compose file. Empty/zero fields are
+	// omitted (the deploy pipeline fills them from instance defaults, so in
+	// practice they are always set for real deploys).
+	MemoryLimit string // docker mem_limit, e.g. "512m"
+	CPULimit    string // docker cpus, e.g. "1" or "1.5"
+	PidsLimit   int    // docker pids_limit
 }
 
 type DeployProvider interface {

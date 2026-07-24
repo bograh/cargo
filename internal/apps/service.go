@@ -42,6 +42,10 @@ type CreateInput struct {
 	DockerfilePath  string
 	BuildArgs       map[string]string
 	RegistryCreds   *RegistryCreds
+	// Resource caps; empty string / 0 means "use the instance default" (NULL).
+	MemLimit  string
+	CPULimit  string
+	PidsLimit int32
 }
 
 type UpdateInput struct {
@@ -56,6 +60,11 @@ type UpdateInput struct {
 	AutoDeploy      *bool
 	BuildArgs       map[string]string
 	RegistryCreds   *RegistryCreds
+	// Resource caps; nil leaves the value unchanged. A non-nil empty string /
+	// zero clears the override back to the instance default (NULL).
+	MemLimit  *string
+	CPULimit  *string
+	PidsLimit *int32
 }
 
 // AttachmentCleaner tears down the engine-level credentials for every managed
@@ -132,7 +141,7 @@ func validateCreate(in CreateInput) error {
 	default:
 		return fmt.Errorf("%w: builder must be auto, dockerfile, or nixpacks", ErrValidation)
 	}
-	return nil
+	return validateLimits(in.MemLimit, in.CPULimit, in.PidsLimit)
 }
 
 func (s *Service) sealCreds(c *RegistryCreds) ([]byte, error) {
@@ -187,6 +196,8 @@ func (s *Service) Create(ctx context.Context, orgID, actor pgtype.UUID, in Creat
 		RegistryCredsEnc: creds, ExposedPort: in.ExposedPort,
 		HealthcheckPath: in.HealthcheckPath, AutoDeploy: in.AutoDeploy,
 		BuildContext: in.BuildContext, DockerfilePath: in.DockerfilePath, BuildArgs: argsJSON,
+		MemLimit: textOrNull(in.MemLimit), CpuLimit: textOrNull(in.CPULimit),
+		PidsLimit: int4OrNull(in.PidsLimit),
 	}
 	app, err := s.q.CreateApplication(ctx, params)
 	var pgErr *pgconn.PgError
@@ -249,12 +260,32 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 		}
 		app.RegistryCredsEnc = creds
 	}
+	if in.MemLimit != nil {
+		app.MemLimit = textOrNull(*in.MemLimit)
+	}
+	if in.CPULimit != nil {
+		app.CpuLimit = textOrNull(*in.CPULimit)
+	}
+	if in.PidsLimit != nil {
+		app.PidsLimit = int4OrNull(*in.PidsLimit)
+	}
+	memLimit, cpuLimit := "", ""
+	if app.MemLimit.Valid {
+		memLimit = app.MemLimit.String
+	}
+	if app.CpuLimit.Valid {
+		cpuLimit = app.CpuLimit.String
+	}
+	if err := validateLimits(memLimit, cpuLimit, app.PidsLimit.Int32); err != nil {
+		return sqlc.Application{}, err
+	}
 	return s.q.UpdateApplication(ctx, sqlc.UpdateApplicationParams{
 		ID: app.ID, Name: app.Name, Builder: app.Builder, GitBranch: app.GitBranch,
 		ImageRef: app.ImageRef, ExposedPort: app.ExposedPort,
 		HealthcheckPath: app.HealthcheckPath, AutoDeploy: app.AutoDeploy,
 		BuildContext: app.BuildContext, DockerfilePath: app.DockerfilePath,
 		BuildArgs: app.BuildArgs, RegistryCredsEnc: app.RegistryCredsEnc,
+		MemLimit: app.MemLimit, CpuLimit: app.CpuLimit, PidsLimit: app.PidsLimit,
 	})
 }
 

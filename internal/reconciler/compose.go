@@ -33,6 +33,19 @@ func GenerateCompose(spec Spec) string {
 	fmt.Fprintf(&b, "    image: %s\n", spec.Image)
 	b.WriteString("    env_file: .env\n")
 	b.WriteString("    restart: unless-stopped\n")
+	if spec.MemoryLimit != "" {
+		fmt.Fprintf(&b, "    mem_limit: %s\n", spec.MemoryLimit)
+	}
+	if spec.CPULimit != "" {
+		fmt.Fprintf(&b, "    cpus: %s\n", spec.CPULimit)
+	}
+	if spec.PidsLimit > 0 {
+		fmt.Fprintf(&b, "    pids_limit: %d\n", spec.PidsLimit)
+	}
+	// Hardening + log rotation are always emitted so no tenant app can escalate
+	// via new privileges or fill the host disk with unbounded container logs.
+	b.WriteString("    security_opt:\n      - no-new-privileges:true\n")
+	writeLogging(&b)
 	b.WriteString("    networks:\n")
 	for _, n := range networks {
 		fmt.Fprintf(&b, "      - %s\n", n)
@@ -56,6 +69,17 @@ func GenerateCompose(spec Spec) string {
 		fmt.Fprintf(&b, "  %s:\n    external: true\n", n)
 	}
 	return b.String()
+}
+
+// writeLogging appends a json-file log-rotation block (10 MB × 3 files) to the
+// current service. Unbounded container logs are otherwise a slow-motion disk
+// exhaustion that corrupts the platform once the host fills.
+func writeLogging(b *strings.Builder) {
+	b.WriteString("    logging:\n")
+	b.WriteString("      driver: json-file\n")
+	b.WriteString("      options:\n")
+	b.WriteString("        max-size: \"10m\"\n")
+	b.WriteString("        max-file: \"3\"\n")
 }
 
 // dbEngineParams maps an engine to its image name, data volume mount path,
@@ -91,6 +115,7 @@ func GenerateDBCompose(spec DBSpec) string {
 		b.WriteString("    command: [\"redis-server\", \"/etc/cargo/redis.conf\"]\n")
 	}
 	b.WriteString("    restart: unless-stopped\n")
+	writeLogging(&b)
 	b.WriteString("    networks:\n      - cargo-data\n")
 	b.WriteString("    volumes:\n")
 	fmt.Fprintf(&b, "      - data:%s\n", dataPath)

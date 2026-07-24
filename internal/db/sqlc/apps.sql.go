@@ -51,9 +51,9 @@ const createApplication = `-- name: CreateApplication :one
 INSERT INTO applications (
     org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref,
     registry_creds_enc, exposed_port, healthcheck_path, auto_deploy,
-    build_context, dockerfile_path, build_args
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state
+    build_context, dockerfile_path, build_args, mem_limit, cpu_limit, pids_limit
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit
 `
 
 type CreateApplicationParams struct {
@@ -72,6 +72,9 @@ type CreateApplicationParams struct {
 	BuildContext     string
 	DockerfilePath   string
 	BuildArgs        []byte
+	MemLimit         pgtype.Text
+	CpuLimit         pgtype.Text
+	PidsLimit        pgtype.Int4
 }
 
 func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error) {
@@ -91,6 +94,9 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		arg.BuildContext,
 		arg.DockerfilePath,
 		arg.BuildArgs,
+		arg.MemLimit,
+		arg.CpuLimit,
+		arg.PidsLimit,
 	)
 	var i Application
 	err := row.Scan(
@@ -114,6 +120,9 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DesiredState,
+		&i.MemLimit,
+		&i.CpuLimit,
+		&i.PidsLimit,
 	)
 	return i, err
 }
@@ -128,7 +137,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state FROM applications WHERE id = $1
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id pgtype.UUID) (Application, error) {
@@ -155,6 +164,9 @@ func (q *Queries) GetApplication(ctx context.Context, id pgtype.UUID) (Applicati
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DesiredState,
+		&i.MemLimit,
+		&i.CpuLimit,
+		&i.PidsLimit,
 	)
 	return i, err
 }
@@ -258,7 +270,7 @@ func (q *Queries) ListAppMetricsSince(ctx context.Context, arg ListAppMetricsSin
 }
 
 const listApplicationsForOrg = `-- name: ListApplicationsForOrg :many
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state FROM applications WHERE org_id = $1 ORDER BY created_at
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit FROM applications WHERE org_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID) ([]Application, error) {
@@ -291,6 +303,9 @@ func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DesiredState,
+			&i.MemLimit,
+			&i.CpuLimit,
+			&i.PidsLimit,
 		); err != nil {
 			return nil, err
 		}
@@ -303,7 +318,7 @@ func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID)
 }
 
 const listGitAppsByBranch = `-- name: ListGitAppsByBranch :many
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state FROM applications WHERE source_type = 'git' AND git_branch = $1
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit FROM applications WHERE source_type = 'git' AND git_branch = $1
 `
 
 func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]Application, error) {
@@ -336,6 +351,9 @@ func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DesiredState,
+			&i.MemLimit,
+			&i.CpuLimit,
+			&i.PidsLimit,
 		); err != nil {
 			return nil, err
 		}
@@ -362,7 +380,7 @@ func (q *Queries) PurgeAppMetrics(ctx context.Context) (int64, error) {
 const setApplicationDesiredState = `-- name: SetApplicationDesiredState :one
 UPDATE applications SET desired_state = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit
 `
 
 type SetApplicationDesiredStateParams struct {
@@ -394,6 +412,9 @@ func (q *Queries) SetApplicationDesiredState(ctx context.Context, arg SetApplica
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DesiredState,
+		&i.MemLimit,
+		&i.CpuLimit,
+		&i.PidsLimit,
 	)
 	return i, err
 }
@@ -403,9 +424,10 @@ UPDATE applications SET
     name = $2, builder = $3, git_branch = $4, image_ref = $5,
     exposed_port = $6, healthcheck_path = $7, auto_deploy = $8,
     build_context = $9, dockerfile_path = $10, build_args = $11,
-    registry_creds_enc = $12, updated_at = now()
+    registry_creds_enc = $12, mem_limit = $13, cpu_limit = $14,
+    pids_limit = $15, updated_at = now()
 WHERE id = $1
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit
 `
 
 type UpdateApplicationParams struct {
@@ -421,6 +443,9 @@ type UpdateApplicationParams struct {
 	DockerfilePath   string
 	BuildArgs        []byte
 	RegistryCredsEnc []byte
+	MemLimit         pgtype.Text
+	CpuLimit         pgtype.Text
+	PidsLimit        pgtype.Int4
 }
 
 func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationParams) (Application, error) {
@@ -437,6 +462,9 @@ func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationPa
 		arg.DockerfilePath,
 		arg.BuildArgs,
 		arg.RegistryCredsEnc,
+		arg.MemLimit,
+		arg.CpuLimit,
+		arg.PidsLimit,
 	)
 	var i Application
 	err := row.Scan(
@@ -460,6 +488,9 @@ func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DesiredState,
+		&i.MemLimit,
+		&i.CpuLimit,
+		&i.PidsLimit,
 	)
 	return i, err
 }

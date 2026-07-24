@@ -16,6 +16,9 @@ export function SettingsTab({ app }: { app: App }) {
   const [port, setPort] = useState(app.exposed_port);
   const [healthPath, setHealthPath] = useState(app.healthcheck_path);
   const [autoDeploy, setAutoDeploy] = useState(app.auto_deploy);
+  const [memLimit, setMemLimit] = useState(app.mem_limit ?? "");
+  const [cpuLimit, setCpuLimit] = useState(app.cpu_limit ?? "");
+  const [pidsLimit, setPidsLimit] = useState(app.pids_limit != null ? String(app.pids_limit) : "");
   const [error, setError] = useState("");
   const [confirming, setConfirming] = useState(false);
 
@@ -29,6 +32,9 @@ export function SettingsTab({ app }: { app: App }) {
         exposed_port: port,
         healthcheck_path: healthPath,
         auto_deploy: autoDeploy,
+        mem_limit: memLimit.trim(),
+        cpu_limit: cpuLimit.trim(),
+        pids_limit: pidsLimit.trim() === "" ? 0 : Number(pidsLimit),
       }),
     onSuccess: () => {
       toast("Settings saved");
@@ -111,6 +117,33 @@ export function SettingsTab({ app }: { app: App }) {
             <Checkbox checked={autoDeploy} onChange={(e) => setAutoDeploy(e.target.checked)} />
             Auto-deploy on push
           </label>
+          <div className="border-t border-border pt-4">
+            <h3 className="text-sm font-semibold">Resource limits</h3>
+            <p className="mt-1 text-xs text-muted">
+              Caps per app container. Leave blank to use the instance defaults. Applied on the next deploy.
+            </p>
+            <div className="mt-3 grid grid-cols-3 gap-4">
+              <div>
+                <Label htmlFor="s-mem">Memory</Label>
+                <Input id="s-mem" value={memLimit} onChange={(e) => setMemLimit(e.target.value)} placeholder="512m" />
+              </div>
+              <div>
+                <Label htmlFor="s-cpu">CPUs</Label>
+                <Input id="s-cpu" value={cpuLimit} onChange={(e) => setCpuLimit(e.target.value)} placeholder="1" />
+              </div>
+              <div>
+                <Label htmlFor="s-pids">Max processes</Label>
+                <Input
+                  id="s-pids"
+                  type="number"
+                  min={1}
+                  value={pidsLimit}
+                  onChange={(e) => setPidsLimit(e.target.value)}
+                  placeholder="512"
+                />
+              </div>
+            </div>
+          </div>
           <FieldError message={error} />
           <Button type="submit" disabled={update.isPending}>
             Save changes

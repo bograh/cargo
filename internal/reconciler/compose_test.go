@@ -17,6 +17,13 @@ services:
     image: app-my-api:d1
     env_file: .env
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - cargo-proxy
     labels:
@@ -29,6 +36,46 @@ services:
       - traefik.http.routers.app-my-api-custom.entrypoints=websecure
       - traefik.http.routers.app-my-api-custom.tls.certresolver=le
       - traefik.http.routers.app-my-api-custom.service=app-my-api
+      - traefik.http.services.app-my-api.loadbalancer.server.port=3000
+networks:
+  cargo-proxy:
+    external: true
+`
+	if got != want {
+		t.Fatalf("compose mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestGenerateComposeWithLimits(t *testing.T) {
+	got := GenerateCompose(Spec{
+		AppID: "a1", Slug: "my-api", Image: "app-my-api:d1", Port: 3000,
+		Domains:     []string{"my-api.apps.example.com"},
+		MemoryLimit: "512m", CPULimit: "1.5", PidsLimit: 256,
+	})
+	want := `name: cargo-app-my-api
+services:
+  app:
+    image: app-my-api:d1
+    env_file: .env
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.5
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - cargo-proxy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app-my-api.rule=Host(` + "`my-api.apps.example.com`" + `)
+      - traefik.http.routers.app-my-api.entrypoints=websecure
+      - traefik.http.routers.app-my-api.tls=true
+      - traefik.http.routers.app-my-api.service=app-my-api
       - traefik.http.services.app-my-api.loadbalancer.server.port=3000
 networks:
   cargo-proxy:
@@ -52,6 +99,13 @@ services:
     image: app-my-api:d1
     env_file: .env
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - cargo-proxy
       - cargo-data
@@ -85,6 +139,11 @@ services:
     container_name: cargo-db-abc123
     env_file: .env
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - cargo-data
     volumes:
@@ -115,6 +174,11 @@ services:
     container_name: cargo-db-abc123
     env_file: .env
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - cargo-data
     volumes:
@@ -148,6 +212,11 @@ services:
     env_file: .env
     command: ["redis-server", "/etc/cargo/redis.conf"]
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - cargo-data
     volumes:

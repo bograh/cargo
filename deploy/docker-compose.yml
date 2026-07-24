@@ -70,6 +70,11 @@ services:
       CARGO_HTTP_ADDR: ":8080"
       CARGO_DATA_DIR: /var/lib/cargo
       CARGO_ENV: production
+      # Optional instance-wide default container caps for tenant apps (each app
+      # can override in its Settings). Defaults shown; uncomment to change.
+      # CARGO_DEFAULT_MEM_LIMIT: "512m"
+      # CARGO_DEFAULT_CPU_LIMIT: "1"
+      # CARGO_DEFAULT_PIDS_LIMIT: "512"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - cargo-data:/var/lib/cargo

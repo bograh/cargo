@@ -43,6 +43,9 @@ export interface App {
   dockerfile_path: string;
   has_registry_credentials: boolean;
   desired_state: "running" | "stopped";
+  mem_limit: string | null;
+  cpu_limit: string | null;
+  pids_limit: number | null;
   created_at?: unknown;
   updated_at?: unknown;
 }

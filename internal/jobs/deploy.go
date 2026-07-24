@@ -66,6 +66,10 @@ type Pipeline struct {
 	// DBEnv returns the injected env vars for an app's managed database
 	// attachments. May be nil, in which case no injection happens.
 	DBEnv func(ctx context.Context, appID pgtype.UUID) (map[string]string, error)
+	// Instance-wide default resource caps, used when an app sets no override.
+	DefaultMemLimit  string
+	DefaultCPULimit  string
+	DefaultPidsLimit int
 }
 
 func uuidOf(s string) (pgtype.UUID, error) {
@@ -205,6 +209,18 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		return err
 	}
 	domains = append(domains, custom...)
+	memLimit := p.DefaultMemLimit
+	if app.MemLimit.Valid {
+		memLimit = app.MemLimit.String
+	}
+	cpuLimit := p.DefaultCPULimit
+	if app.CpuLimit.Valid {
+		cpuLimit = app.CpuLimit.String
+	}
+	pidsLimit := p.DefaultPidsLimit
+	if app.PidsLimit.Valid {
+		pidsLimit = int(app.PidsLimit.Int32)
+	}
 	spec := reconciler.Spec{
 		AppID:           uuidStr(app.ID),
 		Slug:            app.Slug,
@@ -214,6 +230,9 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		Env:             env,
 		Domains:         domains,
 		Networks:        networks,
+		MemoryLimit:     memLimit,
+		CPULimit:        cpuLimit,
+		PidsLimit:       pidsLimit,
 	}
 	if err := p.Provider.Apply(ctx, spec, logw); err != nil {
 		return err

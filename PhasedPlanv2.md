@@ -45,12 +45,12 @@ apps can no longer reach `db:5432`.
 - ✅ A tenant app container cannot open the control-DB port (runtime-verified: can't even resolve `db`); the controlplane still connects
 - ✅ `cargo-system` is compose-managed + `internal: true` (deviation from "external"; carries only platform stack traffic — no install.sh step needed); overlays inherit the topology
 
-### 10.2 App stability limits, log rotation, hardening ⬜ (Tier-1)
+### 10.2 App stability limits, log rotation, hardening ✅ (Tier-1)
 Per-app memory/CPU/PID caps (config defaults, per-app override), `json-file` log rotation,
 and `no-new-privileges` on every tenant + DB container.
-- One app can no longer OOM/fork-bomb/log-flood the host
-- Migration 00014 adds nullable limit columns; App Settings exposes overrides
-- Golden compose tests updated; null columns fall back to config defaults
+- ✅ One app can no longer OOM/fork-bomb/log-flood the host (mem_limit/cpus/pids_limit + json-file max-size:10m×3)
+- ✅ Migration 00014 adds nullable limit columns; App Settings exposes overrides; `no-new-privileges` always emitted
+- ✅ Golden compose tests updated; null columns fall back to config defaults (`CARGO_DEFAULT_MEM/CPU/PIDS_LIMIT`)
 
 ### 10.3 Control-plane backup & disaster recovery ⬜ (Tier-0)
 Daily `pg_dump -Fc` of the control DB + `acme.json` bundle + master-key fingerprint into

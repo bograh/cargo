@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 type Config struct {
@@ -12,14 +13,22 @@ type Config struct {
 	MasterKey   []byte
 	DataDir     string
 	Env         string
+	// Instance-wide default container resource caps applied to any app that
+	// does not override them. Rendered into each app's compose file.
+	DefaultMemLimit  string
+	DefaultCPULimit  string
+	DefaultPidsLimit int
 }
 
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		HTTPAddr:    ":8080",
-		DatabaseURL: getenv("CARGO_DATABASE_URL"),
-		DataDir:     "/var/lib/cargo",
-		Env:         "development",
+		HTTPAddr:         ":8080",
+		DatabaseURL:      getenv("CARGO_DATABASE_URL"),
+		DataDir:          "/var/lib/cargo",
+		Env:              "development",
+		DefaultMemLimit:  "512m",
+		DefaultCPULimit:  "1",
+		DefaultPidsLimit: 512,
 	}
 	if v := getenv("CARGO_HTTP_ADDR"); v != "" {
 		cfg.HTTPAddr = v
@@ -29,6 +38,19 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if v := getenv("CARGO_ENV"); v != "" {
 		cfg.Env = v
+	}
+	if v := getenv("CARGO_DEFAULT_MEM_LIMIT"); v != "" {
+		cfg.DefaultMemLimit = v
+	}
+	if v := getenv("CARGO_DEFAULT_CPU_LIMIT"); v != "" {
+		cfg.DefaultCPULimit = v
+	}
+	if v := getenv("CARGO_DEFAULT_PIDS_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.DefaultPidsLimit = n
+		} else {
+			return Config{}, fmt.Errorf("CARGO_DEFAULT_PIDS_LIMIT must be a positive integer, got %q", v)
+		}
 	}
 
 	if cfg.DatabaseURL == "" {

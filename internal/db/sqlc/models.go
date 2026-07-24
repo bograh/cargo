@@ -43,6 +43,9 @@ type Application struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	DesiredState     string
+	MemLimit         pgtype.Text
+	CpuLimit         pgtype.Text
+	PidsLimit        pgtype.Int4
 }
 
 type AuthIdentity struct {

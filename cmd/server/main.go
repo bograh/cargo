@@ -78,6 +78,9 @@ func main() {
 		DataDir:          cfg.DataDir,
 		AppsDomainSuffix: appsDomainSuffix(pool),
 		DBEnv:            dbSvc.EnvFor,
+		DefaultMemLimit:  cfg.DefaultMemLimit,
+		DefaultCPULimit:  cfg.DefaultCPULimit,
+		DefaultPidsLimit: cfg.DefaultPidsLimit,
 	}
 	traefikURL := getenvDefault("CARGO_TRAEFIK_METRICS_URL", "http://traefik:8082/metrics")
 	collector := metrics.NewCollector(pool, hub, provider, traefikURL)
