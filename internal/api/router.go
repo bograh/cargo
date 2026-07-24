@@ -109,6 +109,8 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Get("/settings/oidc", s.handleGetOIDC)
 			r.Put("/settings/oidc", s.handlePutOIDC)
 			r.Delete("/settings/oidc", s.handleDeleteOIDC)
+			r.Post("/backups", s.handleRunBackup)
+			r.Get("/backups", s.handleListBackups)
 		})
 
 		r.Post("/webhooks/github", s.handleGithubWebhook)

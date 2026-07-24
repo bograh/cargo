@@ -75,6 +75,9 @@ services:
       # CARGO_DEFAULT_MEM_LIMIT: "512m"
       # CARGO_DEFAULT_CPU_LIMIT: "1"
       # CARGO_DEFAULT_PIDS_LIMIT: "512"
+      # Control-plane backups (written to <dataDir>/platform-backups). Default
+      # keeps the last 14 daily dumps.
+      # CARGO_PLATFORM_BACKUP_KEEP: "14"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - cargo-data:/var/lib/cargo

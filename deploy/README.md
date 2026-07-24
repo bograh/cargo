@@ -85,6 +85,53 @@ docker compose pull && docker compose up -d   # add your TLS overlay's -f flag f
 
 Migrations run automatically at startup; running user apps are not touched.
 
+## Backups & disaster recovery
+
+Cargo backs up its **own** control-plane state (all users, orgs, apps, and the
+encrypted env vars / GitHub / OIDC / SMTP secrets live in the platform Postgres —
+distinct from managed-database snapshots).
+
+- **Automatic:** a daily job writes to `<dataDir>/platform-backups/`:
+  - `<timestamp>.dump` — `pg_dump -Fc` of the control database (run via
+    `docker exec` into the DB container, since the app image ships no `pg_dump`),
+  - `<timestamp>.certs/` — a copy of Traefik's ACME certificates (`acme.json`,
+    and `acme-dns.json` in wildcard mode),
+  - `<timestamp>.keyfp` — a SHA-256 fingerprint of the master key (never the key
+    itself), so you can confirm which key a backup set belongs to.
+  The last `CARGO_PLATFORM_BACKUP_KEEP` sets (default 14) are retained.
+- **On demand:** Admin → Backups → **Run backup now**.
+
+### ⚠️ Master key custody
+
+The database dump is encrypted-at-rest data plus AES-GCM-sealed secrets. **You
+cannot recover env vars, registry credentials, or integration secrets without the
+`CARGO_MASTER_KEY`.** Cargo never writes the key into a backup. Store it in a
+password manager / secrets vault the moment `install.sh` prints it. A backup
+without the matching key is only partially useful.
+
+### Restore runbook
+
+On a fresh host (or after data loss):
+
+```bash
+# 1. Bring up the stack so the DB container exists (it will be empty).
+cd deploy && docker compose up -d db
+
+# 2. Restore the database dump into it (via docker exec, matching the backup path).
+docker exec -i "$(docker compose ps -q db)" \
+  pg_restore -U cargo -d cargo --clean --if-exists < <timestamp>.dump
+
+# 3. Restore the TLS certificates into Traefik's volume, then set permissions.
+docker run --rm -v cargo_cargo-acme:/acme -v "$PWD/<timestamp>.certs":/backup \
+  alpine sh -c 'cp /backup/acme*.json /acme/ && chmod 600 /acme/acme*.json'
+
+# 4. Put the SAME master key (and DB password) back into .env, then start everything.
+#    Confirm it matches the backup: sha256sum of the key hex == <timestamp>.keyfp.
+docker compose up -d   # add your TLS overlay's -f flag for production
+```
+
+`scripts/backup-restore-test.sh` exercises the dump → restore round-trip in CI.
+
 ## Development
 
 ```bash

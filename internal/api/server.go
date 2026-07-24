@@ -168,10 +168,11 @@ type DeploymentService interface {
 	Finish(ctx context.Context, id pgtype.UUID, status, errMsg string) error
 }
 
-// Enqueuer inserts deploy/db-provision jobs; satisfied by *jobs.Enqueuer.
+// Enqueuer inserts deploy/db-provision/backup jobs; satisfied by *jobs.Enqueuer.
 type Enqueuer interface {
 	EnqueueDeploy(ctx context.Context, deploymentID string) error
 	EnqueueDBProvision(ctx context.Context, instanceID string) error
+	EnqueuePlatformBackup(ctx context.Context) error
 }
 
 // WireDeployments attaches the deployment service, job enqueuer, SSE hub,

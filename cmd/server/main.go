@@ -84,7 +84,16 @@ func main() {
 	}
 	traefikURL := getenvDefault("CARGO_TRAEFIK_METRICS_URL", "http://traefik:8082/metrics")
 	collector := metrics.NewCollector(pool, hub, provider, traefikURL)
-	client, err := jobs.NewClient(pool, pipeline, dbSvc, collector)
+	backuper := &jobs.PlatformBackuper{
+		DataDir:     cfg.DataDir,
+		DatabaseURL: cfg.DatabaseURL,
+		MasterKey:   cfg.MasterKey,
+		Keep:        cfg.PlatformBackupKeep,
+		Project:     cfg.ComposeProject,
+		DBService:   cfg.PlatformDBService,
+		// Alerter wired in m11 Task 8 (notifications); nil = no alerts for now.
+	}
+	client, err := jobs.NewClient(pool, pipeline, dbSvc, collector, backuper)
 	if err != nil {
 		slog.Error("job client init failed", "err", err)
 		os.Exit(1)

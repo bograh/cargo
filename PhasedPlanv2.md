@@ -52,12 +52,13 @@ and `no-new-privileges` on every tenant + DB container.
 - ✅ Migration 00014 adds nullable limit columns; App Settings exposes overrides; `no-new-privileges` always emitted
 - ✅ Golden compose tests updated; null columns fall back to config defaults (`CARGO_DEFAULT_MEM/CPU/PIDS_LIMIT`)
 
-### 10.3 Control-plane backup & disaster recovery ⬜ (Tier-0)
+### 10.3 Control-plane backup & disaster recovery ✅ (Tier-0)
 Daily `pg_dump -Fc` of the control DB + `acme.json` bundle + master-key fingerprint into
 `<dataDir>/platform-backups/`, retained N (default 14); tested restore runbook; admin panel.
-- Backup files appear on schedule and via "Run backup now"; retention keeps exactly N
-- CI script proves `pg_dump` → `pg_restore` round-trips a known row
-- README documents restore + hard master-key-custody guidance (key never written by the job)
+- ✅ Backup files appear on the daily schedule and via "Run backup now"; retention keeps exactly N (unit-tested)
+- ✅ CI job (`backup-restore`) proves `pg_dump` → `pg_restore` round-trips a known row (also run locally, green)
+- ✅ README documents restore + hard master-key-custody guidance (key never written; only a SHA-256 fingerprint)
+- Approach: dump via `docker exec` into the DB container + certs via `docker cp` from Traefik (image ships no pg_dump; certs live in the `cargo-acme` volume); containers found by compose project+service labels (self-discovered). Alert-on-failure seam (`Alerter`) wired nil until 10.8.
 
 ### 10.4 Disk-space guardrail ⬜ (Tier-1)
 Periodic `statfs` on `<dataDir>` + Docker root; warn/alert below threshold (default 10%),

@@ -18,17 +18,23 @@ type Config struct {
 	DefaultMemLimit  string
 	DefaultCPULimit  string
 	DefaultPidsLimit int
+	// Control-plane backup settings.
+	PlatformBackupKeep int    // backups retained (default 14)
+	ComposeProject     string // compose project for container discovery ("" = self-discover)
+	PlatformDBService  string // compose service name of the platform DB (default "db")
 }
 
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		HTTPAddr:         ":8080",
-		DatabaseURL:      getenv("CARGO_DATABASE_URL"),
-		DataDir:          "/var/lib/cargo",
-		Env:              "development",
-		DefaultMemLimit:  "512m",
-		DefaultCPULimit:  "1",
-		DefaultPidsLimit: 512,
+		HTTPAddr:           ":8080",
+		DatabaseURL:        getenv("CARGO_DATABASE_URL"),
+		DataDir:            "/var/lib/cargo",
+		Env:                "development",
+		DefaultMemLimit:    "512m",
+		DefaultCPULimit:    "1",
+		DefaultPidsLimit:   512,
+		PlatformBackupKeep: 14,
+		PlatformDBService:  "db",
 	}
 	if v := getenv("CARGO_HTTP_ADDR"); v != "" {
 		cfg.HTTPAddr = v
@@ -51,6 +57,19 @@ func Load(getenv func(string) string) (Config, error) {
 		} else {
 			return Config{}, fmt.Errorf("CARGO_DEFAULT_PIDS_LIMIT must be a positive integer, got %q", v)
 		}
+	}
+	if v := getenv("CARGO_PLATFORM_BACKUP_KEEP"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.PlatformBackupKeep = n
+		} else {
+			return Config{}, fmt.Errorf("CARGO_PLATFORM_BACKUP_KEEP must be a positive integer, got %q", v)
+		}
+	}
+	if v := getenv("CARGO_COMPOSE_PROJECT"); v != "" {
+		cfg.ComposeProject = v
+	}
+	if v := getenv("CARGO_PLATFORM_DB_CONTAINER"); v != "" {
+		cfg.PlatformDBService = v
 	}
 
 	if cfg.DatabaseURL == "" {

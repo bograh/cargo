@@ -26,7 +26,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 // NewClient builds the River client with the deploy queue (build concurrency
 // cap: 2 workers, FR-4.4) and a daily retention prune. collector may be nil
 // (metrics disabled).
-func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collector *metrics.Collector) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collector *metrics.Collector, backuper *PlatformBackuper) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &DeployWorker{P: p})
 	river.AddWorker(workers, &PruneWorker{Pool: pool, Deps: p.Deployments})
@@ -35,6 +35,9 @@ func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collec
 	river.AddWorker(workers, &DBProvisionWorker{Databases: dbSvc})
 	if collector != nil {
 		river.AddWorker(workers, &MetricsWorker{Collector: collector})
+	}
+	if backuper != nil {
+		river.AddWorker(workers, &PlatformBackupWorker{B: backuper})
 	}
 	periodic := []*river.PeriodicJob{
 		river.NewPeriodicJob(
@@ -61,6 +64,15 @@ func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collec
 			&river.PeriodicJobOpts{RunOnStart: true},
 		))
 	}
+	if backuper != nil {
+		// Daily, not RunOnStart: a backup on every restart would be wasteful
+		// and could hammer the DB during an upgrade/restart loop.
+		periodic = append(periodic, river.NewPeriodicJob(
+			river.PeriodicInterval(24*time.Hour),
+			func() (river.JobArgs, *river.InsertOpts) { return PlatformBackupArgs{}, nil },
+			&river.PeriodicJobOpts{RunOnStart: false},
+		))
+	}
 	return river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
 			"deploy":           {MaxWorkers: 2},
@@ -85,5 +97,11 @@ func (e *Enqueuer) EnqueueDeploy(ctx context.Context, deploymentID string) error
 // EnqueueDBProvision inserts a provision_database job for the given instance.
 func (e *Enqueuer) EnqueueDBProvision(ctx context.Context, instanceID string) error {
 	_, err := e.Client.Insert(ctx, DBProvisionArgs{InstanceID: instanceID}, nil)
+	return err
+}
+
+// EnqueuePlatformBackup inserts an on-demand control-plane backup job.
+func (e *Enqueuer) EnqueuePlatformBackup(ctx context.Context) error {
+	_, err := e.Client.Insert(ctx, PlatformBackupArgs{}, nil)
 	return err
 }

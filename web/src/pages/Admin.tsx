@@ -396,6 +396,66 @@ function OIDCForm() {
   );
 }
 
+interface Backup {
+  name: string;
+  size_bytes: number;
+  created_at: string;
+  has_certs: boolean;
+}
+
+function BackupsCard() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { data: backups } = useQuery({
+    queryKey: ["admin", "backups"],
+    queryFn: () => api<Backup[]>("/admin/backups"),
+  });
+  const run = useMutation({
+    mutationFn: () => post("/admin/backups"),
+    onSuccess: () => {
+      toast("Backup queued");
+      // Give the job a moment, then refresh the list.
+      setTimeout(() => void qc.invalidateQueries({ queryKey: ["admin", "backups"] }), 1500);
+    },
+    onError: (err) => toast(err instanceof Error ? err.message : "backup failed", "error"),
+  });
+  const fmtSize = (n: number) => (n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+  return (
+    <Card>
+      <SectionHeading
+        eyebrow="operations"
+        title="Backups"
+        aside={
+          <Button type="button" onClick={() => run.mutate()} disabled={run.isPending}>
+            {run.isPending ? "Queuing…" : "Run backup now"}
+          </Button>
+        }
+      />
+      <p className="mb-3 text-xs text-muted">
+        Daily control-plane database dumps + a copy of the TLS certificates, kept under the data
+        directory. Restoring also requires your <code className="font-mono text-text">CARGO_MASTER_KEY</code> —
+        store it in a password manager; a backup is useless without it.
+      </p>
+      {backups && backups.length > 0 ? (
+        <ul className="space-y-2 text-sm">
+          {backups.map((b) => (
+            <li key={b.name} className="flex items-center justify-between border-t border-border pt-2 first:border-0 first:pt-0">
+              <span className="font-mono">{b.name}</span>
+              <span className="flex items-center gap-2 text-muted">
+                {fmtSize(b.size_bytes)}
+                {b.has_certs ? <Badge tone="live">+ certs</Badge> : <Badge tone="neutral">db only</Badge>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted">No backups yet — the first runs on the daily schedule, or trigger one now.</p>
+      )}
+    </Card>
+  );
+}
+
 interface AdminOrg {
   id: string;
   name: string;
@@ -458,6 +518,7 @@ export default function Admin() {
       <InstanceSettingsCard />
       <GithubAppForm />
       <OIDCForm />
+      <BackupsCard />
       <Card>
         <SectionHeading eyebrow="people" title="Users" />
         <ul className="space-y-2 text-sm">

@@ -51,6 +51,11 @@ func (e *recordingEnqueuer) EnqueueDBProvision(_ context.Context, id string) err
 	return e.err
 }
 
+func (e *recordingEnqueuer) EnqueuePlatformBackup(_ context.Context) error {
+	e.ids = append(e.ids, "platform_backup")
+	return e.err
+}
+
 func depServer(d DeploymentService, e Enqueuer) *Server {
 	return &Server{
 		auth:    stubAuth{user: sqlc.User{Email: "a@b.co"}},
