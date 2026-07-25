@@ -13,6 +13,7 @@ import (
 
 	"github.com/bograh/cargo/internal/api"
 	"github.com/bograh/cargo/internal/apps"
+	"github.com/bograh/cargo/internal/audit"
 	"github.com/bograh/cargo/internal/builder"
 	"github.com/bograh/cargo/internal/config"
 	"github.com/bograh/cargo/internal/crypto"
@@ -113,7 +114,7 @@ func main() {
 		MinFreePct: cfg.DiskMinFreePct,
 		Alerter:    notifySvc,
 	}
-	client, err := jobs.NewClient(pool, pipeline, dbSvc, collector, backuper, diskChecker)
+	client, err := jobs.NewClient(pool, pipeline, dbSvc, collector, backuper, diskChecker, cfg.AuditRetentionDays)
 	if err != nil {
 		slog.Error("job client init failed", "err", err)
 		os.Exit(1)
@@ -144,6 +145,7 @@ func main() {
 	srv.WireMetrics(metrics.NewStore(pool))
 	srv.WireDatabases(dbSvc)
 	srv.WireNotify(notifySvc)
+	srv.WireAudit(audit.NewService(pool))
 
 	// Control-plane self-metrics on a separate internal-only listener (never
 	// routed by Traefik / never on the public API port).

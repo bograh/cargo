@@ -566,6 +566,53 @@ function BackupsCard() {
   );
 }
 
+interface AuditEntry {
+  id: string;
+  actor_email: string | null;
+  action: string;
+  target_type: string;
+  target_id: string;
+  created_at: string;
+}
+
+function AuditCard() {
+  const { data } = useQuery({
+    queryKey: ["admin", "audit"],
+    queryFn: () => api<AuditEntry[]>("/admin/audit?limit=100"),
+  });
+  return (
+    <Card>
+      <SectionHeading eyebrow="security" title="Audit log" />
+      {data && data.length > 0 ? (
+        <div className="max-h-96 overflow-y-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="text-muted">
+              <tr>
+                <th className="pb-2 pr-3 font-medium">When</th>
+                <th className="pb-2 pr-3 font-medium">Actor</th>
+                <th className="pb-2 pr-3 font-medium">Action</th>
+                <th className="pb-2 font-medium">Target</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {data.map((e) => (
+                <tr key={e.id} className="border-t border-border">
+                  <td className="py-1.5 pr-3 text-muted">{new Date(e.created_at).toLocaleString()}</td>
+                  <td className="py-1.5 pr-3">{e.actor_email ?? "—"}</td>
+                  <td className="py-1.5 pr-3">{e.action}</td>
+                  <td className="py-1.5">{e.target_type}{e.target_id ? `/${e.target_id}` : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-sm text-muted">No activity recorded yet.</p>
+      )}
+    </Card>
+  );
+}
+
 interface AdminOrg {
   id: string;
   name: string;
@@ -631,6 +678,7 @@ export default function Admin() {
       <DiskCard />
       <BackupsCard />
       <NotifyWebhookForm />
+      <AuditCard />
       <Card>
         <SectionHeading eyebrow="people" title="Users" />
         <ul className="space-y-2 text-sm">

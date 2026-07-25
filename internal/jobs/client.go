@@ -26,12 +26,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 // NewClient builds the River client with the deploy queue (build concurrency
 // cap: 2 workers, FR-4.4) and a daily retention prune. collector may be nil
 // (metrics disabled).
-func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collector *metrics.Collector, backuper *PlatformBackuper, diskChecker *DiskChecker) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collector *metrics.Collector, backuper *PlatformBackuper, diskChecker *DiskChecker, auditRetentionDays int) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &DeployWorker{P: p})
 	river.AddWorker(workers, &PruneWorker{Pool: pool, Deps: p.Deployments})
 	river.AddWorker(workers, &DomainCheckWorker{Pool: pool})
-	river.AddWorker(workers, &HousekeepingWorker{Pool: pool})
+	river.AddWorker(workers, &HousekeepingWorker{Pool: pool, AuditRetentionDays: auditRetentionDays})
 	river.AddWorker(workers, &DBProvisionWorker{Databases: dbSvc})
 	if collector != nil {
 		river.AddWorker(workers, &MetricsWorker{Collector: collector})

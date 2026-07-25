@@ -91,10 +91,12 @@ encrypted). Events: deploy failed, disk low, backup failed; deploy-success opt-i
 - ✅ Deploy failure notifies org owners/admins + webhook; success only when the app opted in (`notify_on_success`, migration 00015); platform alerts (disk/backup) → instance admins + webhook
 - ✅ Webhook URL write-only (GET returns only `{configured}`); every sink best-effort (failure logged, never blocks the deploy/backup/disk path); the `Alerter`/`Notifier` seams from 10.3/10.4 now wired live
 
-### 10.9 Audit log ⬜ (Tier-3)
-Append-only `audit_log` (actor/org/action/target/detail); best-effort writes from the
-service layer; org-scoped + instance-wide read views; housekeeping retention.
-- Every wired mutation writes one attributed row; env audit records keys only; failed write never fails the action
+### 10.9 Audit log ✅ (Tier-3)
+Append-only `audit_log` (actor/org/action/target/detail, migration 00016); best-effort writes;
+org-scoped + instance-wide read views; housekeeping retention.
+- ✅ Every successful authed mutation is recorded via a uniform middleware (actor + method + target path + status); reads and non-2xx are skipped; failed audit write never fails the action
+- ✅ `GET /admin/audit` (instance admin, all) + `GET /orgs/{orgID}/audit` (org admin); Admin "Audit log" table; housekeeping purge with `CARGO_AUDIT_RETENTION_DAYS` (180)
+- Design note: middleware gives complete, uniform coverage at coarse granularity (action = HTTP method, target = path) rather than per-handler semantic actions — chosen for completeness/forensics; can be enriched per-site later
 
 ### 10.10 Docs, version bump, close m11 ⬜
 - README/deploy docs cover cargo-system, limits, backup/restore, alerting, `/readyz`, `/metrics`, audit; version bumped; full verification green

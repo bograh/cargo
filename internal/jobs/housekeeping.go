@@ -3,8 +3,10 @@ package jobs
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 )
@@ -16,10 +18,12 @@ func (HousekeepingArgs) Kind() string { return "housekeeping" }
 type HousekeepingWorker struct {
 	river.WorkerDefaults[HousekeepingArgs]
 	Pool *pgxpool.Pool
+	// AuditRetentionDays bounds audit-log history (0 → default 180).
+	AuditRetentionDays int
 }
 
 func (w *HousekeepingWorker) Work(ctx context.Context, _ *river.Job[HousekeepingArgs]) error {
-	sessions, invites, err := RunHousekeeping(ctx, w.Pool)
+	sessions, invites, err := RunHousekeeping(ctx, w.Pool, w.AuditRetentionDays)
 	if err != nil {
 		return err
 	}
@@ -29,9 +33,9 @@ func (w *HousekeepingWorker) Work(ctx context.Context, _ *river.Job[Housekeeping
 	return nil
 }
 
-// RunHousekeeping deletes expired/stale sessions, dead invites, and metrics
-// older than the 48h retention window.
-func RunHousekeeping(ctx context.Context, pool *pgxpool.Pool) (sessions, invites int64, err error) {
+// RunHousekeeping deletes expired/stale sessions, dead invites, metrics older
+// than 48h, and audit entries older than the retention window.
+func RunHousekeeping(ctx context.Context, pool *pgxpool.Pool, auditRetentionDays int) (sessions, invites int64, err error) {
 	q := sqlc.New(pool)
 	sessions, err = q.PurgeSessions(ctx)
 	if err != nil {
@@ -42,6 +46,13 @@ func RunHousekeeping(ctx context.Context, pool *pgxpool.Pool) (sessions, invites
 		return sessions, invites, err
 	}
 	if _, err = q.PurgeAppMetrics(ctx); err != nil {
+		return sessions, invites, err
+	}
+	if auditRetentionDays <= 0 {
+		auditRetentionDays = 180
+	}
+	cutoff := pgtype.Timestamptz{Time: time.Now().AddDate(0, 0, -auditRetentionDays), Valid: true}
+	if _, err = q.PurgeAuditLog(ctx, cutoff); err != nil {
 		return sessions, invites, err
 	}
 	return sessions, invites, nil

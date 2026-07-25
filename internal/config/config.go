@@ -28,6 +28,8 @@ type Config struct {
 	APIRateLimitRPS float64
 	// Internal-only listener for the Prometheus /metrics endpoint (default :9090).
 	MetricsAddr string
+	// Audit-log retention in days (default 180).
+	AuditRetentionDays int
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -44,6 +46,7 @@ func Load(getenv func(string) string) (Config, error) {
 		DiskMinFreePct:     10,
 		APIRateLimitRPS:    20,
 		MetricsAddr:        ":9090",
+		AuditRetentionDays: 180,
 	}
 	if v := getenv("CARGO_HTTP_ADDR"); v != "" {
 		cfg.HTTPAddr = v
@@ -96,6 +99,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if v := getenv("CARGO_METRICS_ADDR"); v != "" {
 		cfg.MetricsAddr = v
+	}
+	if v := getenv("CARGO_AUDIT_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.AuditRetentionDays = n
+		} else {
+			return Config{}, fmt.Errorf("CARGO_AUDIT_RETENTION_DAYS must be a positive integer, got %q", v)
+		}
 	}
 
 	if cfg.DatabaseURL == "" {

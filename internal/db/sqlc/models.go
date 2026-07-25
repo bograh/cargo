@@ -49,6 +49,17 @@ type Application struct {
 	NotifyOnSuccess  bool
 }
 
+type AuditLog struct {
+	ID         pgtype.UUID
+	ActorID    pgtype.UUID
+	OrgID      pgtype.UUID
+	Action     string
+	TargetType string
+	TargetID   string
+	Detail     []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
 type AuthIdentity struct {
 	ID        pgtype.UUID
 	UserID    pgtype.UUID

@@ -108,7 +108,18 @@ type Server struct {
 	oidc             OIDCService
 	metrics          MetricStore
 	notify           NotifyService
+	audit            AuditService
 }
+
+// AuditService is satisfied by *audit.Service.
+type AuditService interface {
+	Record(ctx context.Context, actorID, orgID pgtype.UUID, action, targetType, targetID string, detail map[string]any)
+	ListAll(ctx context.Context, limit int32) ([]sqlc.ListAuditAllRow, error)
+	ListByOrg(ctx context.Context, orgID pgtype.UUID, limit int32) ([]sqlc.ListAuditByOrgRow, error)
+}
+
+// WireAudit attaches the audit service used by the audit middleware and views.
+func (s *Server) WireAudit(a AuditService) { s.audit = a }
 
 // NotifyService is satisfied by *notify.Service.
 type NotifyService interface {

@@ -51,7 +51,10 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Use(s.requireAuth)
 			// After requireAuth so the limiter can key on the user id.
 			r.Use(apiLimiter)
+			// After requireAuth so mutations are attributed to the actor.
+			r.Use(s.auditMiddleware)
 			r.Route("/orgs", func(r chi.Router) {
+				r.Get("/{orgID}/audit", s.handleOrgAudit)
 				r.Post("/", s.handleCreateOrg)
 				r.Get("/", s.handleListOrgs)
 				r.Route("/{orgID}", func(r chi.Router) {
@@ -111,7 +114,8 @@ func NewRouter(s *Server) *chi.Mux {
 		})
 
 		r.Route("/admin", func(r chi.Router) {
-			r.Use(s.requireAuth, s.requireInstanceAdmin, apiLimiter)
+			r.Use(s.requireAuth, s.requireInstanceAdmin, apiLimiter, s.auditMiddleware)
+			r.Get("/audit", s.handleAdminAudit)
 			r.Get("/users", s.handleAdminListUsers)
 			r.Get("/orgs", s.handleAdminListOrgs)
 			r.Get("/settings/github-app", s.handleGetGithubApp)

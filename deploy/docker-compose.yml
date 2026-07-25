@@ -86,6 +86,8 @@ services:
       # Internal-only Prometheus /metrics listener (never published to a host
       # port; scrape it from a sidecar on the cargo networks).
       # CARGO_METRICS_ADDR: ":9090"
+      # Audit-log retention in days.
+      # CARGO_AUDIT_RETENTION_DAYS: "180"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - cargo-data:/var/lib/cargo

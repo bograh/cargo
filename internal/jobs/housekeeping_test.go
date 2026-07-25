@@ -32,7 +32,7 @@ func TestRunHousekeepingPurgesStaleRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sessions, invites, err := RunHousekeeping(ctx, pool)
+	sessions, invites, err := RunHousekeeping(ctx, pool, 180)
 	if err != nil {
 		t.Fatalf("housekeeping: %v", err)
 	}
