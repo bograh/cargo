@@ -66,10 +66,11 @@ warn/alert below threshold (default 10%), aggressive dangling-image prune below 
 - ✅ Crossing the threshold logs, records status (`instance_settings`), and fires **one** `disk_low` alert; recovery clears the flag (pure `evalDisk` unit-tested)
 - ✅ 10-min periodic `disk_check` job; `GET /admin/disk` live gauge in the Admin UI; `CARGO_DISK_MIN_FREE_PCT` config; reuses the 10.3 `Alerter` seam (nil until 10.8)
 
-### 10.5 HTTP security middleware ⬜ (Tier-2)
+### 10.5 HTTP security middleware ✅ (Tier-2)
 Security headers (incl. HSTS in production, CSP for the SPA), `MaxBytesReader` body cap,
 Origin/Referer check on cookie-authed mutations, general per-user/IP rate limit.
-- Oversize body → 413; cross-origin POST → 403; over-limit → 429; webhook + GET callbacks exempt
+- ✅ Oversize body → 413; cross-origin POST → 403; over-limit → 429; webhook exempt; no-Origin (curl) allowed
+- ✅ Headers on every response (nosniff/DENY/no-referrer/CSP; HSTS only in production); CSP verified against the built SPA (no inline scripts/CDN); `CARGO_API_RATELIMIT_RPS` config; 10 middleware tests
 
 ### 10.6 Readiness probe, bounded shutdown, orphan reaper ⬜ (Tier-3)
 `/readyz` (pings Postgres + Docker); 30 s-bounded shutdown; startup reaper fails deployments

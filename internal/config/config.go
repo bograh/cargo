@@ -24,6 +24,8 @@ type Config struct {
 	PlatformDBService  string // compose service name of the platform DB (default "db")
 	// Disk guardrail: warn/alert below this free-space percentage (default 10).
 	DiskMinFreePct float64
+	// General API rate limit (requests/sec per user/IP; burst = 2×). Default 20.
+	APIRateLimitRPS float64
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -38,6 +40,7 @@ func Load(getenv func(string) string) (Config, error) {
 		PlatformBackupKeep: 14,
 		PlatformDBService:  "db",
 		DiskMinFreePct:     10,
+		APIRateLimitRPS:    20,
 	}
 	if v := getenv("CARGO_HTTP_ADDR"); v != "" {
 		cfg.HTTPAddr = v
@@ -79,6 +82,13 @@ func Load(getenv func(string) string) (Config, error) {
 			cfg.DiskMinFreePct = n
 		} else {
 			return Config{}, fmt.Errorf("CARGO_DISK_MIN_FREE_PCT must be a number between 0 and 100, got %q", v)
+		}
+	}
+	if v := getenv("CARGO_API_RATELIMIT_RPS"); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
+			cfg.APIRateLimitRPS = n
+		} else {
+			return Config{}, fmt.Errorf("CARGO_API_RATELIMIT_RPS must be a positive number, got %q", v)
 		}
 	}
 

@@ -7,13 +7,27 @@ import (
 )
 
 func NewRouter(s *Server) *chi.Mux {
+	// Guard cfg access so NewRouter(nil) (used by health tests) stays valid.
+	production := false
+	rps := 20.0
+	if s != nil {
+		production = s.cfg.Env == "production"
+		rps = s.cfg.APIRateLimitRPS
+	}
+	apiLimiter := apiRateLimiter(rps)
+
 	r := chi.NewMux()
+	r.Use(securityHeaders(production))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Logger)
 
 	r.Get("/healthz", HealthHandler)
 	r.Route("/api/v1", func(r chi.Router) {
+		// Cap request bodies and reject cross-origin cookie-authed mutations
+		// across the whole API (the webhook is exempted inside each).
+		r.Use(bodyLimit(maxRequestBody))
+		r.Use(originCheck)
 		r.Get("/instance/info", s.getInstanceInfo)
 		// Public: lets an invited user preview an invite before signing in.
 		r.Get("/invites/{token}", s.handlePreviewInvite)
@@ -34,6 +48,8 @@ func NewRouter(s *Server) *chi.Mux {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
+			// After requireAuth so the limiter can key on the user id.
+			r.Use(apiLimiter)
 			r.Route("/orgs", func(r chi.Router) {
 				r.Post("/", s.handleCreateOrg)
 				r.Get("/", s.handleListOrgs)
@@ -94,7 +110,7 @@ func NewRouter(s *Server) *chi.Mux {
 		})
 
 		r.Route("/admin", func(r chi.Router) {
-			r.Use(s.requireAuth, s.requireInstanceAdmin)
+			r.Use(s.requireAuth, s.requireInstanceAdmin, apiLimiter)
 			r.Get("/users", s.handleAdminListUsers)
 			r.Get("/orgs", s.handleAdminListOrgs)
 			r.Get("/settings/github-app", s.handleGetGithubApp)
