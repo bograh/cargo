@@ -107,7 +107,17 @@ type Server struct {
 	box              *crypto.Box
 	oidc             OIDCService
 	metrics          MetricStore
+	notify           NotifyService
 }
+
+// NotifyService is satisfied by *notify.Service.
+type NotifyService interface {
+	SetWebhook(ctx context.Context, url string) error
+	WebhookConfigured(ctx context.Context) bool
+}
+
+// WireNotify attaches the notification service used by the admin webhook API.
+func (s *Server) WireNotify(n NotifyService) { s.notify = n }
 
 // MetricStore is satisfied by *metrics.Store.
 type MetricStore interface {

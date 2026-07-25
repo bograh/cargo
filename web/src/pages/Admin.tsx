@@ -396,6 +396,81 @@ function OIDCForm() {
   );
 }
 
+function NotifyWebhookForm() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { data } = useQuery({
+    queryKey: ["admin", "notify-webhook"],
+    queryFn: () => api<{ configured: boolean }>("/admin/settings/notify-webhook"),
+  });
+  const [url, setUrl] = useState("");
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ["admin", "notify-webhook"] });
+  const save = useMutation({
+    mutationFn: () => put("/admin/settings/notify-webhook", { url }),
+    onSuccess: () => {
+      setUrl("");
+      invalidate();
+      toast("Webhook saved");
+    },
+    onError: (err) => toast(err instanceof Error ? err.message : "save failed", "error"),
+  });
+  const clear = useMutation({
+    mutationFn: () => del("/admin/settings/notify-webhook"),
+    onSuccess: () => {
+      invalidate();
+      toast("Webhook cleared");
+    },
+    onError: (err) => toast(err instanceof Error ? err.message : "clear failed", "error"),
+  });
+
+  return (
+    <Card>
+      <SectionHeading
+        eyebrow="operations"
+        title="Alerts webhook"
+        aside={
+          data?.configured ? (
+            <span className="flex items-center gap-2">
+              <Badge tone="live">configured</Badge>
+              <Button type="button" variant="secondary" onClick={() => clear.mutate()}>
+                Clear
+              </Button>
+            </span>
+          ) : (
+            <Badge tone="neutral">not configured</Badge>
+          )
+        }
+      />
+      <p className="mb-3 text-xs text-muted">
+        A Slack/Discord-compatible incoming webhook URL. Cargo posts on deploy failures,
+        low disk, and backup failures (and successful deploys for apps that opt in). Stored
+        encrypted and never shown again.
+      </p>
+      <form
+        className="flex items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (url.trim()) save.mutate();
+        }}
+      >
+        <div className="flex-1">
+          <Label htmlFor="notify-url">Webhook URL</Label>
+          <Input
+            id="notify-url"
+            type="password"
+            placeholder="https://hooks.slack.com/services/…"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+        </div>
+        <Button type="submit" disabled={save.isPending || !url.trim()}>
+          Save
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
 interface DiskStatus {
   path: string;
   free_pct: number;
@@ -555,6 +630,7 @@ export default function Admin() {
       <OIDCForm />
       <DiskCard />
       <BackupsCard />
+      <NotifyWebhookForm />
       <Card>
         <SectionHeading eyebrow="people" title="Users" />
         <ul className="space-y-2 text-sm">

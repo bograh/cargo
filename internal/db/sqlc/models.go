@@ -46,6 +46,7 @@ type Application struct {
 	MemLimit         pgtype.Text
 	CpuLimit         pgtype.Text
 	PidsLimit        pgtype.Int4
+	NotifyOnSuccess  bool
 }
 
 type AuthIdentity struct {

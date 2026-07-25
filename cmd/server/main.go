@@ -23,9 +23,12 @@ import (
 	"github.com/bograh/cargo/internal/events"
 	"github.com/bograh/cargo/internal/github"
 	"github.com/bograh/cargo/internal/jobs"
+	"github.com/bograh/cargo/internal/mailer"
 	"github.com/bograh/cargo/internal/metrics"
+	"github.com/bograh/cargo/internal/notify"
 	"github.com/bograh/cargo/internal/obs"
 	"github.com/bograh/cargo/internal/reconciler"
+	"github.com/bograh/cargo/internal/settings"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -69,6 +72,14 @@ func main() {
 	provider := reconciler.NewDocker(cfg.DataDir)
 	dbSvc := databases.NewService(pool, box, provider, cfg.DataDir)
 	ghSvc := github.NewService(pool, box)
+	settingsSvc := settings.NewService(pool, box)
+	notifySvc := notify.NewService(pool, box, func(ctx context.Context) *mailer.SMTP {
+		c, err := settingsSvc.SMTP(ctx)
+		if err != nil || c == nil {
+			return nil
+		}
+		return &mailer.SMTP{Host: c.Host, Port: c.Port, Username: c.Username, Password: c.Password, From: c.From}
+	})
 	pipeline := &jobs.Pipeline{
 		Pool:             pool,
 		Apps:             appSvc,
@@ -83,6 +94,7 @@ func main() {
 		DefaultMemLimit:  cfg.DefaultMemLimit,
 		DefaultCPULimit:  cfg.DefaultCPULimit,
 		DefaultPidsLimit: cfg.DefaultPidsLimit,
+		Notify:           notifySvc,
 	}
 	traefikURL := getenvDefault("CARGO_TRAEFIK_METRICS_URL", "http://traefik:8082/metrics")
 	collector := metrics.NewCollector(pool, hub, provider, traefikURL)
@@ -93,13 +105,13 @@ func main() {
 		Keep:        cfg.PlatformBackupKeep,
 		Project:     cfg.ComposeProject,
 		DBService:   cfg.PlatformDBService,
-		// Alerter wired in m11 Task 8 (notifications); nil = no alerts for now.
+		Alerter:     notifySvc,
 	}
 	diskChecker := &jobs.DiskChecker{
 		Pool:       pool,
 		DataDir:    cfg.DataDir,
 		MinFreePct: cfg.DiskMinFreePct,
-		// Alerter wired in m11 Task 8.
+		Alerter:    notifySvc,
 	}
 	client, err := jobs.NewClient(pool, pipeline, dbSvc, collector, backuper, diskChecker)
 	if err != nil {
@@ -131,6 +143,7 @@ func main() {
 	srv.WireDeployments(depSvc, enqueuer, hub, provider)
 	srv.WireMetrics(metrics.NewStore(pool))
 	srv.WireDatabases(dbSvc)
+	srv.WireNotify(notifySvc)
 
 	// Control-plane self-metrics on a separate internal-only listener (never
 	// routed by Traefik / never on the public API port).

@@ -35,6 +35,7 @@ func appJSON(a sqlc.Application) map[string]any {
 		"mem_limit":                textOrNil(a.MemLimit),
 		"cpu_limit":                textOrNil(a.CpuLimit),
 		"pids_limit":               int4OrNil(a.PidsLimit),
+		"notify_on_success":        a.NotifyOnSuccess,
 		"created_at":               a.CreatedAt,
 		"updated_at":               a.UpdatedAt,
 	}
@@ -95,6 +96,7 @@ type appBody struct {
 	MemLimit        *string             `json:"mem_limit"`
 	CPULimit        *string             `json:"cpu_limit"`
 	PidsLimit       *int32              `json:"pids_limit"`
+	NotifyOnSuccess *bool               `json:"notify_on_success"`
 }
 
 func str(p *string) string {
@@ -135,6 +137,9 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.PidsLimit != nil {
 		in.PidsLimit = *body.PidsLimit
+	}
+	if body.NotifyOnSuccess != nil {
+		in.NotifyOnSuccess = *body.NotifyOnSuccess
 	}
 	if body.AutoDeploy != nil {
 		in.AutoDeploy = *body.AutoDeploy
@@ -194,6 +199,7 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 		ExposedPort: body.ExposedPort, AutoDeploy: body.AutoDeploy,
 		BuildArgs: body.BuildArgs, RegistryCreds: body.RegistryCreds,
 		MemLimit: body.MemLimit, CPULimit: body.CPULimit, PidsLimit: body.PidsLimit,
+		NotifyOnSuccess: body.NotifyOnSuccess,
 	}
 	app, err := s.apps.Update(r.Context(), id, userFrom(r.Context()).ID, in)
 	if err != nil {

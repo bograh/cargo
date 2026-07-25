@@ -46,6 +46,8 @@ type CreateInput struct {
 	MemLimit  string
 	CPULimit  string
 	PidsLimit int32
+	// NotifyOnSuccess opts this app into notifications on a successful deploy.
+	NotifyOnSuccess bool
 }
 
 type UpdateInput struct {
@@ -62,9 +64,10 @@ type UpdateInput struct {
 	RegistryCreds   *RegistryCreds
 	// Resource caps; nil leaves the value unchanged. A non-nil empty string /
 	// zero clears the override back to the instance default (NULL).
-	MemLimit  *string
-	CPULimit  *string
-	PidsLimit *int32
+	MemLimit        *string
+	CPULimit        *string
+	PidsLimit       *int32
+	NotifyOnSuccess *bool
 }
 
 // AttachmentCleaner tears down the engine-level credentials for every managed
@@ -197,7 +200,7 @@ func (s *Service) Create(ctx context.Context, orgID, actor pgtype.UUID, in Creat
 		HealthcheckPath: in.HealthcheckPath, AutoDeploy: in.AutoDeploy,
 		BuildContext: in.BuildContext, DockerfilePath: in.DockerfilePath, BuildArgs: argsJSON,
 		MemLimit: textOrNull(in.MemLimit), CpuLimit: textOrNull(in.CPULimit),
-		PidsLimit: int4OrNull(in.PidsLimit),
+		PidsLimit: int4OrNull(in.PidsLimit), NotifyOnSuccess: in.NotifyOnSuccess,
 	}
 	app, err := s.q.CreateApplication(ctx, params)
 	var pgErr *pgconn.PgError
@@ -269,6 +272,9 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 	if in.PidsLimit != nil {
 		app.PidsLimit = int4OrNull(*in.PidsLimit)
 	}
+	if in.NotifyOnSuccess != nil {
+		app.NotifyOnSuccess = *in.NotifyOnSuccess
+	}
 	memLimit, cpuLimit := "", ""
 	if app.MemLimit.Valid {
 		memLimit = app.MemLimit.String
@@ -286,6 +292,7 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 		BuildContext: app.BuildContext, DockerfilePath: app.DockerfilePath,
 		BuildArgs: app.BuildArgs, RegistryCredsEnc: app.RegistryCredsEnc,
 		MemLimit: app.MemLimit, CpuLimit: app.CpuLimit, PidsLimit: app.PidsLimit,
+		NotifyOnSuccess: app.NotifyOnSuccess,
 	})
 }
 

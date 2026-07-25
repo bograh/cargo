@@ -129,6 +129,9 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Post("/backups", s.handleRunBackup)
 			r.Get("/backups", s.handleListBackups)
 			r.Get("/disk", s.handleDiskStatus)
+			r.Get("/settings/notify-webhook", s.handleGetNotifyWebhook)
+			r.Put("/settings/notify-webhook", s.handlePutNotifyWebhook)
+			r.Delete("/settings/notify-webhook", s.handleDeleteNotifyWebhook)
 		})
 
 		r.Post("/webhooks/github", s.handleGithubWebhook)

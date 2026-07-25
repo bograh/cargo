@@ -2,8 +2,9 @@
 INSERT INTO applications (
     org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref,
     registry_creds_enc, exposed_port, healthcheck_path, auto_deploy,
-    build_context, dockerfile_path, build_args, mem_limit, cpu_limit, pids_limit
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+    build_context, dockerfile_path, build_args, mem_limit, cpu_limit, pids_limit,
+    notify_on_success
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 RETURNING *;
 
 -- name: GetApplication :one
@@ -18,7 +19,7 @@ UPDATE applications SET
     exposed_port = $6, healthcheck_path = $7, auto_deploy = $8,
     build_context = $9, dockerfile_path = $10, build_args = $11,
     registry_creds_enc = $12, mem_limit = $13, cpu_limit = $14,
-    pids_limit = $15, updated_at = now()
+    pids_limit = $15, notify_on_success = $16, updated_at = now()
 WHERE id = $1
 RETURNING *;
 

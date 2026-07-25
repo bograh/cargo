@@ -71,6 +71,13 @@ type Pipeline struct {
 	DefaultMemLimit  string
 	DefaultCPULimit  string
 	DefaultPidsLimit int
+	// Notify, when set, is called on a terminal deploy result. Optional.
+	Notify Notifier
+}
+
+// Notifier is the deploy-notification seam, implemented by *notify.Service.
+type Notifier interface {
+	DeployFinished(ctx context.Context, appID pgtype.UUID, result string)
 }
 
 func uuidOf(s string) (pgtype.UUID, error) {
@@ -126,6 +133,9 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 		_, _ = fmt.Fprintf(logw, "==> failed: %v\n", err)
 		_ = p.Deployments.Finish(context.WithoutCancel(ctx), depID, "failed", err.Error())
 		obs.RecordDeploy("failed", time.Since(dep.CreatedAt.Time))
+		if p.Notify != nil {
+			p.Notify.DeployFinished(context.WithoutCancel(ctx), dep.AppID, "failed")
+		}
 		return err
 	}
 	_, _ = fmt.Fprintln(logw, "==> live")
@@ -133,6 +143,9 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 		return err
 	}
 	obs.RecordDeploy("live", time.Since(dep.CreatedAt.Time))
+	if p.Notify != nil {
+		p.Notify.DeployFinished(context.WithoutCancel(ctx), dep.AppID, "live")
+	}
 	// This deployment now serves the app; demote the app's previously-live
 	// deployment(s) to "superseded" so exactly one row reads as live. Best-effort
 	// (like prune below): the container is already up, and stale "live" bookkeeping

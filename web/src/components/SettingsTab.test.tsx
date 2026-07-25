@@ -13,6 +13,7 @@ const app: App = {
   exposed_port: 3000, healthcheck_path: "/", auto_deploy: true,
   build_context: ".", dockerfile_path: "Dockerfile", has_registry_credentials: false,
   desired_state: "running", mem_limit: "256m", cpu_limit: "0.5", pids_limit: 128,
+  notify_on_success: false,
 };
 
 test("prefills resource limits and sends them in the PATCH payload", async () => {

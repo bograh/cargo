@@ -19,6 +19,7 @@ export function SettingsTab({ app }: { app: App }) {
   const [memLimit, setMemLimit] = useState(app.mem_limit ?? "");
   const [cpuLimit, setCpuLimit] = useState(app.cpu_limit ?? "");
   const [pidsLimit, setPidsLimit] = useState(app.pids_limit != null ? String(app.pids_limit) : "");
+  const [notifyOnSuccess, setNotifyOnSuccess] = useState(app.notify_on_success);
   const [error, setError] = useState("");
   const [confirming, setConfirming] = useState(false);
 
@@ -35,6 +36,7 @@ export function SettingsTab({ app }: { app: App }) {
         mem_limit: memLimit.trim(),
         cpu_limit: cpuLimit.trim(),
         pids_limit: pidsLimit.trim() === "" ? 0 : Number(pidsLimit),
+        notify_on_success: notifyOnSuccess,
       }),
     onSuccess: () => {
       toast("Settings saved");
@@ -116,6 +118,10 @@ export function SettingsTab({ app }: { app: App }) {
           <label className="flex items-center gap-2 text-sm text-muted">
             <Checkbox checked={autoDeploy} onChange={(e) => setAutoDeploy(e.target.checked)} />
             Auto-deploy on push
+          </label>
+          <label className="flex items-center gap-2 text-sm text-muted">
+            <Checkbox checked={notifyOnSuccess} onChange={(e) => setNotifyOnSuccess(e.target.checked)} />
+            Notify on successful deploy (failures always notify)
           </label>
           <div className="border-t border-border pt-4">
             <h3 className="text-sm font-semibold">Resource limits</h3>

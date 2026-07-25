@@ -85,10 +85,11 @@ histogram, pgx pool stats, Go/process collectors.
 - ✅ Series exposed (`cargo_deploys_total`, `cargo_deploy_duration_seconds`, `cargo_river_jobs`, `cargo_db_pool_*`); recorded from the deploy pipeline
 - ✅ Not on the public `:8080` router (verified: falls through to the SPA, not the registry); leaf `internal/obs` package avoids the api→jobs import cycle
 
-### 10.8 Notifications & alerting ⬜ (Tier-3)
+### 10.8 Notifications & alerting ✅ (Tier-3)
 `internal/notify`: email (existing `mailer`) + outbound Slack/Discord webhook (URL stored
 encrypted). Events: deploy failed, disk low, backup failed; deploy-success opt-in per app.
-- Deploy failure notifies owners/admins + webhook; success only when opted in; URL never returned by GET; sink failure never blocks the action
+- ✅ Deploy failure notifies org owners/admins + webhook; success only when the app opted in (`notify_on_success`, migration 00015); platform alerts (disk/backup) → instance admins + webhook
+- ✅ Webhook URL write-only (GET returns only `{configured}`); every sink best-effort (failure logged, never blocks the deploy/backup/disk path); the `Alerter`/`Notifier` seams from 10.3/10.4 now wired live
 
 ### 10.9 Audit log ⬜ (Tier-3)
 Append-only `audit_log` (actor/org/action/target/detail); best-effort writes from the
