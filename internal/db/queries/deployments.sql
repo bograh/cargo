@@ -24,6 +24,10 @@ UPDATE deployments SET status = $2, error = $3, finished_at = now() WHERE id = $
 UPDATE deployments SET status = 'superseded'
 WHERE app_id = $1 AND id <> $2 AND status = 'live';
 
+-- name: FailStaleDeployments :execrows
+UPDATE deployments SET status = 'failed', error = $1, finished_at = now()
+WHERE status IN ('queued', 'building', 'deploying') AND created_at < $2;
+
 -- name: ListPrunableDeployments :many
 SELECT * FROM deployments WHERE app_id = $1 ORDER BY created_at DESC OFFSET $2;
 

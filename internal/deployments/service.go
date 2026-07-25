@@ -3,6 +3,7 @@ package deployments
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/events"
@@ -35,6 +36,18 @@ type Service struct {
 
 func NewService(pool *pgxpool.Pool, hub *events.Hub, dataDir string) *Service {
 	return &Service{q: sqlc.New(pool), hub: hub, dataDir: dataDir}
+}
+
+// ReapOrphaned fails deployments left in a non-terminal state (queued/building/
+// deploying) older than grace — the signature of a controlplane crash mid-deploy.
+// Recent in-flight deployments are left alone so their River jobs can resume.
+// Returns the number of deployments failed.
+func (s *Service) ReapOrphaned(ctx context.Context, grace time.Duration) (int64, error) {
+	cutoff := pgtype.Timestamptz{Time: time.Now().Add(-grace), Valid: true}
+	return s.q.FailStaleDeployments(ctx, sqlc.FailStaleDeploymentsParams{
+		Error:     "interrupted by a platform restart",
+		CreatedAt: cutoff,
+	})
 }
 
 // appFor loads an app and checks the actor holds at least minRole in its org.

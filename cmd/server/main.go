@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/bograh/cargo/internal/api"
 	"github.com/bograh/cargo/internal/apps"
@@ -109,10 +110,20 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() {
-		if err := client.Stop(context.Background()); err != nil {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := client.Stop(stopCtx); err != nil {
 			slog.Warn("job client stop", "err", err)
 		}
 	}()
+
+	// Fail deployments left mid-flight by a prior crash/restart so they don't
+	// hang in a non-terminal state forever (recent ones resume via River).
+	if n, err := depSvc.ReapOrphaned(ctx, 15*time.Minute); err != nil {
+		slog.Warn("orphan reaper failed", "err", err)
+	} else if n > 0 {
+		slog.Info("reaped orphaned deployments", "count", n)
+	}
 
 	srv := api.NewServer(cfg, pool, box)
 	enqueuer := &jobs.Enqueuer{Client: client}
@@ -123,7 +134,9 @@ func main() {
 	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: srv.Handler()}
 	go func() {
 		<-ctx.Done()
-		_ = httpServer.Shutdown(context.Background())
+		shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutCtx)
 	}()
 	slog.Info("cargo listening", "addr", cfg.HTTPAddr)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

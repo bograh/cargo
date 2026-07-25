@@ -91,6 +91,13 @@ services:
       # health probes. cargo-system: private link to the platform DB (below).
       - cargo-proxy
       - cargo-system
+    healthcheck:
+      # Readiness: 200 only when Postgres and Docker are both reachable.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/readyz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     labels:
       # The platform UI is routed through Traefik like any app (dogfooded).
       # No tls/certresolver here: plain HTTP on web, default cert on

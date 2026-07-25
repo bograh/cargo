@@ -23,6 +23,7 @@ func NewRouter(s *Server) *chi.Mux {
 	r.Use(middleware.Logger)
 
 	r.Get("/healthz", HealthHandler)
+	r.Get("/readyz", s.ReadyHandler)
 	r.Route("/api/v1", func(r chi.Router) {
 		// Cap request bodies and reject cross-origin cookie-authed mutations
 		// across the whole API (the webhook is exempted inside each).

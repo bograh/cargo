@@ -59,6 +59,24 @@ func (q *Queries) DeleteDeployment(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const failStaleDeployments = `-- name: FailStaleDeployments :execrows
+UPDATE deployments SET status = 'failed', error = $1, finished_at = now()
+WHERE status IN ('queued', 'building', 'deploying') AND created_at < $2
+`
+
+type FailStaleDeploymentsParams struct {
+	Error     string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) FailStaleDeployments(ctx context.Context, arg FailStaleDeploymentsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failStaleDeployments, arg.Error, arg.CreatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishDeployment = `-- name: FinishDeployment :exec
 UPDATE deployments SET status = $2, error = $3, finished_at = now() WHERE id = $1
 `

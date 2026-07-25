@@ -72,11 +72,11 @@ Origin/Referer check on cookie-authed mutations, general per-user/IP rate limit.
 - ✅ Oversize body → 413; cross-origin POST → 403; over-limit → 429; webhook exempt; no-Origin (curl) allowed
 - ✅ Headers on every response (nosniff/DENY/no-referrer/CSP; HSTS only in production); CSP verified against the built SPA (no inline scripts/CDN); `CARGO_API_RATELIMIT_RPS` config; 10 middleware tests
 
-### 10.6 Readiness probe, bounded shutdown, orphan reaper ⬜ (Tier-3)
+### 10.6 Readiness probe, bounded shutdown, orphan reaper ✅ (Tier-3)
 `/readyz` (pings Postgres + Docker); 30 s-bounded shutdown; startup reaper fails deployments
-stuck in non-terminal states with no active job.
-- `/readyz` 503s naming the down dependency; a stale stuck deploy becomes `failed`, fresh ones untouched
-- Compose healthcheck switches to `/readyz`
+stuck in non-terminal states older than a 15-min grace.
+- ✅ `/readyz` 503s naming the down dependency (db/docker); a stale stuck deploy becomes `failed`, fresh ones untouched (real-DB tested)
+- ✅ Controlplane compose healthcheck now curls `/readyz`; `httpServer.Shutdown` + `client.Stop` bounded to 30 s; reaper runs at startup
 
 ### 10.7 Control-plane self-metrics ⬜ (Tier-3)
 `GET /metrics` (Prometheus, internal-only): River queue depth/job counts, deploy

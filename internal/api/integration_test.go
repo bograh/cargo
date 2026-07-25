@@ -154,3 +154,30 @@ func TestFullAuthOrgInviteFlow(t *testing.T) {
 		t.Fatalf("stale refresh: %d", rec.Code)
 	}
 }
+
+func TestReadyz(t *testing.T) {
+	h := startServer(t)
+	orig := dockerPing
+	t.Cleanup(func() { dockerPing = orig })
+
+	// Real pool up + docker OK → 200 ready.
+	dockerPing = func(context.Context) error { return nil }
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ready: got %d, body %s", rec.Code, rec.Body)
+	}
+
+	// Docker unreachable → 503 naming docker.
+	dockerPing = func(context.Context) error { return context.DeadlineExceeded }
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("docker-down: got %d", rec.Code)
+	}
+	var body map[string]map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	if body["error"]["message"] == "" || !strings.Contains(body["error"]["message"], "docker") {
+		t.Fatalf("expected docker in message, got %v", body)
+	}
+}

@@ -210,3 +210,56 @@ func TestLogWriterFileAndHub(t *testing.T) {
 		t.Fatal("hub message not received")
 	}
 }
+
+func TestReapOrphaned(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+
+	stale, err := f.svc.Create(ctx, f.app.ID, f.owner, "manual") // stays queued
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A terminal deployment must be left untouched.
+	live, err := f.svc.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"building", "deploying"} {
+		if err := f.svc.SetStatus(ctx, live.ID, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.svc.Finish(ctx, live.ID, "live", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Negative grace → cutoff in the future → every non-terminal row is stale.
+	n, err := f.svc.ReapOrphaned(ctx, -time.Hour)
+	if err != nil {
+		t.Fatalf("reap: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("reaped %d, want 1 (only the non-terminal one)", n)
+	}
+	got, _ := f.svc.Get(ctx, stale.ID, f.owner)
+	if got.Status != "failed" || got.Error == "" {
+		t.Fatalf("stale = %+v; want failed with an error", got)
+	}
+	liveGot, _ := f.svc.Get(ctx, live.ID, f.owner)
+	if liveGot.Status != "live" {
+		t.Fatalf("live deployment was wrongly reaped: %s", liveGot.Status)
+	}
+
+	// A fresh non-terminal deployment is newer than a positive-grace cutoff.
+	fresh, err := f.svc.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := f.svc.ReapOrphaned(ctx, time.Hour); err != nil || n != 0 {
+		t.Fatalf("reap with grace: n=%d err=%v; want 0", n, err)
+	}
+	freshGot, _ := f.svc.Get(ctx, fresh.ID, f.owner)
+	if freshGot.Status != "queued" {
+		t.Fatalf("fresh deployment reaped too early: %s", freshGot.Status)
+	}
+}
