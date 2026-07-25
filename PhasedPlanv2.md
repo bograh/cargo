@@ -78,10 +78,12 @@ stuck in non-terminal states older than a 15-min grace.
 - ✅ `/readyz` 503s naming the down dependency (db/docker); a stale stuck deploy becomes `failed`, fresh ones untouched (real-DB tested)
 - ✅ Controlplane compose healthcheck now curls `/readyz`; `httpServer.Shutdown` + `client.Stop` bounded to 30 s; reaper runs at startup
 
-### 10.7 Control-plane self-metrics ⬜ (Tier-3)
-`GET /metrics` (Prometheus, internal-only): River queue depth/job counts, deploy
-success/failure + duration, DB pool stats.
-- Series exposed; endpoint not reachable on the public entrypoint
+### 10.7 Control-plane self-metrics ✅ (Tier-3)
+`GET /metrics` (Prometheus) on a separate internal-only listener (`CARGO_METRICS_ADDR`,
+default `:9090`): River queue depth by state, deploy success/failure counters + duration
+histogram, pgx pool stats, Go/process collectors.
+- ✅ Series exposed (`cargo_deploys_total`, `cargo_deploy_duration_seconds`, `cargo_river_jobs`, `cargo_db_pool_*`); recorded from the deploy pipeline
+- ✅ Not on the public `:8080` router (verified: falls through to the SPA, not the registry); leaf `internal/obs` package avoids the api→jobs import cycle
 
 ### 10.8 Notifications & alerting ⬜ (Tier-3)
 `internal/notify`: email (existing `mailer`) + outbound Slack/Discord webhook (URL stored

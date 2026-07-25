@@ -24,6 +24,7 @@ import (
 	"github.com/bograh/cargo/internal/github"
 	"github.com/bograh/cargo/internal/jobs"
 	"github.com/bograh/cargo/internal/metrics"
+	"github.com/bograh/cargo/internal/obs"
 	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -131,12 +132,25 @@ func main() {
 	srv.WireMetrics(metrics.NewStore(pool))
 	srv.WireDatabases(dbSvc)
 
+	// Control-plane self-metrics on a separate internal-only listener (never
+	// routed by Traefik / never on the public API port).
+	obs.RegisterDB(pool)
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", obs.Handler())
+	metricsServer := &http.Server{Addr: cfg.MetricsAddr, Handler: metricsMux}
+	go func() {
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Warn("metrics server exited", "err", err)
+		}
+	}()
+
 	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: srv.Handler()}
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutCtx)
+		_ = metricsServer.Shutdown(shutCtx)
 	}()
 	slog.Info("cargo listening", "addr", cfg.HTTPAddr)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

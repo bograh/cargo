@@ -83,6 +83,9 @@ services:
       # CARGO_DISK_MIN_FREE_PCT: "10"
       # General API rate limit (requests/sec per user or IP; burst = 2x).
       # CARGO_API_RATELIMIT_RPS: "20"
+      # Internal-only Prometheus /metrics listener (never published to a host
+      # port; scrape it from a sidecar on the cargo networks).
+      # CARGO_METRICS_ADDR: ":9090"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - cargo-data:/var/lib/cargo

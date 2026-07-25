@@ -26,6 +26,8 @@ type Config struct {
 	DiskMinFreePct float64
 	// General API rate limit (requests/sec per user/IP; burst = 2×). Default 20.
 	APIRateLimitRPS float64
+	// Internal-only listener for the Prometheus /metrics endpoint (default :9090).
+	MetricsAddr string
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -41,6 +43,7 @@ func Load(getenv func(string) string) (Config, error) {
 		PlatformDBService:  "db",
 		DiskMinFreePct:     10,
 		APIRateLimitRPS:    20,
+		MetricsAddr:        ":9090",
 	}
 	if v := getenv("CARGO_HTTP_ADDR"); v != "" {
 		cfg.HTTPAddr = v
@@ -90,6 +93,9 @@ func Load(getenv func(string) string) (Config, error) {
 		} else {
 			return Config{}, fmt.Errorf("CARGO_API_RATELIMIT_RPS must be a positive number, got %q", v)
 		}
+	}
+	if v := getenv("CARGO_METRICS_ADDR"); v != "" {
+		cfg.MetricsAddr = v
 	}
 
 	if cfg.DatabaseURL == "" {

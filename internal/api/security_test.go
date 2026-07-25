@@ -103,6 +103,16 @@ func TestOriginCheckExemptsWebhook(t *testing.T) {
 	}
 }
 
+func TestMetricsNotOnPublicRouter(t *testing.T) {
+	// /metrics is served only on the internal listener; on the public router it
+	// must NOT expose the Prometheus registry (it falls through to the SPA).
+	rec := httptest.NewRecorder()
+	NewRouter(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if strings.Contains(rec.Body.String(), "cargo_deploys_total") {
+		t.Fatal("prometheus metrics must not be reachable on the public router")
+	}
+}
+
 func TestAPIRateLimiter(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	h := apiRateLimiter(1)(next) // 1 rps, burst 2

@@ -18,6 +18,7 @@ import (
 	"github.com/bograh/cargo/internal/builder"
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
+	"github.com/bograh/cargo/internal/obs"
 	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -124,12 +125,14 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 		// run(), hitting an illegal deploying→building transition.
 		_, _ = fmt.Fprintf(logw, "==> failed: %v\n", err)
 		_ = p.Deployments.Finish(context.WithoutCancel(ctx), depID, "failed", err.Error())
+		obs.RecordDeploy("failed", time.Since(dep.CreatedAt.Time))
 		return err
 	}
 	_, _ = fmt.Fprintln(logw, "==> live")
 	if err := p.Deployments.Finish(ctx, depID, "live", ""); err != nil {
 		return err
 	}
+	obs.RecordDeploy("live", time.Since(dep.CreatedAt.Time))
 	// This deployment now serves the app; demote the app's previously-live
 	// deployment(s) to "superseded" so exactly one row reads as live. Best-effort
 	// (like prune below): the container is already up, and stale "live" bookkeeping
