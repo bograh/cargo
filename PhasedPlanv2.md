@@ -30,7 +30,7 @@ whole class of operational gaps captured below.
 
 ---
 
-## Phase 10 — Production Hardening (m11) 🔜
+## Phase 10 — Production Hardening (m11) ✅
 
 *Spec: `docs/superpowers/specs/2026-07-23-cargo-production-hardening-design.md` · Plan:
 `docs/superpowers/plans/2026-07-23-cargo-m11-production-hardening.md`. New milestone m11 —
@@ -98,8 +98,8 @@ org-scoped + instance-wide read views; housekeeping retention.
 - ✅ `GET /admin/audit` (instance admin, all) + `GET /orgs/{orgID}/audit` (org admin); Admin "Audit log" table; housekeeping purge with `CARGO_AUDIT_RETENTION_DAYS` (180)
 - Design note: middleware gives complete, uniform coverage at coarse granularity (action = HTTP method, target = path) rather than per-handler semantic actions — chosen for completeness/forensics; can be enriched per-site later
 
-### 10.10 Docs, version bump, close m11 ⬜
-- README/deploy docs cover cargo-system, limits, backup/restore, alerting, `/readyz`, `/metrics`, audit; version bumped; full verification green
+### 10.10 Docs, version bump, close m11 ✅
+- ✅ README "Operations & hardening" section + deploy/README network topology & restore runbook; compose documents every new env var; version bumped to 1.3.0; full verification green (`go test -p 2`, lint 0, vitest, build, docker build)
 
 **Phase exit demo:** deploy an abusive app (memory hog / log flood) → host stays healthy,
 other apps unaffected → kill the DB volume → restore from backup → platform back with certs
@@ -107,7 +107,7 @@ and secrets intact → every action visible in the audit log.
 
 ---
 
-## Phase 11 — Zero-downtime blue/green deploys (9.2) ⬜
+## Phase 11 — Zero-downtime blue/green deploys (9.2) 🔜
 
 *Removes FR-4.7's known limitation. Design sketch in
 [next-phase proposal](docs/superpowers/specs/2026-07-23-cargo-next-phase.md) §2; own spec →

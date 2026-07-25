@@ -64,6 +64,17 @@ Instance volumes live under `<dataDir>/databases/<id>`; manual snapshots (`pg_du
 
 > Instances can optionally expose a host port for external clients (e.g. a local `psql`/`redis-cli`). Only enable this if you understand the instance will be reachable from outside the docker network.
 
+## Operations & hardening
+
+Cargo runs several background safeguards, all configurable via env vars in `deploy/.env` (sane defaults shown):
+
+- **Backups & DR** — a daily job dumps the control-plane database (`pg_dump -Fc`) plus a copy of the TLS certificates into `<dataDir>/platform-backups/`, keeping the last `CARGO_PLATFORM_BACKUP_KEEP` (14). Run one on demand from **Admin → Backups**. Restoring also needs your `CARGO_MASTER_KEY` — store it in a password manager. See [deploy/README.md](deploy/README.md) for the restore runbook.
+- **Tenant isolation & stability** — the platform database sits on a private `cargo-system` network unreachable from tenant apps; each app runs with memory/CPU/PID caps (`CARGO_DEFAULT_MEM_LIMIT` / `_CPU_LIMIT` / `_PIDS_LIMIT`, overridable per app), `no-new-privileges`, and rotated container logs.
+- **Disk guardrail** — a periodic check warns/alerts below `CARGO_DISK_MIN_FREE_PCT` (10%) free and reclaims dangling images below 5%; shown as a gauge in the admin area.
+- **Alerts** — configure a Slack/Discord-compatible incoming webhook under **Admin → Alerts webhook** to be notified of deploy failures, low disk, and backup failures (plus per-app opt-in success notifications). Email is also sent when SMTP is configured.
+- **Health & observability** — `GET /readyz` reports readiness (Postgres + Docker); a Prometheus endpoint is served on an internal-only listener (`CARGO_METRICS_ADDR`, `:9090`) exposing deploy, queue, and DB-pool metrics.
+- **Audit log** — every state-changing action is recorded (who/what/when), viewable under **Admin → Audit log** and per-org; retained `CARGO_AUDIT_RETENTION_DAYS` (180) days.
+
 ## Documentation
 
 - [PRD](PRD.md) — product requirements
