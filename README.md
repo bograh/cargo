@@ -20,18 +20,24 @@ Exactly three platform containers (plus one per deployed app):
 
 ## Prerequisites
 
-- A Linux host with Docker Engine + the compose plugin
+- An Ubuntu/Debian Linux host with `sudo` access (the installer sets up Docker
+  Engine and the compose plugin)
 - Ports 80 and 443 open
 - For a production install: DNS records pointing at the host (`<platform-domain>` and `*.<apps-domain>`). No domain? The installer falls back to a local install on localhost / the server's IP.
 
 ## Quick install
 
 ```bash
-cd deploy
-./install.sh
+curl -fsSL https://usecargo.vercel.app/install.sh | sh
 ```
 
-The installer checks dependencies, prompts for your platform domain, apps-domain suffix, and Let's Encrypt email (optionally a DNS provider for wildcard certificates), generates secrets into a mode-0600 `.env`, and starts the stack. Leave the platform domain empty for a local install (plain HTTP + self-signed HTTPS, no DNS or certificates needed). Non-interactive installs can set `CARGO_PLATFORM_DOMAIN`, `CARGO_APPS_SUFFIX`, and `CARGO_ACME_EMAIL` in the environment instead.
+The bootstrap installs prerequisites, clones Cargo to `/opt/cargo`, then prompts
+for your platform domain, apps-domain suffix, and Let's Encrypt email (optionally
+a DNS provider for wildcard certificates), generates secrets into a mode-0600
+`.env`, and starts the stack. Leave the platform domain empty for a local install
+(plain HTTP + self-signed HTTPS, no DNS or certificates needed). Non-interactive
+installs can set `CARGO_PLATFORM_DOMAIN`, `CARGO_APPS_SUFFIX`, and
+`CARGO_ACME_EMAIL` in the environment instead.
 
 > **Back up `CARGO_MASTER_KEY` from `.env` somewhere safe.** Environment
 > variables and credentials are encrypted with it and are unrecoverable

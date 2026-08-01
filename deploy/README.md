@@ -14,9 +14,13 @@ server's IP works out of the box (see below).
 ## Install
 
 ```bash
-cd deploy
-./install.sh   # prompts, generates secrets into .env, docker compose up -d
+curl -fsSL https://usecargo.vercel.app/install.sh | sh
 ```
+
+The bootstrap supports Ubuntu/Debian hosts, installs Docker Engine and Compose
+when needed, clones Cargo to `/opt/cargo`, and then runs this directory's
+installer. To install from an existing checkout instead, run `./install.sh`
+from this directory.
 
 - **Local install (no domain):** leave the platform domain empty (or enter
   `localhost` / an IP). The stack serves the platform on plain HTTP (and

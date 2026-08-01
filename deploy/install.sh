@@ -24,10 +24,17 @@ done
 say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+DOCKER=(docker)
+if [[ ${CARGO_USE_SUDO:-0} == 1 ]]; then
+  command -v sudo >/dev/null 2>&1 || fail "sudo is required to use Docker"
+  DOCKER=(sudo docker)
+fi
+docker_cmd() { "${DOCKER[@]}" "$@"; }
+
 # --- dependency checks -------------------------------------------------
 command -v docker >/dev/null 2>&1 || fail "docker is not installed (https://docs.docker.com/engine/install/)"
-docker compose version >/dev/null 2>&1 || fail "the docker compose plugin is not installed"
-docker info >/dev/null 2>&1 || fail "cannot reach the docker daemon (is it running? do you need sudo?)"
+docker_cmd compose version >/dev/null 2>&1 || fail "the docker compose plugin is not installed"
+docker_cmd info >/dev/null 2>&1 || fail "cannot reach the docker daemon (is it running? do you need sudo?)"
 
 if [[ -f .env && $FORCE -ne 1 ]]; then
   fail ".env already exists — this looks like an existing install. Re-run with --force to overwrite (this changes secrets!)"
@@ -139,8 +146,8 @@ fi
 say "starting Cargo…"
 # cargo-proxy is a shared external network (app containers attach to it
 # too); create it if this is the first install on this host.
-docker network inspect cargo-proxy >/dev/null 2>&1 || docker network create cargo-proxy >/dev/null
-docker compose "${COMPOSE_ARGS[@]}" up -d
+docker_cmd network inspect cargo-proxy >/dev/null 2>&1 || docker_cmd network create cargo-proxy >/dev/null
+docker_cmd compose "${COMPOSE_ARGS[@]}" up -d
 if [[ $MODE == local ]]; then
   say "done. Open http://${CARGO_PLATFORM_DOMAIN} (or http://localhost) and register — the first account becomes the instance admin."
   say "apps will be served at https://<name>.${CARGO_APPS_SUFFIX} with a self-signed certificate (accept the browser warning)"
