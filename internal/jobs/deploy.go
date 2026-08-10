@@ -71,6 +71,9 @@ type Pipeline struct {
 	DefaultMemLimit  string
 	DefaultCPULimit  string
 	DefaultPidsLimit int
+	// Instance-wide default deploy strategy ("bluegreen" or "recreate"), used
+	// when an app sets no override.
+	DefaultDeployStrategy string
 	// Notify, when set, is called on a terminal deploy result. Optional.
 	Notify Notifier
 }
@@ -237,6 +240,13 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	if app.PidsLimit.Valid {
 		pidsLimit = int(app.PidsLimit.Int32)
 	}
+	strategy := p.DefaultDeployStrategy
+	if app.DeployStrategy.Valid {
+		strategy = app.DeployStrategy.String
+	}
+	if strategy == "bluegreen" {
+		_, _ = fmt.Fprintln(logw, "==> zero-downtime (blue/green) deploy")
+	}
 	spec := reconciler.Spec{
 		AppID:           uuidStr(app.ID),
 		Slug:            app.Slug,
@@ -249,6 +259,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		MemoryLimit:     memLimit,
 		CPULimit:        cpuLimit,
 		PidsLimit:       pidsLimit,
+		BlueGreen:       strategy == "bluegreen",
 	}
 	if err := p.Provider.Apply(ctx, spec, logw); err != nil {
 		return err

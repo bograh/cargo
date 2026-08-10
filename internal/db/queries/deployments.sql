@@ -33,3 +33,17 @@ SELECT * FROM deployments WHERE app_id = $1 ORDER BY created_at DESC OFFSET $2;
 
 -- name: DeleteDeployment :exec
 DELETE FROM deployments WHERE id = $1;
+
+-- name: ListRetainedImageTags :many
+-- Image tags that must survive a prune: those of the newest `keep` deployments
+-- plus any that is still serving. The second clause matters for blue/green and
+-- for rollbacks, where a container runs an image whose own deployment row may
+-- already have aged out of the keep window.
+SELECT DISTINCT d.image_tag FROM deployments d
+WHERE d.app_id = $1 AND d.image_tag <> '' AND (
+    d.status = 'live'
+    OR d.id IN (
+        SELECT k.id FROM deployments k WHERE k.app_id = $1
+        ORDER BY k.created_at DESC LIMIT sqlc.arg('keep')
+    )
+);

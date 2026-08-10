@@ -20,6 +20,7 @@ export function SettingsTab({ app }: { app: App }) {
   const [cpuLimit, setCpuLimit] = useState(app.cpu_limit ?? "");
   const [pidsLimit, setPidsLimit] = useState(app.pids_limit != null ? String(app.pids_limit) : "");
   const [notifyOnSuccess, setNotifyOnSuccess] = useState(app.notify_on_success);
+  const [deployStrategy, setDeployStrategy] = useState<string>(app.deploy_strategy ?? "");
   const [error, setError] = useState("");
   const [confirming, setConfirming] = useState(false);
 
@@ -37,6 +38,7 @@ export function SettingsTab({ app }: { app: App }) {
         cpu_limit: cpuLimit.trim(),
         pids_limit: pidsLimit.trim() === "" ? 0 : Number(pidsLimit),
         notify_on_success: notifyOnSuccess,
+        deploy_strategy: deployStrategy,
       }),
     onSuccess: () => {
       toast("Settings saved");
@@ -123,6 +125,31 @@ export function SettingsTab({ app }: { app: App }) {
             <Checkbox checked={notifyOnSuccess} onChange={(e) => setNotifyOnSuccess(e.target.checked)} />
             Notify on successful deploy (failures always notify)
           </label>
+          <div className="border-t border-border pt-4">
+            <h3 className="text-sm font-semibold">Deploy strategy</h3>
+            <p className="mt-1 text-xs text-muted">
+              Zero-downtime starts the new version alongside the running one and only switches
+              traffic once it passes its healthcheck; a version that never gets healthy leaves the
+              current one serving. Recreate replaces the container in place — pick it if the app
+              can't tolerate two instances running at once.
+            </p>
+            <Select
+              id="s-strategy"
+              aria-label="Deploy strategy"
+              className="mt-3 w-full"
+              value={deployStrategy}
+              onChange={(e) => setDeployStrategy(e.target.value)}
+            >
+              <option value="">Instance default</option>
+              <option value="bluegreen">Zero-downtime (blue/green)</option>
+              <option value="recreate">Recreate (brief downtime)</option>
+            </Select>
+            {deployStrategy === "bluegreen" && healthPath.trim() === "" && (
+              <p className="mt-2 text-xs text-amber">
+                Set a healthcheck path so traffic only reaches the new version once it's ready.
+              </p>
+            )}
+          </div>
           <div className="border-t border-border pt-4">
             <h3 className="text-sm font-semibold">Resource limits</h3>
             <p className="mt-1 text-xs text-muted">

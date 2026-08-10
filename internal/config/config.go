@@ -18,6 +18,9 @@ type Config struct {
 	DefaultMemLimit  string
 	DefaultCPULimit  string
 	DefaultPidsLimit int
+	// Instance-wide default deployment strategy ("bluegreen" or "recreate")
+	// applied to any app that does not override it.
+	DefaultDeployStrategy string
 	// Control-plane backup settings.
 	PlatformBackupKeep int    // backups retained (default 14)
 	ComposeProject     string // compose project for container discovery ("" = self-discover)
@@ -41,6 +44,8 @@ func Load(getenv func(string) string) (Config, error) {
 		DefaultMemLimit:    "512m",
 		DefaultCPULimit:    "1",
 		DefaultPidsLimit:   512,
+
+		DefaultDeployStrategy: "bluegreen",
 		PlatformBackupKeep: 14,
 		PlatformDBService:  "db",
 		DiskMinFreePct:     10,
@@ -69,6 +74,12 @@ func Load(getenv func(string) string) (Config, error) {
 		} else {
 			return Config{}, fmt.Errorf("CARGO_DEFAULT_PIDS_LIMIT must be a positive integer, got %q", v)
 		}
+	}
+	if v := getenv("CARGO_DEPLOY_STRATEGY"); v != "" {
+		if v != "bluegreen" && v != "recreate" {
+			return Config{}, fmt.Errorf("CARGO_DEPLOY_STRATEGY must be bluegreen or recreate, got %q", v)
+		}
+		cfg.DefaultDeployStrategy = v
 	}
 	if v := getenv("CARGO_PLATFORM_BACKUP_KEEP"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -98,7 +97,7 @@ func parseDockerStats(line string) (ContainerStats, error) {
 // running is false (with a zero sample and nil error) when the app has no
 // running container. Addressed by appID, mirroring AppLogs.
 func (d *Docker) AppStats(ctx context.Context, appID string) (ContainerStats, bool, error) {
-	composePath := filepath.Join(d.projectDir(appID), "compose.yaml")
+	composePath := d.activeComposePath(appID)
 	if _, err := os.Stat(composePath); err != nil {
 		return ContainerStats{}, false, nil
 	}

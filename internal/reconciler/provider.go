@@ -31,6 +31,99 @@ func (d *Docker) projectDir(appID string) string {
 	return filepath.Join(d.dataDir, "apps", appID)
 }
 
+// colorDir is the compose project directory for one deployment color. The
+// empty color is the original single-project layout (recreate strategy, and
+// every app deployed before blue/green existed), which stays in place so
+// upgrades don't strand running containers.
+func (d *Docker) colorDir(appID, color string) string {
+	if color == "" {
+		return d.projectDir(appID)
+	}
+	return filepath.Join(d.projectDir(appID), color)
+}
+
+func (d *Docker) composePath(appID, color string) string {
+	return filepath.Join(d.colorDir(appID, color), "compose.yaml")
+}
+
+// appState records which color currently serves an app. It lives next to the
+// compose projects rather than in Postgres because it describes what is
+// actually running on this host — the reconciler owns it, and a restored
+// control-plane backup must not disagree with the containers on disk.
+type appState struct {
+	Color string `json:"color"`
+}
+
+func (d *Docker) statePath(appID string) string {
+	return filepath.Join(d.projectDir(appID), "state.json")
+}
+
+// activeColor returns the color currently serving the app, or "" for an app
+// on the legacy single-project layout (or one that was never deployed).
+func (d *Docker) activeColor(appID string) string {
+	raw, err := os.ReadFile(d.statePath(appID))
+	if err != nil {
+		return ""
+	}
+	var st appState
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return ""
+	}
+	return st.Color
+}
+
+func (d *Docker) setActiveColor(appID, color string) error {
+	raw, err := json.Marshal(appState{Color: color})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(d.statePath(appID), raw, 0o644)
+}
+
+// activeComposePath is the compose file of the color currently serving the
+// app — the one Stop/Start/logs/stats should address.
+func (d *Docker) activeComposePath(appID string) string {
+	return d.composePath(appID, d.activeColor(appID))
+}
+
+// writeProject renders a color's compose project (env file + compose file) to
+// disk and returns the path of the compose file.
+func (d *Docker) writeProject(spec Spec) (string, error) {
+	dir := d.colorDir(spec.AppID, spec.Color)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	envContent, err := generateEnvFile(spec.Env)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
+		return "", err
+	}
+	composePath := filepath.Join(dir, "compose.yaml")
+	if err := os.WriteFile(composePath, []byte(GenerateCompose(spec)), 0o644); err != nil {
+		return "", err
+	}
+	return composePath, nil
+}
+
+// downColor tears down one color's compose project and removes its directory.
+// Best-effort: a color that was never brought up has no compose file.
+func (d *Docker) downColor(ctx context.Context, appID, color string, log io.Writer) {
+	composePath := d.composePath(appID, color)
+	if _, err := os.Stat(composePath); err == nil {
+		_ = run(ctx, log, "docker", "compose", "-f", composePath, "down", "--remove-orphans")
+	}
+	if color != "" {
+		_ = os.RemoveAll(d.colorDir(appID, color))
+		return
+	}
+	// The legacy layout shares its directory with state.json and the color
+	// subdirectories, so only its own files may be removed.
+	_ = os.Remove(composePath)
+	_ = os.Remove(filepath.Join(d.colorDir(appID, ""), ".env"))
+}
+
 func run(ctx context.Context, log io.Writer, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout, cmd.Stderr = log, log
@@ -52,26 +145,102 @@ func (d *Docker) ensureNetwork(ctx context.Context) {
 }
 
 func (d *Docker) Apply(ctx context.Context, spec Spec, log io.Writer) error {
-	dir := d.projectDir(spec.AppID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	if spec.BlueGreen {
+		return d.applyBlueGreen(ctx, spec, log)
 	}
-	envContent, err := generateEnvFile(spec.Env)
+	return d.applyRecreate(ctx, spec, log)
+}
+
+// applyRecreate is the original strategy: one compose project per app,
+// replaced in place. The container is down for the length of the swap.
+func (d *Docker) applyRecreate(ctx context.Context, spec Spec, log io.Writer) error {
+	// An app moving back from blue/green still has a color project running;
+	// note it now and reap it once the recreate project is healthy.
+	prev := d.activeColor(spec.AppID)
+	spec.Color = ""
+	composePath, err := d.writeProject(spec)
 	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
-		return err
-	}
-	composePath := filepath.Join(dir, "compose.yaml")
-	if err := os.WriteFile(composePath, []byte(GenerateCompose(spec)), 0o644); err != nil {
 		return err
 	}
 	d.ensureNetwork(ctx)
 	if err := run(ctx, log, "docker", "compose", "-f", composePath, "up", "-d", "--remove-orphans"); err != nil {
 		return err
 	}
-	return d.waitHealthy(ctx, composePath, spec, log)
+	if err := d.waitHealthy(ctx, composePath, spec, log); err != nil {
+		return err
+	}
+	if prev != "" {
+		_ = os.Remove(d.statePath(spec.AppID))
+		d.downColor(ctx, spec.AppID, prev, log)
+	}
+	return nil
+}
+
+// applyBlueGreen brings the new version up beside the running one, health-gates
+// it, and only then reaps the old color (FR-4.7). Both colors declare the same
+// Traefik router and service, so once the new color passes its healthcheck
+// Traefik load-balances across both and removing the old one is seamless.
+//
+// A new version that fails its gate is torn down and the old color is left
+// untouched and serving — the deployment fails with no manual rollback needed.
+func (d *Docker) applyBlueGreen(ctx context.Context, spec Spec, log io.Writer) error {
+	prev := d.activeColor(spec.AppID)
+	// A previous deploy may have been interrupted after starting a color but
+	// before recording it; clear any stale project for the color we're about
+	// to occupy so `up -d` starts from a clean slate.
+	spec.Color = nextColor(prev)
+	if prev != spec.Color {
+		d.downColor(ctx, spec.AppID, spec.Color, io.Discard)
+	}
+
+	// An app deployed before blue/green existed still runs the unsuffixed
+	// project, whose labels declare the same Traefik service but WITHOUT the
+	// load-balancer healthcheck the colored projects now carry. Two containers
+	// declaring one service with different options is a conflict Traefik
+	// resolves by dropping the service, which would black-hole the app for the
+	// whole overlap. Retire the legacy project first: this one transition costs
+	// the same brief gap as a recreate, and every deploy after it is seamless.
+	if prev == "" {
+		if _, err := os.Stat(d.composePath(spec.AppID, "")); err == nil {
+			_, _ = fmt.Fprintln(log, "==> migrating to blue/green (one-time restart)")
+			d.downColor(ctx, spec.AppID, "", log)
+		}
+	}
+
+	composePath, err := d.writeProject(spec)
+	if err != nil {
+		return err
+	}
+	d.ensureNetwork(ctx)
+	if prev != "" {
+		_, _ = fmt.Fprintf(log, "==> starting %s alongside the running version\n", spec.Color)
+	} else {
+		_, _ = fmt.Fprintf(log, "==> starting %s\n", spec.Color)
+	}
+	if err := run(ctx, log, "docker", "compose", "-f", composePath, "up", "-d", "--remove-orphans"); err != nil {
+		d.downColor(ctx, spec.AppID, spec.Color, io.Discard)
+		return err
+	}
+	if err := d.waitHealthy(ctx, composePath, spec, log); err != nil {
+		_, _ = fmt.Fprintf(log, "==> %s failed its healthcheck; keeping the current version live\n", spec.Color)
+		// context.WithoutCancel: on a cancelled/timed-out deploy the cleanup
+		// still has to run, or the failed color keeps serving traffic beside
+		// the good one.
+		d.downColor(context.WithoutCancel(ctx), spec.AppID, spec.Color, io.Discard)
+		return err
+	}
+
+	// Record the new color before reaping the old one: it is already in the
+	// Traefik pool and serving, so a crash here must leave it discoverable
+	// rather than stranding a container no later deploy knows about.
+	if err := d.setActiveColor(spec.AppID, spec.Color); err != nil {
+		return err
+	}
+	if prev != spec.Color {
+		_, _ = fmt.Fprintf(log, "==> %s is healthy\n", spec.Color)
+		d.downColor(ctx, spec.AppID, prev, log)
+	}
+	return nil
 }
 
 // stableFor is how long a container must stay running (crash-free) to pass
@@ -199,7 +368,7 @@ func firstIP(networksJSON string) string {
 // lines. The returned reader is closed — and the underlying process killed —
 // when ctx is cancelled (e.g. the SSE client disconnects) or the caller Closes.
 func (d *Docker) AppLogs(ctx context.Context, appID string, tail int) (io.ReadCloser, error) {
-	composePath := filepath.Join(d.projectDir(appID), "compose.yaml")
+	composePath := d.activeComposePath(appID)
 	if _, err := os.Stat(composePath); err != nil {
 		return nil, fmt.Errorf("app is not running")
 	}
@@ -220,7 +389,7 @@ func (d *Docker) AppLogs(ctx context.Context, appID string, tail int) (io.ReadCl
 // Start can bring them back. It's a no-op-with-error if the app was never
 // deployed (no compose project exists).
 func (d *Docker) Stop(ctx context.Context, appID string, log io.Writer) error {
-	composePath := filepath.Join(d.projectDir(appID), "compose.yaml")
+	composePath := d.activeComposePath(appID)
 	if _, err := os.Stat(composePath); err != nil {
 		return fmt.Errorf("app is not running")
 	}
@@ -229,7 +398,7 @@ func (d *Docker) Stop(ctx context.Context, appID string, log io.Writer) error {
 
 // Start resumes a previously stopped app's containers.
 func (d *Docker) Start(ctx context.Context, appID string, log io.Writer) error {
-	composePath := filepath.Join(d.projectDir(appID), "compose.yaml")
+	composePath := d.activeComposePath(appID)
 	if _, err := os.Stat(composePath); err != nil {
 		return fmt.Errorf("app has not been deployed")
 	}
@@ -237,13 +406,18 @@ func (d *Docker) Start(ctx context.Context, appID string, log io.Writer) error {
 	return run(ctx, log, "docker", "compose", "-f", composePath, "start")
 }
 
+// Teardown removes every color's compose project, not just the active one: a
+// deploy interrupted mid-hand-off can leave two of them running, and a leftover
+// container would keep answering on the app's domain after the app is deleted.
 func (d *Docker) Teardown(ctx context.Context, appID, slug string, log io.Writer) error {
-	dir := d.projectDir(appID)
-	composePath := filepath.Join(dir, "compose.yaml")
-	if _, err := os.Stat(composePath); err == nil {
+	for _, color := range []string{"", "blue", "green"} {
+		composePath := d.composePath(appID, color)
+		if _, err := os.Stat(composePath); err != nil {
+			continue
+		}
 		if err := run(ctx, log, "docker", "compose", "-f", composePath, "down", "--remove-orphans"); err != nil {
 			return err
 		}
 	}
-	return os.RemoveAll(dir)
+	return os.RemoveAll(d.projectDir(appID))
 }

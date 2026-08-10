@@ -30,6 +30,16 @@ func validateLimits(mem, cpu string, pids int32) error {
 	return nil
 }
 
+// validateDeployStrategy checks the per-app strategy override. Empty means
+// "unset" (fall back to the instance default) and is always valid.
+func validateDeployStrategy(s string) error {
+	switch s {
+	case "", "bluegreen", "recreate":
+		return nil
+	}
+	return fmt.Errorf("%w: deploy_strategy must be bluegreen or recreate", ErrValidation)
+}
+
 // textOrNull maps "" to a NULL pgtype.Text and any other value to a valid one.
 func textOrNull(s string) pgtype.Text {
 	if s == "" {

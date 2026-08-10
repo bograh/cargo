@@ -47,6 +47,7 @@ export interface App {
   cpu_limit: string | null;
   pids_limit: number | null;
   notify_on_success: boolean;
+  deploy_strategy: "bluegreen" | "recreate" | null;
   created_at?: unknown;
   updated_at?: unknown;
 }

@@ -75,6 +75,10 @@ services:
       # CARGO_DEFAULT_MEM_LIMIT: "512m"
       # CARGO_DEFAULT_CPU_LIMIT: "1"
       # CARGO_DEFAULT_PIDS_LIMIT: "512"
+      # Default deploy strategy: "bluegreen" starts the new version alongside
+      # the running one and switches only once it is healthy; "recreate"
+      # replaces the container in place (brief downtime). Per-app overridable.
+      # CARGO_DEPLOY_STRATEGY: "bluegreen"
       # Control-plane backups (written to <dataDir>/platform-backups). Default
       # keeps the last 14 daily dumps.
       # CARGO_PLATFORM_BACKUP_KEEP: "14"

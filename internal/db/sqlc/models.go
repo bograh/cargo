@@ -47,6 +47,7 @@ type Application struct {
 	CpuLimit         pgtype.Text
 	PidsLimit        pgtype.Int4
 	NotifyOnSuccess  bool
+	DeployStrategy   pgtype.Text
 }
 
 type AuditLog struct {

@@ -96,6 +96,8 @@ func main() {
 		DefaultCPULimit:  cfg.DefaultCPULimit,
 		DefaultPidsLimit: cfg.DefaultPidsLimit,
 		Notify:           notifySvc,
+
+		DefaultDeployStrategy: cfg.DefaultDeployStrategy,
 	}
 	traefikURL := getenvDefault("CARGO_TRAEFIK_METRICS_URL", "http://traefik:8082/metrics")
 	collector := metrics.NewCollector(pool, hub, provider, traefikURL)

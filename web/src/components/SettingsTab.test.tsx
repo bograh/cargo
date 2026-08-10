@@ -14,6 +14,7 @@ const app: App = {
   build_context: ".", dockerfile_path: "Dockerfile", has_registry_credentials: false,
   desired_state: "running", mem_limit: "256m", cpu_limit: "0.5", pids_limit: 128,
   notify_on_success: false,
+  deploy_strategy: null,
 };
 
 test("prefills resource limits and sends them in the PATCH payload", async () => {
@@ -43,6 +44,42 @@ test("prefills resource limits and sends them in the PATCH payload", async () =>
     expect(body.cpu_limit).toBe("0.5");
     expect(body.pids_limit).toBe(128);
   });
+});
+
+test("deploy strategy defaults to the instance setting and is sent when overridden", async () => {
+  const user = userEvent.setup();
+  const calls = mockApi({
+    "GET /auth/me": { status: 200, body: { id: "u1", email: "a@b.co", is_instance_admin: false } },
+    "PATCH /apps/a1": { status: 200, body: { ...app } },
+  });
+  renderPage(<SettingsTab app={app} />);
+
+  // A null strategy means "inherit the instance default", not an explicit mode.
+  const strategy = await screen.findByLabelText(/deploy strategy/i);
+  expect(strategy).toHaveValue("");
+
+  await user.selectOptions(strategy, "recreate");
+  await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+  await waitFor(() => {
+    const patch = calls.find((c) => c.method === "PATCH" && c.path === "/apps/a1");
+    expect(patch).toBeTruthy();
+    expect((patch!.body as Record<string, unknown>).deploy_strategy).toBe("recreate");
+  });
+});
+
+// Blue/green relies on Traefik probing a path to know the new version is ready,
+// so choosing it without one deserves a visible nudge.
+test("warns when blue/green is selected without a healthcheck path", async () => {
+  const user = userEvent.setup();
+  const noHealth: App = { ...app, healthcheck_path: "" };
+  mockApi({
+    "GET /auth/me": { status: 200, body: { id: "u1", email: "a@b.co", is_instance_admin: false } },
+  });
+  renderPage(<SettingsTab app={noHealth} />);
+
+  await user.selectOptions(await screen.findByLabelText(/deploy strategy/i), "bluegreen");
+  expect(await screen.findByText(/set a healthcheck path/i)).toBeInTheDocument();
 });
 
 test("blank limits are sent as cleared (default) values", async () => {

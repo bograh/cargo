@@ -192,6 +192,46 @@ func (q *Queries) ListPrunableDeployments(ctx context.Context, arg ListPrunableD
 	return items, nil
 }
 
+const listRetainedImageTags = `-- name: ListRetainedImageTags :many
+SELECT DISTINCT d.image_tag FROM deployments d
+WHERE d.app_id = $1 AND d.image_tag <> '' AND (
+    d.status = 'live'
+    OR d.id IN (
+        SELECT k.id FROM deployments k WHERE k.app_id = $1
+        ORDER BY k.created_at DESC LIMIT $2
+    )
+)
+`
+
+type ListRetainedImageTagsParams struct {
+	AppID pgtype.UUID
+	Keep  int32
+}
+
+// Image tags that must survive a prune: those of the newest `keep` deployments
+// plus any that is still serving. The second clause matters for blue/green and
+// for rollbacks, where a container runs an image whose own deployment row may
+// already have aged out of the keep window.
+func (q *Queries) ListRetainedImageTags(ctx context.Context, arg ListRetainedImageTagsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listRetainedImageTags, arg.AppID, arg.Keep)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var image_tag string
+		if err := rows.Scan(&image_tag); err != nil {
+			return nil, err
+		}
+		items = append(items, image_tag)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markDeploymentStatus = `-- name: MarkDeploymentStatus :exec
 UPDATE deployments SET status = $2,
     started_at = COALESCE(started_at, now())

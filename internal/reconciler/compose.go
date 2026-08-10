@@ -13,9 +13,19 @@ import (
 // entrypoint's default TLS configuration (per-domain HTTP-01 or the
 // wildcard cert, chosen at install). Remaining domains are custom and get
 // a second router pinned to the HTTP-01 resolver `le` (FR-5.3).
+//
+// The compose project name is color-scoped so both colors of a blue/green
+// deploy can run side by side, but the Traefik router and service names are
+// deliberately NOT: two containers declaring the same service name are merged
+// by Traefik into one load-balanced backend pool, which is what makes the
+// hand-off between colors seamless.
 func GenerateCompose(spec Spec) string {
 	var b strings.Builder
 	router := "app-" + spec.Slug
+	project := router
+	if spec.Color != "" {
+		project += "-" + spec.Color
+	}
 	hostRule := func(domains []string) string {
 		hosts := make([]string, 0, len(domains))
 		for _, d := range domains {
@@ -27,7 +37,7 @@ func GenerateCompose(spec Spec) string {
 	if len(networks) == 0 {
 		networks = []string{"cargo-proxy"}
 	}
-	fmt.Fprintf(&b, "name: cargo-app-%s\n", spec.Slug)
+	fmt.Fprintf(&b, "name: cargo-%s\n", project)
 	b.WriteString("services:\n")
 	b.WriteString("  app:\n")
 	fmt.Fprintf(&b, "    image: %s\n", spec.Image)
@@ -64,6 +74,16 @@ func GenerateCompose(spec Spec) string {
 		fmt.Fprintf(&b, "      - traefik.http.routers.%s.service=%s\n", custom, router)
 	}
 	fmt.Fprintf(&b, "      - traefik.http.services.%s.loadbalancer.server.port=%d\n", router, spec.Port)
+	// During a blue/green hand-off both colors sit in the same backend pool.
+	// Traefik's active healthcheck is what keeps a container that is up but not
+	// yet serving out of rotation, so no request is answered by a booting app.
+	// It needs a path to probe; without one the pool falls back to "container is
+	// running", which is why a healthcheck path is recommended for blue/green.
+	if spec.BlueGreen && spec.HealthcheckPath != "" {
+		fmt.Fprintf(&b, "      - traefik.http.services.%s.loadbalancer.healthcheck.path=%s\n", router, spec.HealthcheckPath)
+		fmt.Fprintf(&b, "      - traefik.http.services.%s.loadbalancer.healthcheck.interval=3s\n", router)
+		fmt.Fprintf(&b, "      - traefik.http.services.%s.loadbalancer.healthcheck.timeout=2s\n", router)
+	}
 	b.WriteString("networks:\n")
 	for _, n := range networks {
 		fmt.Fprintf(&b, "  %s:\n    external: true\n", n)

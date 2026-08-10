@@ -64,8 +64,14 @@ func RunPrune(ctx context.Context, pool *pgxpool.Pool, deps *deployments.Service
 
 // pruneApp keeps the newest keepDeployments for one app and removes older
 // deployments' rows, log files, and images. Image removal is best-effort
-// (`docker rmi -f`); the live and recent-rollback images are always within
-// the kept window (ordered newest-first), so they are never removed.
+// (`docker rmi -f`).
+//
+// A tag is only removed once no retained deployment still references it. Two
+// cases make that check necessary rather than relying on the keep window:
+// a rollback creates a fresh deployment reusing an older deployment's image,
+// and a blue/green hand-off has two colors running different images at once.
+// Untagging an image out from under a running container leaves it unable to
+// restart.
 func pruneApp(ctx context.Context, q *sqlc.Queries, deps *deployments.Service, appID pgtype.UUID) error {
 	old, err := q.ListPrunableDeployments(ctx, sqlc.ListPrunableDeploymentsParams{
 		AppID: appID, Offset: keepDeployments,
@@ -73,9 +79,19 @@ func pruneApp(ctx context.Context, q *sqlc.Queries, deps *deployments.Service, a
 	if err != nil {
 		return err
 	}
+	retainedTags, err := q.ListRetainedImageTags(ctx, sqlc.ListRetainedImageTagsParams{
+		AppID: appID, Keep: keepDeployments,
+	})
+	if err != nil {
+		return err
+	}
+	retained := make(map[string]bool, len(retainedTags))
+	for _, tag := range retainedTags {
+		retained[tag] = true
+	}
 	for _, dep := range old {
 		_ = os.Remove(deps.LogPath(uuidStr(dep.ID)))
-		if dep.ImageTag != "" {
+		if dep.ImageTag != "" && !retained[dep.ImageTag] {
 			_ = exec.CommandContext(ctx, "docker", "rmi", "-f", dep.ImageTag).Run()
 		}
 		if err := q.DeleteDeployment(ctx, dep.ID); err != nil {

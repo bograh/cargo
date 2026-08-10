@@ -48,6 +48,8 @@ type CreateInput struct {
 	PidsLimit int32
 	// NotifyOnSuccess opts this app into notifications on a successful deploy.
 	NotifyOnSuccess bool
+	// DeployStrategy overrides the instance default; "" means "use the default".
+	DeployStrategy string
 }
 
 type UpdateInput struct {
@@ -68,6 +70,9 @@ type UpdateInput struct {
 	CPULimit        *string
 	PidsLimit       *int32
 	NotifyOnSuccess *bool
+	// DeployStrategy; nil leaves it unchanged, a non-nil empty string clears
+	// the override back to the instance default (NULL).
+	DeployStrategy *string
 }
 
 // AttachmentCleaner tears down the engine-level credentials for every managed
@@ -144,6 +149,9 @@ func validateCreate(in CreateInput) error {
 	default:
 		return fmt.Errorf("%w: builder must be auto, dockerfile, or nixpacks", ErrValidation)
 	}
+	if err := validateDeployStrategy(in.DeployStrategy); err != nil {
+		return err
+	}
 	return validateLimits(in.MemLimit, in.CPULimit, in.PidsLimit)
 }
 
@@ -201,6 +209,7 @@ func (s *Service) Create(ctx context.Context, orgID, actor pgtype.UUID, in Creat
 		BuildContext: in.BuildContext, DockerfilePath: in.DockerfilePath, BuildArgs: argsJSON,
 		MemLimit: textOrNull(in.MemLimit), CpuLimit: textOrNull(in.CPULimit),
 		PidsLimit: int4OrNull(in.PidsLimit), NotifyOnSuccess: in.NotifyOnSuccess,
+		DeployStrategy: textOrNull(in.DeployStrategy),
 	}
 	app, err := s.q.CreateApplication(ctx, params)
 	var pgErr *pgconn.PgError
@@ -275,6 +284,12 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 	if in.NotifyOnSuccess != nil {
 		app.NotifyOnSuccess = *in.NotifyOnSuccess
 	}
+	if in.DeployStrategy != nil {
+		if err := validateDeployStrategy(*in.DeployStrategy); err != nil {
+			return sqlc.Application{}, err
+		}
+		app.DeployStrategy = textOrNull(*in.DeployStrategy)
+	}
 	memLimit, cpuLimit := "", ""
 	if app.MemLimit.Valid {
 		memLimit = app.MemLimit.String
@@ -292,7 +307,7 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 		BuildContext: app.BuildContext, DockerfilePath: app.DockerfilePath,
 		BuildArgs: app.BuildArgs, RegistryCredsEnc: app.RegistryCredsEnc,
 		MemLimit: app.MemLimit, CpuLimit: app.CpuLimit, PidsLimit: app.PidsLimit,
-		NotifyOnSuccess: app.NotifyOnSuccess,
+		NotifyOnSuccess: app.NotifyOnSuccess, DeployStrategy: app.DeployStrategy,
 	})
 }
 

@@ -25,6 +25,24 @@ type Spec struct {
 	MemoryLimit string // docker mem_limit, e.g. "512m"
 	CPULimit    string // docker cpus, e.g. "1" or "1.5"
 	PidsLimit   int    // docker pids_limit
+
+	// BlueGreen selects the zero-downtime apply strategy: the new color is
+	// started alongside the running one and only replaces it once healthy.
+	BlueGreen bool
+	// Color is the deployment color this spec renders ("blue"/"green"), which
+	// scopes the compose project name so both colors can run side by side. It
+	// is set by Apply from on-disk state; an empty value renders the original
+	// single-project layout used by the recreate strategy.
+	Color string
+}
+
+// nextColor returns the color to deploy into given the currently active one.
+// A legacy (pre-blue/green) app has no color and moves to blue first.
+func nextColor(active string) string {
+	if active == "blue" {
+		return "green"
+	}
+	return "blue"
 }
 
 type DeployProvider interface {

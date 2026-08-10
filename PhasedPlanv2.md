@@ -107,18 +107,23 @@ and secrets intact → every action visible in the audit log.
 
 ---
 
-## Phase 11 — Zero-downtime blue/green deploys (9.2) 🔜
+## Phase 11 — Zero-downtime blue/green deploys (9.2) ✅
 
 *Removes FR-4.7's known limitation. Design sketch in
-[next-phase proposal](docs/superpowers/specs/2026-07-23-cargo-next-phase.md) §2; own spec →
-plan cycle to follow.*
+[next-phase proposal](docs/superpowers/specs/2026-07-23-cargo-next-phase.md) §2.*
 
-Two color-suffixed services per app; bring up the idle color with the new image, health-gate
-it, flip the Traefik load-balancer target, then reap the old color. Rollback flips color.
-- A redeploy of a healthy app serves every request throughout (continuous-curl smoke test)
-- A failing new image leaves the **old** version live and the deployment `failed` — no manual rollback
-- Only one color remains after success; prune/housekeeping is color-aware
-- Depends on 10.2 (limits) + 10.1 (isolation) being in place first
+One **compose project per color** (`cargo-app-<slug>-<color>`) rather than two services in one
+project: the new color is brought up beside the running one, health-gated, and the old color
+reaped only on success. Both colors declare the **same Traefik router and service**, so Traefik
+merges them into one backend pool and the hand-off needs no proxy reconfiguration.
+- ✅ A redeploy of a healthy app serves every request throughout (real-Docker test polls every app container across a hand-off and asserts zero outages)
+- ✅ A failing new image is torn down and leaves the **old** version live with the deployment `failed` — no manual rollback (real-Docker test)
+- ✅ Only one color remains after success; prune is color-aware — an image is never untagged while any retained or live deployment still references it (also fixes the pre-existing rollback-reuse case)
+- ✅ Per-app `deploy_strategy` (migration 00017) over instance-wide `CARGO_DEPLOY_STRATEGY` (default `bluegreen`); `recreate` keeps the original in-place behaviour for apps that can't run two instances at once
+- ✅ Active color is reconciler-owned state (`state.json` beside the compose projects), so logs/stats/stop/start follow the serving color and a restored control-plane backup can't disagree with what's on the host
+- Design note: a container's Traefik labels are fixed at creation, so a container cannot move from "not serving" to "serving" without being recreated. The new color therefore joins the pool already labelled, and **Traefik's own load-balancer healthcheck** is what holds traffic back until it answers. With no healthcheck path there is nothing to probe, so a request can briefly reach a booting container — the UI warns when blue/green is selected without one.
+
+- ✅ Legacy migration: an app deployed before this phase runs the unsuffixed project, whose labels declare the same Traefik service *without* the healthcheck options the colored projects add. Two containers defining one service with conflicting options makes Traefik drop the service, so that project is retired **before** the first color starts — a one-time restart (logged as such), after which every deploy is a real hand-off.
 
 ---
 
