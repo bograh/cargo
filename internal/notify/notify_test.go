@@ -23,6 +23,32 @@ func newTestService(t *testing.T) *Service {
 	return &Service{box: box, smtp: func(context.Context) *mailer.SMTP { return nil }}
 }
 
+// Regression: the webhook URL used to be stored as raw ciphertext inside a
+// JSON string. Sealed bytes are not valid UTF-8, so encoding/json replaced them
+// with U+FFFD and the value could never be decrypted — WebhookConfigured always
+// reported false and no alert ever fired. Run it enough times to catch a
+// ciphertext that happens to be valid UTF-8 by chance.
+func TestWebhookSecretRoundTrips(t *testing.T) {
+	box, err := crypto.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const url = "https://hooks.slack.com/services/T00000/B00000/XXXXXXXXXXXX"
+	for i := 0; i < 200; i++ {
+		stored, err := sealWebhook(box, url)
+		if err != nil {
+			t.Fatalf("seal: %v", err)
+		}
+		got, err := openWebhook(box, stored)
+		if err != nil {
+			t.Fatalf("open (iteration %d): %v", i, err)
+		}
+		if got != url {
+			t.Fatalf("round-trip %d = %q, want %q", i, got, url)
+		}
+	}
+}
+
 func TestNotifyFiresWebhook(t *testing.T) {
 	s := newTestService(t)
 	var posted []string

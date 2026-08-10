@@ -7,6 +7,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -55,17 +56,45 @@ func NewService(pool *pgxpool.Pool, box *crypto.Box, smtp SMTPProvider) *Service
 	}
 }
 
+// sealWebhook encodes the URL as the {"enc": base64} instance_settings shape.
+//
+// The base64 matters: sealed bytes are not valid UTF-8, and encoding/json
+// replaces invalid bytes in a Go string with U+FFFD. Storing the raw ciphertext
+// in a JSON string therefore corrupts it on the way in, and the value can never
+// be decrypted again. sealWebhook/openWebhook are split out so that round-trip
+// is unit-testable without a database — the bug above shipped precisely because
+// the tests stubbed this path out.
+func sealWebhook(box *crypto.Box, url string) ([]byte, error) {
+	sealed, err := box.Seal([]byte(url))
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]string{"enc": base64.StdEncoding.EncodeToString(sealed)})
+}
+
+func openWebhook(box *crypto.Box, raw []byte) (string, error) {
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return "", err
+	}
+	sealed, err := base64.StdEncoding.DecodeString(m["enc"])
+	if err != nil {
+		return "", err
+	}
+	plain, err := box.Open(sealed)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
 // SetWebhook stores (or, with an empty url, clears) the outbound webhook URL,
 // encrypted at rest.
 func (s *Service) SetWebhook(ctx context.Context, url string) error {
 	if url == "" {
 		return s.q.DeleteInstanceSetting(ctx, webhookSettingKey)
 	}
-	sealed, err := s.box.Seal([]byte(url))
-	if err != nil {
-		return err
-	}
-	val, err := json.Marshal(map[string]string{"enc": string(sealed)})
+	val, err := sealWebhook(s.box, url)
 	if err != nil {
 		return err
 	}
@@ -85,15 +114,7 @@ func (s *Service) webhookURL(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var m map[string]string
-	if err := json.Unmarshal(row.Value, &m); err != nil {
-		return "", err
-	}
-	plain, err := s.box.Open([]byte(m["enc"]))
-	if err != nil {
-		return "", err
-	}
-	return string(plain), nil
+	return openWebhook(s.box, row.Value)
 }
 
 // Notify delivers an event to every configured sink. Best-effort.

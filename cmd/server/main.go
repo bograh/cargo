@@ -35,6 +35,23 @@ import (
 )
 
 func main() {
+	// Maintenance subcommands run instead of the server. They deliberately
+	// bypass config.Load: rotate-key needs two master keys, and neither needs
+	// a data dir, Docker, or the job queue.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "rotate-key":
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			os.Exit(runRotateKey(ctx))
+		case "gen-key":
+			os.Exit(runGenKey())
+		default:
+			slog.Error("unknown command", "command", os.Args[1])
+			os.Exit(2)
+		}
+	}
+
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
 	cfg, err := config.Load(os.Getenv)

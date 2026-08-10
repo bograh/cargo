@@ -153,9 +153,15 @@ over it. Last open PRD "Phase 2" item.
 All-apps + whole-server overview (host CPU/mem/disk, container count) reusing the existing
 collector and chart components; complements 10.7's self-metrics.
 
-### 13.3 Master-key rotation ⬜
-`cargod rotate-key` re-seals all secrets under a new key using the existing `key_version`
+### 13.3 Master-key rotation ✅
+`cargod rotate-key` re-seals all secrets under a new key, bumping the existing `key_version`
 column. Turns 10.3's "back up the key" into a recoverable story if a key is suspected leaked.
+- ✅ Covers every persisted secret shape: the raw BYTEA columns (`applications.registry_creds_enc`, `env_vars.value_enc`) and the `{"enc": base64}` JSONB values (`database_instances.admin_secret`, `database_attachments.secret`, and the `smtp`/`github_app`/`oidc`/`notify_webhook` instance settings). Plaintext settings are left untouched.
+- ✅ All-or-nothing: one transaction, and each re-sealed value is decrypted back and compared before it replaces a value still readable with the old key
+- ✅ Wrong old key aborts before any write (`ErrKeyMismatch`); re-running a completed rotation is a no-op; rotating to the same key is refused
+- ✅ `cargod gen-key` is a separate command so the operator saves the new key *before* anything is re-sealed under it
+- ✅ Real-DB tests for every shape, idempotency, wrong-key safety, empty instance, and the legacy-corrupt row below
+- Found and fixed while doing this: **the alerts webhook has never worked**. `notify.SetWebhook` stored raw ciphertext inside a JSON string; sealed bytes are not valid UTF-8, so `encoding/json` replaced them with U+FFFD and the value could never be decrypted (measured: 500/500 round-trips corrupted). `WebhookConfigured` therefore always reported false and no Slack/Discord alert has fired since 10.8. Now base64-encoded like every other setting, with the encode/decode split into testable helpers — the bug survived because the existing tests stubbed that path out. Pre-existing rows are unrecoverable, so rotation skips and reports them rather than aborting, and the operator re-enters the URL.
 
 ### 13.4 Additional git providers (GitLab/Bitbucket/Gitea) ⬜
 Behind the same source abstraction as GitHub. PRD "later".
