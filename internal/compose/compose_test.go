@@ -21,8 +21,12 @@ volumes:
   pgdata:
 `
 
+// root is a stand-in for the app's checkout: the directory a compose file is
+// allowed to reference.
+func root(t *testing.T) string { t.Helper(); return t.TempDir() }
+
 func TestValidateAcceptsOrdinaryFile(t *testing.T) {
-	if err := Validate([]byte(safeFile)); err != nil {
+	if err := Validate([]byte(safeFile), root(t)); err != nil {
 		t.Fatalf("rejected a safe compose file: %v", err)
 	}
 }
@@ -51,7 +55,7 @@ func TestValidateRejectsHostEscapes(t *testing.T) {
 		{"devices", "services:\n  web:\n    image: x\n    devices:\n      - /dev/sda:/dev/sda\n", "devices"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate([]byte(tc.yaml))
+			err := Validate([]byte(tc.yaml), root(t))
 			if !errors.Is(err, ErrUnsafe) {
 				t.Fatalf("err = %v, want ErrUnsafe", err)
 			}
@@ -68,7 +72,7 @@ func TestValidateRejectsHostEscapes(t *testing.T) {
 // The docker socket is the worst case: mounting it hands the tenant the whole
 // host and the control plane with it.
 func TestValidateRejectsDockerSocketMount(t *testing.T) {
-	err := Validate([]byte("services:\n  web:\n    image: x\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n"))
+	err := Validate([]byte("services:\n  web:\n    image: x\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n"), root(t))
 	if !errors.Is(err, ErrUnsafe) {
 		t.Fatalf("err = %v, want ErrUnsafe", err)
 	}
@@ -94,7 +98,7 @@ func TestValidateVolumeSources(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			y := "services:\n  web:\n    image: x\n    volumes:\n      - \"" + tc.volume + "\"\n"
-			err := Validate([]byte(y))
+			err := Validate([]byte(y), root(t))
 			if tc.wantUnsafe && !errors.Is(err, ErrUnsafe) {
 				t.Fatalf("volume %q accepted, want rejected (err=%v)", tc.volume, err)
 			}
@@ -117,7 +121,7 @@ services:
         source: /etc
         target: /host-etc
 `
-	if err := Validate([]byte(y)); !errors.Is(err, ErrUnsafe) {
+	if err := Validate([]byte(y), root(t)); !errors.Is(err, ErrUnsafe) {
 		t.Fatalf("long-form bind mount accepted: %v", err)
 	}
 	// The same syntax naming a named volume is fine.
@@ -130,7 +134,7 @@ services:
         source: data
         target: /data
 `
-	if err := Validate([]byte(ok)); err != nil {
+	if err := Validate([]byte(ok), root(t)); err != nil {
 		t.Fatalf("long-form named volume rejected: %v", err)
 	}
 }
@@ -138,7 +142,7 @@ services:
 // Apps are reached through Traefik; a published port would also collide with
 // every other app on a single-host install.
 func TestValidateRejectsPublishedPorts(t *testing.T) {
-	err := Validate([]byte("services:\n  web:\n    image: x\n    ports:\n      - \"8080:80\"\n"))
+	err := Validate([]byte("services:\n  web:\n    image: x\n    ports:\n      - \"8080:80\"\n"), root(t))
 	if !errors.Is(err, ErrUnsafe) {
 		t.Fatalf("err = %v, want ErrUnsafe", err)
 	}
@@ -148,10 +152,10 @@ func TestValidateRejectsPublishedPorts(t *testing.T) {
 }
 
 func TestValidateRejectsUnparseableAndEmpty(t *testing.T) {
-	if err := Validate([]byte("services: [oh no\n")); !errors.Is(err, ErrInvalid) {
+	if err := Validate([]byte("services: [oh no\n"), root(t)); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
-	if err := Validate([]byte("version: \"3\"\n")); !errors.Is(err, ErrInvalid) {
+	if err := Validate([]byte("version: \"3\"\n"), root(t)); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a file with no services should be ErrInvalid, got %v", err)
 	}
 }
@@ -160,9 +164,9 @@ func TestValidateRejectsUnparseableAndEmpty(t *testing.T) {
 // fixing them one at a time gets a stable sequence.
 func TestValidateIsDeterministic(t *testing.T) {
 	y := "services:\n  zeta:\n    image: x\n    privileged: true\n  alpha:\n    image: y\n    pid: host\n"
-	first := Validate([]byte(y)).Error()
+	first := Validate([]byte(y), root(t)).Error()
 	for i := 0; i < 20; i++ {
-		if got := Validate([]byte(y)).Error(); got != first {
+		if got := Validate([]byte(y), root(t)).Error(); got != first {
 			t.Fatalf("error varies between runs: %q vs %q", got, first)
 		}
 	}
@@ -239,5 +243,25 @@ func TestOverlayTouchesOnlyTheWebService(t *testing.T) {
 	}
 	if strings.Count(got, "mem_limit") != 1 {
 		t.Fatalf("overlay should cap exactly one service:\n%s", got)
+	}
+}
+
+// env_file and label_file read a file's contents into the container, so a host
+// path there leaks just as effectively as a bind mount.
+func TestValidateRejectsHostEnvFile(t *testing.T) {
+	for _, y := range []string{
+		"services:\n  web:\n    image: x\n    env_file: /etc/passwd\n",
+		"services:\n  web:\n    image: x\n    env_file:\n      - ../../secrets.env\n",
+		"services:\n  web:\n    image: x\n    env_file:\n      - path: /etc/passwd\n        required: true\n",
+		"services:\n  web:\n    image: x\n    label_file: /etc/hostname\n",
+	} {
+		if err := Validate([]byte(y), root(t)); !errors.Is(err, ErrUnsafe) {
+			t.Fatalf("accepted a host file read:\n%s\nerr=%v", y, err)
+		}
+	}
+	// A file inside the repository is the ordinary case and must still work.
+	ok := "services:\n  web:\n    image: x\n    env_file: .env.production\n"
+	if err := Validate([]byte(ok), root(t)); err != nil {
+		t.Fatalf("rejected a repo-relative env_file: %v", err)
 	}
 }

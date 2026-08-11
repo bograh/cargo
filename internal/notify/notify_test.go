@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -86,5 +87,34 @@ func TestNotifyNoWebhookConfigured(t *testing.T) {
 	s.Notify(context.Background(), Event{Kind: "disk_low", Title: "low"})
 	if called {
 		t.Fatal("webhook should not be posted when unconfigured")
+	}
+}
+
+// WebhookStatus has to tell three states apart: absent, explicitly cleared, and
+// present-but-unreadable. Only the last one should ask the admin to act.
+func TestWebhookStatusDistinguishesClearedFromCorrupt(t *testing.T) {
+	box, err := crypto.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A cleared value carries no secret and must not read as corrupt.
+	var m map[string]string
+	if err := json.Unmarshal([]byte(`{"enc":""}`), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["enc"] != "" {
+		t.Fatal("fixture is wrong")
+	}
+	// A corrupt value cannot be opened.
+	if _, err := openWebhook(box, []byte(`{"enc":"not-base64-�"}`)); err == nil {
+		t.Fatal("a corrupt value decrypted successfully")
+	}
+	// A good value round-trips.
+	stored, err := sealWebhook(box, "https://hooks.example.com/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openWebhook(box, stored); err != nil {
+		t.Fatalf("a valid value failed to open: %v", err)
 	}
 }

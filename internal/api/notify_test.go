@@ -10,8 +10,9 @@ import (
 )
 
 type stubNotify struct {
-	url        string
-	configured bool
+	url          string
+	configured   bool
+	needsReentry bool
 }
 
 func (s *stubNotify) SetWebhook(_ context.Context, url string) error {
@@ -20,6 +21,9 @@ func (s *stubNotify) SetWebhook(_ context.Context, url string) error {
 	return nil
 }
 func (s *stubNotify) WebhookConfigured(context.Context) bool { return s.configured }
+func (s *stubNotify) WebhookStatus(context.Context) (bool, bool) {
+	return s.configured, s.needsReentry
+}
 
 func TestNotifyWebhookSetAndGetHidesURL(t *testing.T) {
 	n := &stubNotify{}
@@ -52,5 +56,25 @@ func TestNotifyWebhookRequiresURL(t *testing.T) {
 	s.handlePutNotifyWebhook(rec, httptest.NewRequest(http.MethodPut, "/x", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty url should be 400, got %d", rec.Code)
+	}
+}
+
+// An admin who configured a webhook under the version that corrupted it must
+// be told to re-enter it, not shown a bare "not configured" that reads as if
+// they never set one.
+func TestNotifyWebhookReportsUnreadableValue(t *testing.T) {
+	s := &Server{notify: &stubNotify{needsReentry: true}}
+
+	rec := httptest.NewRecorder()
+	s.handleGetNotifyWebhook(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["configured"] != false || got["needs_reentry"] != true {
+		t.Fatalf("body = %s, want configured=false with needs_reentry=true", rec.Body.String())
 	}
 }

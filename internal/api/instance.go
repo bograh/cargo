@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 func (s *Server) getInstanceInfo(w http.ResponseWriter, r *http.Request) {
 	suffix := s.settingOrDefault(r, "apps_domain_suffix", "apps.localhost")

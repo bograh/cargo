@@ -12,7 +12,10 @@ func (s *Server) handleGetNotifyWebhook(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusServiceUnavailable, "unavailable", "notifications are not available")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"configured": s.notify.WebhookConfigured(r.Context())})
+	configured, needsReentry := s.notify.WebhookStatus(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"configured": configured, "needs_reentry": needsReentry,
+	})
 }
 
 // handlePutNotifyWebhook stores the outbound webhook URL (encrypted at rest).

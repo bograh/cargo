@@ -402,7 +402,7 @@ function NotifyWebhookForm() {
   const toast = useToast();
   const { data } = useQuery({
     queryKey: ["admin", "notify-webhook"],
-    queryFn: () => api<{ configured: boolean }>("/admin/settings/notify-webhook"),
+    queryFn: () => api<{ configured: boolean; needs_reentry: boolean }>("/admin/settings/notify-webhook"),
   });
   const [url, setUrl] = useState("");
   const invalidate = () => void qc.invalidateQueries({ queryKey: ["admin", "notify-webhook"] });
@@ -437,11 +437,20 @@ function NotifyWebhookForm() {
                 Clear
               </Button>
             </span>
+          ) : data?.needs_reentry ? (
+            <Badge tone="danger">needs re-entry</Badge>
           ) : (
             <Badge tone="neutral">not configured</Badge>
           )
         }
       />
+      {data?.needs_reentry && (
+        <p className="mb-3 rounded-lg border border-danger/40 bg-danger-tint p-3 text-xs text-text">
+          A webhook URL is stored but cannot be decrypted — a bug in an earlier version
+          corrupted it when it was saved, so no alerts have been delivered. Enter the URL
+          again below to fix it.
+        </p>
+      )}
       <p className="mb-3 text-xs text-muted">
         A Slack/Discord-compatible incoming webhook URL. Cargo posts on deploy failures,
         low disk, and backup failures (and successful deploys for apps that opt in). Stored

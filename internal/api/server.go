@@ -125,6 +125,9 @@ func (s *Server) WireAudit(a AuditService) { s.audit = a }
 type NotifyService interface {
 	SetWebhook(ctx context.Context, url string) error
 	WebhookConfigured(ctx context.Context) bool
+	// WebhookStatus also reports a stored-but-unreadable URL, which an older
+	// version could write and which has to be entered again.
+	WebhookStatus(ctx context.Context) (configured, needsReentry bool)
 }
 
 // WireNotify attaches the notification service used by the admin webhook API.

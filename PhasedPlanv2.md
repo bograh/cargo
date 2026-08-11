@@ -98,6 +98,13 @@ org-scoped + instance-wide read views; housekeeping retention.
 - ✅ `GET /admin/audit` (instance admin, all) + `GET /orgs/{orgID}/audit` (org admin); Admin "Audit log" table; housekeeping purge with `CARGO_AUDIT_RETENTION_DAYS` (180)
 - Design note: middleware gives complete, uniform coverage at coarse granularity (action = HTTP method, target = path) rather than per-handler semantic actions — chosen for completeness/forensics; can be enriched per-site later
 
+### Test-infrastructure fix (v1.4)
+Every package that starts a Postgres testcontainer waited on `wait.ForListeningPort`, which
+races the postgres image's initdb-then-restart cycle: migrations intermittently failed with
+connection resets and whole packages failed at random, masking real results. Confirmed
+pre-existing by reproducing on a stashed tree, then moved all 13 call sites to
+`wait.ForLog("database system is ready to accept connections").WithOccurrence(2)`.
+
 ### 10.10 Docs, version bump, close m11 ✅
 - ✅ README "Operations & hardening" section + deploy/README network topology & restore runbook; compose documents every new env var; version bumped to 1.3.0; full verification green (`go test -p 2`, lint 0, vitest, build, docker build)
 
@@ -151,7 +158,14 @@ over it. Closes the last open PRD "Phase 2" item.
 - ✅ `source_type = 'compose'` with `compose_path` + `compose_service` (migration 00019); the named service receives the domain and the health gate, every other service runs untouched
 - ✅ Applied as `docker compose -f <user file> -f <generated overlay>` rather than rewriting the user's YAML — compose's own merge rules combine them. The user's file leads so compose takes the project directory (and therefore their relative paths and build contexts) from their repository; the overlay follows so its values win
 - ✅ The overlay names `default` alongside `cargo-proxy`: attaching a service to any network drops compose's implicit default, which would otherwise cut the web service off from its own database
-- ✅ **Validated before anything starts.** An overlay can add but never remove, so a file using `privileged`, `cap_add`, `devices`, `network_mode: host`/`container:`, `pid`/`ipc`/`userns_mode: host`, a host bind mount (notably the Docker socket), or a path escaping the repo is rejected with the offending service and directive named. `ports:` is rejected separately — apps are reached through Traefik and a published port would collide across apps
+- ✅ **Validated before anything starts**, against the configuration compose *resolves* (`docker compose config`) rather than the file as written. Validating the source text proved unsound — five bypasses were found and closed, each verified against real compose:
+  - `${VAR}` interpolation. The worst of them: Cargo writes the app's env into the project `.env`, so any org member could set a variable through the env-var UI and expand it into a bind mount of `/`.
+  - `extends: {file: …}`, pulling `privileged: true` out of a file that was never inspected. YAML anchors/merge keys hide directives the same way.
+  - A named volume defined as a bind via `driver_opts: {type: none, device: /etc, o: bind}` — the service's reference to it looks completely ordinary.
+  - A top-level `secret`/`config` with `file: /etc/…`, reading host files into the container.
+  - `security_opt: seccomp:unconfined` — compose *appends* to Cargo's `no-new-privileges` rather than replacing it, so it simply hands syscall filtering back.
+- ✅ Rule set: `privileged`, `cap_add`, `devices`, `device_cgroup_rules`, `cgroup_parent`, `volumes_from`, `network_mode: host`/`container:`, `pid`/`ipc`/`userns_mode: host`, any `security_opt` other than Cargo's own, and any host path (bind, named-volume `driver_opts`, secret/config `file:`, build context) resolving outside the checkout — checked by containment against the resolved absolute path, symlinks included, not by string shape. `ports:` is rejected separately — apps are reached through Traefik and a published port would collide across apps
+- Note: the pipeline keeps a cheap pre-check on the raw file for fast feedback, but it is explicitly *not* the security boundary; the reconciler's rendered check immediately before `up` is
 - ✅ Always deploys `recreate`: blue/green would stand up a second copy of every service including databases, each with its own project-scoped volumes — a second stack, not a hand-off. Image rollback is refused for the same reason (no single retained image)
 - ✅ Lifecycle ops follow the project: a `project.json` records the file set and web service so stop/start/logs/stats/teardown address a two-file project correctly, falling back to the single-file layout for existing apps
 - ✅ Tests: unit coverage of the validator and overlay, four pipeline tests (success, unsafe file rejected before the provider is called, unknown service, missing file), and a real-Docker test applying a two-service file that asserts both services run, the overlay's labels/cap/env land on the web container only, and teardown removes everything
@@ -173,6 +187,7 @@ column. Turns 10.3's "back up the key" into a recoverable story if a key is susp
 - ✅ Wrong old key aborts before any write (`ErrKeyMismatch`); re-running a completed rotation is a no-op; rotating to the same key is refused
 - ✅ `cargod gen-key` is a separate command so the operator saves the new key *before* anything is re-sealed under it
 - ✅ Real-DB tests for every shape, idempotency, wrong-key safety, empty instance, and the legacy-corrupt row below
+- Follow-up (v1.4): `WebhookStatus` now distinguishes "no webhook" from "stored but unreadable", and the Admin card shows **needs re-entry** with an explanation rather than a bare "not configured" that reads as if the admin never set one.
 - Found and fixed while doing this: **the alerts webhook has never worked**. `notify.SetWebhook` stored raw ciphertext inside a JSON string; sealed bytes are not valid UTF-8, so `encoding/json` replaced them with U+FFFD and the value could never be decrypted (measured: 500/500 round-trips corrupted). `WebhookConfigured` therefore always reported false and no Slack/Discord alert has fired since 10.8. Now base64-encoded like every other setting, with the encode/decode split into testable helpers — the bug survived because the existing tests stubbed that path out. Pre-existing rows are unrecoverable, so rotation skips and reports them rather than aborting, and the operator re-enters the URL.
 
 ### 13.4 Additional git providers (GitLab/Bitbucket/Gitea) ⬜

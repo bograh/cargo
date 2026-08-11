@@ -77,3 +77,19 @@ test("clear oidc calls DELETE", async () => {
     expect(calls.some((c) => c.path === "/admin/settings/oidc" && c.method === "DELETE")).toBe(true);
   });
 });
+
+// A webhook stored by the version that corrupted it must announce itself, not
+// hide behind "not configured" — the admin set one and has been getting no
+// alerts ever since.
+test("admin flags a webhook that cannot be decrypted", async () => {
+  mockApi({
+    "GET /auth/me": { status: 200, body: { id: "u1", email: "a@b.co", is_instance_admin: true } },
+    "GET /admin/users": { status: 200, body: [] },
+    "GET /admin/orgs": { status: 200, body: [] },
+    "GET /admin/settings/notify-webhook": { status: 200, body: { configured: false, needs_reentry: true } },
+  });
+  renderPage(<Admin />);
+
+  expect(await screen.findByText(/needs re-entry/i)).toBeInTheDocument();
+  expect(await screen.findByText(/no alerts have been delivered/i)).toBeInTheDocument();
+});

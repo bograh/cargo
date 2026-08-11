@@ -344,7 +344,10 @@ func (p *Pipeline) checkoutCompose(ctx context.Context, app sqlc.Application, de
 		return fmt.Errorf("service %q is not defined in %s (found: %s)",
 			app.ComposeService, app.ComposePath, strings.Join(services, ", "))
 	}
-	if err := compose.Validate(raw); err != nil {
+	// Early, best-effort feedback only: this sees the file as written, before
+	// compose resolves interpolation and `extends`. The authoritative check
+	// runs in the reconciler against the rendered configuration.
+	if err := compose.Validate(raw, dir); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(logw, "==> using %s (services: %s; routing to %q)\n",

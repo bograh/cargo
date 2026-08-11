@@ -105,8 +105,34 @@ func (s *Service) SetWebhook(ctx context.Context, url string) error {
 // WebhookConfigured reports whether an outbound webhook URL is set (without
 // returning it — the URL is write-only).
 func (s *Service) WebhookConfigured(ctx context.Context) bool {
-	_, err := s.webhookURL(ctx)
-	return err == nil
+	configured, _ := s.WebhookStatus(ctx)
+	return configured
+}
+
+// WebhookStatus distinguishes "no webhook" from "a webhook is stored but
+// cannot be read". A released version corrupted the URL on save (raw ciphertext
+// inside a JSON string, which encoding/json mangles), and such a row can never
+// be decrypted. Reporting that as simply "not configured" would leave an admin
+// who did set one believing alerts were on their way, so the second return
+// value marks a stored-but-unreadable value that has to be entered again.
+func (s *Service) WebhookStatus(ctx context.Context) (configured, needsReentry bool) {
+	row, err := s.q.GetInstanceSetting(ctx, webhookSettingKey)
+	if err != nil {
+		return false, false
+	}
+	// An explicitly cleared value is "not configured", not a corrupt one — it
+	// would otherwise decrypt-fail and raise a false alarm.
+	var m map[string]string
+	if err := json.Unmarshal(row.Value, &m); err != nil {
+		return false, true
+	}
+	if m["enc"] == "" {
+		return false, false
+	}
+	if _, err := openWebhook(s.box, row.Value); err != nil {
+		return false, true
+	}
+	return true, false
 }
 
 func (s *Service) webhookURL(ctx context.Context) (string, error) {

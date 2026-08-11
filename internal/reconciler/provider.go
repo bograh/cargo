@@ -268,6 +268,18 @@ func (d *Docker) ensureNetwork(ctx context.Context) {
 }
 
 func (d *Docker) Apply(ctx context.Context, spec Spec, log io.Writer) error {
+	// The safety gate for a user-supplied compose file sits here, ahead of the
+	// strategy split, so no future branch can route around it. It needs the
+	// env file on disk (compose interpolates from it), which writeProject also
+	// writes — so write it once up front for the compose case.
+	if spec.ComposeFile != "" {
+		if err := d.writeComposeEnv(spec); err != nil {
+			return err
+		}
+		if err := d.validateComposeSource(ctx, spec); err != nil {
+			return err
+		}
+	}
 	if spec.BlueGreen {
 		return d.applyBlueGreen(ctx, spec, log)
 	}
