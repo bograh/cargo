@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -56,7 +57,11 @@ type fixture struct {
 	owner    pgtype.UUID
 }
 
-func setup(t *testing.T, sourceType string) *fixture {
+func setup(t *testing.T, sourceType string) *fixture { return setupWithCompose(t, sourceType, "") }
+
+// setupWithCompose seeds the fake clone with a compose file for compose-source
+// tests; cloneFile is ignored for the other source types.
+func setupWithCompose(t *testing.T, sourceType, cloneFile string) *fixture {
 	t.Helper()
 	pool := startPool(t)
 	box, err := crypto.New(bytes.Repeat([]byte{9}, 32))
@@ -74,9 +79,14 @@ func setup(t *testing.T, sourceType string) *fixture {
 	}
 	appSvc := apps.NewService(pool, box)
 	in := apps.CreateInput{Name: "web", SourceType: sourceType, ExposedPort: 80}
-	if sourceType == "image" {
+	switch sourceType {
+	case "image":
 		in.ImageRef = "nginx:alpine"
-	} else {
+	case "compose":
+		in.GitRepoURL = "file:///tmp/fake-repo"
+		in.GitBranch = "main"
+		in.ComposeService = "web"
+	default:
 		in.GitRepoURL = "file:///tmp/fake-repo"
 		in.GitBranch = "main"
 	}
@@ -97,6 +107,13 @@ func setup(t *testing.T, sourceType string) *fixture {
 		Clone: func(_ context.Context, _, _, dest string, _ io.Writer) (string, error) {
 			if err := os.MkdirAll(dest, 0o755); err != nil {
 				return "", err
+			}
+			// A compose-source test drives the pipeline by choosing what the
+			// "repository" contains.
+			if cloneFile != "" {
+				if err := os.WriteFile(filepath.Join(dest, "docker-compose.yml"), []byte(cloneFile), 0o644); err != nil {
+					return "", err
+				}
 			}
 			return strings.Repeat("a", 40), nil
 		},
@@ -397,5 +414,115 @@ func TestPipelineIncludesCustomDomains(t *testing.T) {
 	spec := f.provider.specs[0]
 	if len(spec.Domains) != 2 || spec.Domains[1] != "api.example.com" {
 		t.Fatalf("domains = %v", spec.Domains)
+	}
+}
+
+const safeComposeFile = `services:
+  web:
+    image: nginx:alpine
+  db:
+    image: postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+`
+
+func TestPipelineComposeDeploySuccess(t *testing.T) {
+	f := setupWithCompose(t, "compose", safeComposeFile)
+	ctx := context.Background()
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got, err := f.deps.GetRaw(ctx, dep.ID)
+	if err != nil || got.Status != "live" {
+		t.Fatalf("status = %s, %v", got.Status, err)
+	}
+	if len(f.provider.specs) != 1 {
+		t.Fatalf("provider calls = %d", len(f.provider.specs))
+	}
+	spec := f.provider.specs[0]
+	if spec.ComposeFile != "docker-compose.yml" || spec.ComposeService != "web" {
+		t.Fatalf("compose fields not passed to the provider: %+v", spec)
+	}
+	if spec.SourceDir == "" {
+		t.Fatal("provider was given no checkout directory")
+	}
+	// Blue/green would stand up a second copy of every service in the file,
+	// databases included, so a compose source must always deploy in place.
+	if spec.BlueGreen {
+		t.Fatal("compose source must not use blue/green")
+	}
+	// The checkout is kept: compose resolves build contexts and relative paths
+	// against it for as long as the app runs.
+	if _, err := os.Stat(filepath.Join(spec.SourceDir, "docker-compose.yml")); err != nil {
+		t.Fatalf("checkout not retained: %v", err)
+	}
+}
+
+// An unsafe compose file must fail the deployment during the build phase,
+// before the provider is ever asked to apply it.
+func TestPipelineComposeRejectsUnsafeFile(t *testing.T) {
+	unsafe := "services:\n  web:\n    image: nginx\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n"
+	f := setupWithCompose(t, "compose", unsafe)
+	ctx := context.Background()
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err == nil {
+		t.Fatal("unsafe compose file deployed successfully")
+	}
+	got, err := f.deps.GetRaw(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "failed" {
+		t.Fatalf("status = %s, want failed", got.Status)
+	}
+	if !strings.Contains(got.Error, "docker.sock") {
+		t.Fatalf("failure should name the offending mount, got %q", got.Error)
+	}
+	if len(f.provider.specs) != 0 {
+		t.Fatal("provider was called despite an unsafe compose file")
+	}
+}
+
+// Naming a service that isn't in the file is a common typo; it must fail with
+// the available names rather than a confusing compose error later on.
+func TestPipelineComposeUnknownService(t *testing.T) {
+	f := setupWithCompose(t, "compose", "services:\n  frontend:\n    image: nginx\n")
+	ctx := context.Background()
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err == nil {
+		t.Fatal("deploy succeeded with an unknown compose service")
+	}
+	got, _ := f.deps.GetRaw(ctx, dep.ID)
+	if !strings.Contains(got.Error, "frontend") {
+		t.Fatalf("error should list the available services, got %q", got.Error)
+	}
+}
+
+// A missing compose file must say so plainly.
+func TestPipelineComposeMissingFile(t *testing.T) {
+	f := setupWithCompose(t, "compose", "")
+	ctx := context.Background()
+	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err == nil {
+		t.Fatal("deploy succeeded with no compose file in the repo")
+	}
+	got, _ := f.deps.GetRaw(ctx, dep.ID)
+	if !strings.Contains(got.Error, "docker-compose.yml") {
+		t.Fatalf("error should name the missing file, got %q", got.Error)
 	}
 }

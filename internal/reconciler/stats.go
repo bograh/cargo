@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -97,11 +96,11 @@ func parseDockerStats(line string) (ContainerStats, error) {
 // running is false (with a zero sample and nil error) when the app has no
 // running container. Addressed by appID, mirroring AppLogs.
 func (d *Docker) AppStats(ctx context.Context, appID string) (ContainerStats, bool, error) {
-	composePath := d.activeComposePath(appID)
-	if _, err := os.Stat(composePath); err != nil {
+	args, service, err := d.activeProject(appID)
+	if err != nil {
 		return ContainerStats{}, false, nil
 	}
-	cid, err := output(ctx, "docker", "compose", "-f", composePath, "ps", "-q", "app")
+	cid, err := outputCompose(ctx, args, "ps", "-q", service)
 	if err != nil || cid == "" {
 		return ContainerStats{}, false, nil
 	}

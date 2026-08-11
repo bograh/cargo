@@ -15,6 +15,8 @@ const app: App = {
   desired_state: "running", mem_limit: "256m", cpu_limit: "0.5", pids_limit: 128,
   notify_on_success: false,
   deploy_strategy: null,
+  compose_path: "",
+  compose_service: "",
 };
 
 test("prefills resource limits and sends them in the PATCH payload", async () => {

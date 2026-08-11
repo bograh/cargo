@@ -37,6 +37,8 @@ func appJSON(a sqlc.Application) map[string]any {
 		"pids_limit":               int4OrNil(a.PidsLimit),
 		"notify_on_success":        a.NotifyOnSuccess,
 		"deploy_strategy":          textOrNil(a.DeployStrategy),
+		"compose_path":             a.ComposePath,
+		"compose_service":          a.ComposeService,
 		"created_at":               a.CreatedAt,
 		"updated_at":               a.UpdatedAt,
 	}
@@ -99,6 +101,8 @@ type appBody struct {
 	PidsLimit       *int32              `json:"pids_limit"`
 	NotifyOnSuccess *bool               `json:"notify_on_success"`
 	DeployStrategy  *string             `json:"deploy_strategy"`
+	ComposePath     *string             `json:"compose_path"`
+	ComposeService  *string             `json:"compose_service"`
 }
 
 func str(p *string) string {
@@ -144,6 +148,8 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		in.NotifyOnSuccess = *body.NotifyOnSuccess
 	}
 	in.DeployStrategy = str(body.DeployStrategy)
+	in.ComposePath = str(body.ComposePath)
+	in.ComposeService = str(body.ComposeService)
 	if body.AutoDeploy != nil {
 		in.AutoDeploy = *body.AutoDeploy
 	}
@@ -203,6 +209,7 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 		BuildArgs: body.BuildArgs, RegistryCreds: body.RegistryCreds,
 		MemLimit: body.MemLimit, CPULimit: body.CPULimit, PidsLimit: body.PidsLimit,
 		NotifyOnSuccess: body.NotifyOnSuccess, DeployStrategy: body.DeployStrategy,
+		ComposePath: body.ComposePath, ComposeService: body.ComposeService,
 	}
 	app, err := s.apps.Update(r.Context(), id, userFrom(r.Context()).ID, in)
 	if err != nil {

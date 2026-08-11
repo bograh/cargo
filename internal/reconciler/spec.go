@@ -29,6 +29,17 @@ type Spec struct {
 	// BlueGreen selects the zero-downtime apply strategy: the new color is
 	// started alongside the running one and only replaces it once healthy.
 	BlueGreen bool
+	// ComposeFile, when set, switches to the user-supplied compose source: the
+	// path (inside SourceDir) of the user's own compose file. Cargo applies it
+	// together with a generated overlay rather than its own single-service
+	// file. ComposeService names the service that receives traffic.
+	ComposeFile    string
+	ComposeService string
+	// SourceDir is the checkout the pipeline placed on disk for a compose
+	// source. It becomes the compose project directory, so relative paths in
+	// the user's file resolve against their own repository.
+	SourceDir string
+
 	// Color is the deployment color this spec renders ("blue"/"green"), which
 	// scopes the compose project name so both colors can run side by side. It
 	// is set by Apply from on-disk state; an empty value renders the original

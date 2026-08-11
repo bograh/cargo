@@ -52,9 +52,9 @@ INSERT INTO applications (
     org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref,
     registry_creds_enc, exposed_port, healthcheck_path, auto_deploy,
     build_context, dockerfile_path, build_args, mem_limit, cpu_limit, pids_limit,
-    notify_on_success, deploy_strategy
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy
+    notify_on_success, deploy_strategy, compose_path, compose_service
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service
 `
 
 type CreateApplicationParams struct {
@@ -78,6 +78,8 @@ type CreateApplicationParams struct {
 	PidsLimit        pgtype.Int4
 	NotifyOnSuccess  bool
 	DeployStrategy   pgtype.Text
+	ComposePath      string
+	ComposeService   string
 }
 
 func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error) {
@@ -102,6 +104,8 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		arg.PidsLimit,
 		arg.NotifyOnSuccess,
 		arg.DeployStrategy,
+		arg.ComposePath,
+		arg.ComposeService,
 	)
 	var i Application
 	err := row.Scan(
@@ -130,6 +134,8 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.PidsLimit,
 		&i.NotifyOnSuccess,
 		&i.DeployStrategy,
+		&i.ComposePath,
+		&i.ComposeService,
 	)
 	return i, err
 }
@@ -144,7 +150,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy FROM applications WHERE id = $1
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id pgtype.UUID) (Application, error) {
@@ -176,6 +182,8 @@ func (q *Queries) GetApplication(ctx context.Context, id pgtype.UUID) (Applicati
 		&i.PidsLimit,
 		&i.NotifyOnSuccess,
 		&i.DeployStrategy,
+		&i.ComposePath,
+		&i.ComposeService,
 	)
 	return i, err
 }
@@ -279,7 +287,7 @@ func (q *Queries) ListAppMetricsSince(ctx context.Context, arg ListAppMetricsSin
 }
 
 const listApplicationsForOrg = `-- name: ListApplicationsForOrg :many
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy FROM applications WHERE org_id = $1 ORDER BY created_at
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service FROM applications WHERE org_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID) ([]Application, error) {
@@ -317,6 +325,8 @@ func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID)
 			&i.PidsLimit,
 			&i.NotifyOnSuccess,
 			&i.DeployStrategy,
+			&i.ComposePath,
+			&i.ComposeService,
 		); err != nil {
 			return nil, err
 		}
@@ -329,7 +339,7 @@ func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID)
 }
 
 const listGitAppsByBranch = `-- name: ListGitAppsByBranch :many
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy FROM applications WHERE source_type = 'git' AND git_branch = $1
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service FROM applications WHERE source_type = 'git' AND git_branch = $1
 `
 
 func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]Application, error) {
@@ -367,6 +377,8 @@ func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]
 			&i.PidsLimit,
 			&i.NotifyOnSuccess,
 			&i.DeployStrategy,
+			&i.ComposePath,
+			&i.ComposeService,
 		); err != nil {
 			return nil, err
 		}
@@ -393,7 +405,7 @@ func (q *Queries) PurgeAppMetrics(ctx context.Context) (int64, error) {
 const setApplicationDesiredState = `-- name: SetApplicationDesiredState :one
 UPDATE applications SET desired_state = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service
 `
 
 type SetApplicationDesiredStateParams struct {
@@ -430,6 +442,8 @@ func (q *Queries) SetApplicationDesiredState(ctx context.Context, arg SetApplica
 		&i.PidsLimit,
 		&i.NotifyOnSuccess,
 		&i.DeployStrategy,
+		&i.ComposePath,
+		&i.ComposeService,
 	)
 	return i, err
 }
@@ -441,9 +455,9 @@ UPDATE applications SET
     build_context = $9, dockerfile_path = $10, build_args = $11,
     registry_creds_enc = $12, mem_limit = $13, cpu_limit = $14,
     pids_limit = $15, notify_on_success = $16, deploy_strategy = $17,
-    updated_at = now()
+    compose_path = $18, compose_service = $19, updated_at = now()
 WHERE id = $1
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service
 `
 
 type UpdateApplicationParams struct {
@@ -464,6 +478,8 @@ type UpdateApplicationParams struct {
 	PidsLimit        pgtype.Int4
 	NotifyOnSuccess  bool
 	DeployStrategy   pgtype.Text
+	ComposePath      string
+	ComposeService   string
 }
 
 func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationParams) (Application, error) {
@@ -485,6 +501,8 @@ func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationPa
 		arg.PidsLimit,
 		arg.NotifyOnSuccess,
 		arg.DeployStrategy,
+		arg.ComposePath,
+		arg.ComposeService,
 	)
 	var i Application
 	err := row.Scan(
@@ -513,6 +531,8 @@ func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationPa
 		&i.PidsLimit,
 		&i.NotifyOnSuccess,
 		&i.DeployStrategy,
+		&i.ComposePath,
+		&i.ComposeService,
 	)
 	return i, err
 }

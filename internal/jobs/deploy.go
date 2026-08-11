@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/bograh/cargo/internal/apps"
 	"github.com/bograh/cargo/internal/builder"
+	"github.com/bograh/cargo/internal/compose"
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
 	"github.com/bograh/cargo/internal/obs"
@@ -173,6 +175,11 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	}
 
 	imageTag := dep.ImageTag
+	if dep.Trigger == "rollback" && app.SourceType == "compose" {
+		// A compose app has no single retained image to re-apply; rolling back
+		// means redeploying the commit, which the normal path already does.
+		return fmt.Errorf("rollback is not supported for compose-source apps — redeploy the branch instead")
+	}
 	if dep.Trigger == "rollback" {
 		_, _ = fmt.Fprintf(logw, "==> rollback to image %s (no build)\n", imageTag)
 	} else {
@@ -191,6 +198,13 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 				return err
 			}
 			if err := p.Deployments.SetBuildInfo(ctx, dep.ID, "", imageTag); err != nil {
+				return err
+			}
+		case "compose":
+			// No image to build here: the user's compose file describes (and may
+			// itself build) every service. All this step does is put a verified
+			// checkout on disk for the reconciler to apply.
+			if err := p.checkoutCompose(ctx, app, dep, logw); err != nil {
 				return err
 			}
 		default:
@@ -244,6 +258,13 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	if app.DeployStrategy.Valid {
 		strategy = app.DeployStrategy.String
 	}
+	// Blue/green would stand up a second copy of *every* service in the user's
+	// compose file, including databases, each with its own project-scoped
+	// volumes. That is not a hand-off, it is a second stack — so a compose
+	// source always deploys in place.
+	if app.SourceType == "compose" {
+		strategy = "recreate"
+	}
 	if strategy == "bluegreen" {
 		_, _ = fmt.Fprintln(logw, "==> zero-downtime (blue/green) deploy")
 	}
@@ -261,6 +282,11 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		PidsLimit:       pidsLimit,
 		BlueGreen:       strategy == "bluegreen",
 	}
+	if app.SourceType == "compose" {
+		spec.ComposeFile = app.ComposePath
+		spec.ComposeService = app.ComposeService
+		spec.SourceDir = p.composeSourceDir(uuidStr(app.ID))
+	}
 	if err := p.Provider.Apply(ctx, spec, logw); err != nil {
 		return err
 	}
@@ -269,6 +295,60 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	if err := p.Apps.SetDesiredStateRaw(ctx, app.ID, "running"); err != nil {
 		return err
 	}
+	return nil
+}
+
+// composeSourceDir is where a compose-source app's checkout lives. Unlike a
+// build workspace it is kept: compose resolves the user's relative paths and
+// build contexts against it for as long as the app runs.
+func (p *Pipeline) composeSourceDir(appID string) string {
+	return filepath.Join(p.DataDir, "apps", appID, "src")
+}
+
+// checkoutCompose clones the repository, validates the compose file, and leaves
+// the checkout in place for the reconciler. Validation happens here, before
+// anything is applied, so an unsafe file fails the deployment with an
+// actionable message instead of starting containers Cargo cannot contain.
+func (p *Pipeline) checkoutCompose(ctx context.Context, app sqlc.Application, dep sqlc.Deployment, logw io.Writer) error {
+	dir := p.composeSourceDir(uuidStr(app.ID))
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("clear previous checkout: %w", err)
+	}
+	_, _ = fmt.Fprintf(logw, "==> cloning %s (%s)\n", app.GitRepoUrl, app.GitBranch)
+	cloneURL := app.GitRepoUrl
+	if p.CloneAuth != nil {
+		authed, err := p.CloneAuth(ctx, app.OrgID, app.GitRepoUrl)
+		if err != nil {
+			return fmt.Errorf("clone auth: %w", err)
+		}
+		cloneURL = authed
+	}
+	sha, err := p.Clone(ctx, cloneURL, app.GitBranch, dir, logw)
+	if err != nil {
+		return err
+	}
+	if err := p.Deployments.SetBuildInfo(ctx, dep.ID, sha, ""); err != nil {
+		return err
+	}
+
+	path := filepath.Join(dir, app.ComposePath)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("compose file %s not found in the repository", app.ComposePath)
+	}
+	services, err := compose.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(services, app.ComposeService) {
+		return fmt.Errorf("service %q is not defined in %s (found: %s)",
+			app.ComposeService, app.ComposePath, strings.Join(services, ", "))
+	}
+	if err := compose.Validate(raw); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(logw, "==> using %s (services: %s; routing to %q)\n",
+		app.ComposePath, strings.Join(services, ", "), app.ComposeService)
 	return nil
 }
 

@@ -2,7 +2,7 @@
 
 Cargo is a self-hosted Platform-as-a-Service in the spirit of Dokploy and Coolify: a Vercel/Railway-like deployment experience on infrastructure you own. Install it on a single server with one command, then anyone on the team can ship an app from a GitHub repo or a container registry to a running HTTPS URL in a few clicks — no SSH, no YAML, no proxy config.
 
-- Apps deploy from GitHub repos (Dockerfile or Nixpacks auto-detected) or plain registry images
+- Apps deploy from GitHub repos (Dockerfile or Nixpacks auto-detected), plain registry images, or a Docker Compose file in your repo
 - Every app gets `https://<app>.<apps-domain>` with automatic SSL; custom domains supported
 - Live build/deploy logs, encrypted environment variables, one-click rollback
 - Organizations with roles (owner/admin/member/viewer) and shareable invite links

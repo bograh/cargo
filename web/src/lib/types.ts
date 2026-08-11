@@ -31,7 +31,7 @@ export interface App {
   org_id: string;
   name: string;
   slug: string;
-  source_type: "git" | "image";
+  source_type: "git" | "image" | "compose";
   builder: string;
   git_repo_url: string;
   git_branch: string;
@@ -48,6 +48,8 @@ export interface App {
   pids_limit: number | null;
   notify_on_success: boolean;
   deploy_strategy: "bluegreen" | "recreate" | null;
+  compose_path: string;
+  compose_service: string;
   created_at?: unknown;
   updated_at?: unknown;
 }

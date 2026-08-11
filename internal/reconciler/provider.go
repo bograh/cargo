@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/bograh/cargo/internal/compose"
 )
 
 // Docker applies specs as per-app compose projects via the docker CLI.
@@ -86,6 +88,49 @@ func (d *Docker) activeComposePath(appID string) string {
 	return d.composePath(appID, d.activeColor(appID))
 }
 
+// projectRef records how to address a running project after the fact. Cargo's
+// own single-service apps are fully described by their compose path, but a
+// compose-source app needs both files and the name of its web service — and
+// Stop/Start/logs/stats only ever receive an app ID.
+type projectRef struct {
+	Files   []string `json:"files"`
+	Service string   `json:"service"`
+}
+
+func (d *Docker) writeProjectRef(appID, color string, ref projectRef) error {
+	raw, err := json.Marshal(ref)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(d.colorDir(appID, color), "project.json"), raw, 0o644)
+}
+
+// activeProject returns the compose `-f` arguments and web-service name for
+// whichever color is currently serving. Apps deployed before compose sources
+// existed have no project.json, so it falls back to the single-file layout.
+func (d *Docker) activeProject(appID string) ([]string, string, error) {
+	dir := d.colorDir(appID, d.activeColor(appID))
+	if raw, err := os.ReadFile(filepath.Join(dir, "project.json")); err == nil {
+		var ref projectRef
+		if err := json.Unmarshal(raw, &ref); err == nil && len(ref.Files) > 0 {
+			args := make([]string, 0, len(ref.Files)*2)
+			for _, f := range ref.Files {
+				args = append(args, "-f", f)
+			}
+			svc := ref.Service
+			if svc == "" {
+				svc = "app"
+			}
+			return args, svc, nil
+		}
+	}
+	composePath := filepath.Join(dir, "compose.yaml")
+	if _, err := os.Stat(composePath); err != nil {
+		return nil, "", err
+	}
+	return []string{"-f", composePath}, "app", nil
+}
+
 // writeProject renders a color's compose project (env file + compose file) to
 // disk and returns the path of the compose file.
 func (d *Docker) writeProject(spec Spec) (string, error) {
@@ -101,10 +146,63 @@ func (d *Docker) writeProject(spec Spec) (string, error) {
 		return "", err
 	}
 	composePath := filepath.Join(dir, "compose.yaml")
-	if err := os.WriteFile(composePath, []byte(GenerateCompose(spec)), 0o644); err != nil {
+	if spec.ComposeFile != "" {
+		// The user's checkout is the project directory, so their env_file and
+		// relative bind mounts resolve against their own repository.
+		if err := os.WriteFile(filepath.Join(spec.SourceDir, ".env"), []byte(envContent), 0o600); err != nil {
+			return "", err
+		}
+		overlay := compose.GenerateOverlay(compose.OverlaySpec{
+			Slug: spec.Slug, Service: spec.ComposeService, Port: spec.Port,
+			Domains:     spec.Domains,
+			MemoryLimit: spec.MemoryLimit, CPULimit: spec.CPULimit, PidsLimit: spec.PidsLimit,
+		})
+		if err := os.WriteFile(composePath, []byte(overlay), 0o644); err != nil {
+			return "", err
+		}
+	} else if err := os.WriteFile(composePath, []byte(GenerateCompose(spec)), 0o644); err != nil {
+		return "", err
+	}
+	if err := d.writeProjectRef(spec.AppID, spec.Color, projectRef{
+		Files: fileList(spec, composePath), Service: serviceName(spec),
+	}); err != nil {
 		return "", err
 	}
 	return composePath, nil
+}
+
+// fileList is the ordered set of compose files for a project.
+func fileList(spec Spec, composePath string) []string {
+	if spec.ComposeFile == "" {
+		return []string{composePath}
+	}
+	return []string{filepath.Join(spec.SourceDir, spec.ComposeFile), composePath}
+}
+
+// composeArgs builds the `-f` arguments for a project. A compose-source app is
+// applied as the user's own file plus Cargo's overlay: compose merges the two,
+// which lets Cargo add networking, labels, and limits without ever rewriting
+// YAML it does not fully control.
+//
+// Ordering matters twice over: the overlay must come second so its values win,
+// and compose takes the project directory from the *first* file — so the user's
+// file leads and their relative paths resolve inside their own repository.
+func (d *Docker) composeArgs(spec Spec, composePath string) []string {
+	files := fileList(spec, composePath)
+	args := make([]string, 0, len(files)*2)
+	for _, f := range files {
+		args = append(args, "-f", f)
+	}
+	return args
+}
+
+// serviceName is the compose service the health gate, logs, and stats address.
+// Cargo's own file always calls it "app"; a compose source names its own.
+func serviceName(spec Spec) string {
+	if spec.ComposeService != "" {
+		return spec.ComposeService
+	}
+	return "app"
 }
 
 // downColor tears down one color's compose project and removes its directory.
@@ -112,7 +210,19 @@ func (d *Docker) writeProject(spec Spec) (string, error) {
 func (d *Docker) downColor(ctx context.Context, appID, color string, log io.Writer) {
 	composePath := d.composePath(appID, color)
 	if _, err := os.Stat(composePath); err == nil {
-		_ = run(ctx, log, "docker", "compose", "-f", composePath, "down", "--remove-orphans")
+		// A compose-source project must be torn down with the user's file too;
+		// the overlay alone does not describe their services.
+		args := []string{"-f", composePath}
+		if raw, err := os.ReadFile(filepath.Join(d.colorDir(appID, color), "project.json")); err == nil {
+			var ref projectRef
+			if err := json.Unmarshal(raw, &ref); err == nil && len(ref.Files) > 0 {
+				args = args[:0]
+				for _, f := range ref.Files {
+					args = append(args, "-f", f)
+				}
+			}
+		}
+		_ = runCompose(ctx, log, args, "down", "--remove-orphans")
 	}
 	if color != "" {
 		_ = os.RemoveAll(d.colorDir(appID, color))
@@ -131,6 +241,19 @@ func run(ctx context.Context, log io.Writer, name string, args ...string) error 
 		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return nil
+}
+
+// runCompose / outputCompose invoke `docker compose` with a project's `-f`
+// arguments followed by the subcommand. A compose-source app carries two files,
+// so the file set can no longer be a single fixed flag pair.
+func runCompose(ctx context.Context, log io.Writer, files []string, args ...string) error {
+	full := append([]string{"compose"}, files...)
+	return run(ctx, log, "docker", append(full, args...)...)
+}
+
+func outputCompose(ctx context.Context, files []string, args ...string) (string, error) {
+	full := append([]string{"compose"}, files...)
+	return output(ctx, "docker", append(full, args...)...)
 }
 
 func output(ctx context.Context, name string, args ...string) (string, error) {
@@ -163,10 +286,11 @@ func (d *Docker) applyRecreate(ctx context.Context, spec Spec, log io.Writer) er
 		return err
 	}
 	d.ensureNetwork(ctx)
-	if err := run(ctx, log, "docker", "compose", "-f", composePath, "up", "-d", "--remove-orphans"); err != nil {
+	args := d.composeArgs(spec, composePath)
+	if err := runCompose(ctx, log, args, "up", "-d", "--remove-orphans"); err != nil {
 		return err
 	}
-	if err := d.waitHealthy(ctx, composePath, spec, log); err != nil {
+	if err := d.waitHealthy(ctx, args, serviceName(spec), spec, log); err != nil {
 		return err
 	}
 	if prev != "" {
@@ -217,11 +341,12 @@ func (d *Docker) applyBlueGreen(ctx context.Context, spec Spec, log io.Writer) e
 	} else {
 		_, _ = fmt.Fprintf(log, "==> starting %s\n", spec.Color)
 	}
-	if err := run(ctx, log, "docker", "compose", "-f", composePath, "up", "-d", "--remove-orphans"); err != nil {
+	args := d.composeArgs(spec, composePath)
+	if err := runCompose(ctx, log, args, "up", "-d", "--remove-orphans"); err != nil {
 		d.downColor(ctx, spec.AppID, spec.Color, io.Discard)
 		return err
 	}
-	if err := d.waitHealthy(ctx, composePath, spec, log); err != nil {
+	if err := d.waitHealthy(ctx, args, serviceName(spec), spec, log); err != nil {
 		_, _ = fmt.Fprintf(log, "==> %s failed its healthcheck; keeping the current version live\n", spec.Color)
 		// context.WithoutCancel: on a cancelled/timed-out deploy the cleanup
 		// still has to run, or the failed color keeps serving traffic beside
@@ -257,7 +382,7 @@ const stableFor = 10 * time.Second
 // not routable, e.g. Docker Desktop/WSL), the HTTP gate degrades to
 // "container stays running": in production the controlplane shares the
 // cargo-proxy network, so the HTTP gate is real there.
-func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec, log io.Writer) error {
+func (d *Docker) waitHealthy(ctx context.Context, args []string, service string, spec Spec, log io.Writer) error {
 	deadline := time.Now().Add(d.HealthTimeout)
 	client := &http.Client{Timeout: 3 * time.Second}
 	httpCheck := spec.HealthcheckPath != ""
@@ -269,7 +394,7 @@ func (d *Docker) waitHealthy(ctx context.Context, composePath string, spec Spec,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		cid, err := output(ctx, "docker", "compose", "-f", composePath, "ps", "-q", "app")
+		cid, err := outputCompose(ctx, args, "ps", "-q", service)
 		if err != nil || cid == "" {
 			time.Sleep(2 * time.Second)
 			continue
@@ -382,12 +507,13 @@ func (d *Docker) RunningContainers(ctx context.Context) (int, error) {
 // lines. The returned reader is closed — and the underlying process killed —
 // when ctx is cancelled (e.g. the SSE client disconnects) or the caller Closes.
 func (d *Docker) AppLogs(ctx context.Context, appID string, tail int) (io.ReadCloser, error) {
-	composePath := d.activeComposePath(appID)
-	if _, err := os.Stat(composePath); err != nil {
+	args, service, err := d.activeProject(appID)
+	if err != nil {
 		return nil, fmt.Errorf("app is not running")
 	}
-	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composePath,
-		"logs", "--no-color", "--tail", strconv.Itoa(tail), "-f", "app")
+	full := append(append([]string{"compose"}, args...),
+		"logs", "--no-color", "--tail", strconv.Itoa(tail), "-f", service)
+	cmd := exec.CommandContext(ctx, "docker", full...)
 	pr, pw := io.Pipe()
 	cmd.Stdout = pw
 	cmd.Stderr = pw
@@ -403,21 +529,21 @@ func (d *Docker) AppLogs(ctx context.Context, appID string, tail int) (io.ReadCl
 // Start can bring them back. It's a no-op-with-error if the app was never
 // deployed (no compose project exists).
 func (d *Docker) Stop(ctx context.Context, appID string, log io.Writer) error {
-	composePath := d.activeComposePath(appID)
-	if _, err := os.Stat(composePath); err != nil {
+	args, _, err := d.activeProject(appID)
+	if err != nil {
 		return fmt.Errorf("app is not running")
 	}
-	return run(ctx, log, "docker", "compose", "-f", composePath, "stop")
+	return runCompose(ctx, log, args, "stop")
 }
 
 // Start resumes a previously stopped app's containers.
 func (d *Docker) Start(ctx context.Context, appID string, log io.Writer) error {
-	composePath := d.activeComposePath(appID)
-	if _, err := os.Stat(composePath); err != nil {
+	args, _, err := d.activeProject(appID)
+	if err != nil {
 		return fmt.Errorf("app has not been deployed")
 	}
 	d.ensureNetwork(ctx)
-	return run(ctx, log, "docker", "compose", "-f", composePath, "start")
+	return runCompose(ctx, log, args, "start")
 }
 
 // Teardown removes every color's compose project, not just the active one: a
@@ -425,13 +551,10 @@ func (d *Docker) Start(ctx context.Context, appID string, log io.Writer) error {
 // container would keep answering on the app's domain after the app is deleted.
 func (d *Docker) Teardown(ctx context.Context, appID, slug string, log io.Writer) error {
 	for _, color := range []string{"", "blue", "green"} {
-		composePath := d.composePath(appID, color)
-		if _, err := os.Stat(composePath); err != nil {
+		if _, err := os.Stat(d.composePath(appID, color)); err != nil {
 			continue
 		}
-		if err := run(ctx, log, "docker", "compose", "-f", composePath, "down", "--remove-orphans"); err != nil {
-			return err
-		}
+		d.downColor(ctx, appID, color, log)
 	}
 	return os.RemoveAll(d.projectDir(appID))
 }

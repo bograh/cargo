@@ -145,9 +145,16 @@ metrics/logs sample the app's host; install gains a "join a worker host" flow.
 
 Independent, each a small-to-medium own cycle; sequence by demand.
 
-### 13.1 docker-compose app source (8.3) ⬜
+### 13.1 docker-compose app source (8.3) ✅
 Users deploy a repo containing their own compose file; Cargo layers networking/labels/limits
-over it. Last open PRD "Phase 2" item.
+over it. Closes the last open PRD "Phase 2" item.
+- ✅ `source_type = 'compose'` with `compose_path` + `compose_service` (migration 00019); the named service receives the domain and the health gate, every other service runs untouched
+- ✅ Applied as `docker compose -f <user file> -f <generated overlay>` rather than rewriting the user's YAML — compose's own merge rules combine them. The user's file leads so compose takes the project directory (and therefore their relative paths and build contexts) from their repository; the overlay follows so its values win
+- ✅ The overlay names `default` alongside `cargo-proxy`: attaching a service to any network drops compose's implicit default, which would otherwise cut the web service off from its own database
+- ✅ **Validated before anything starts.** An overlay can add but never remove, so a file using `privileged`, `cap_add`, `devices`, `network_mode: host`/`container:`, `pid`/`ipc`/`userns_mode: host`, a host bind mount (notably the Docker socket), or a path escaping the repo is rejected with the offending service and directive named. `ports:` is rejected separately — apps are reached through Traefik and a published port would collide across apps
+- ✅ Always deploys `recreate`: blue/green would stand up a second copy of every service including databases, each with its own project-scoped volumes — a second stack, not a hand-off. Image rollback is refused for the same reason (no single retained image)
+- ✅ Lifecycle ops follow the project: a `project.json` records the file set and web service so stop/start/logs/stats/teardown address a two-file project correctly, falling back to the single-file layout for existing apps
+- ✅ Tests: unit coverage of the validator and overlay, four pipeline tests (success, unsafe file rejected before the provider is called, unknown service, missing file), and a real-Docker test applying a two-service file that asserts both services run, the overlay's labels/cap/env land on the web container only, and teardown removes everything
 
 ### 13.2 Instance & host monitoring (finish 9.3) ✅
 All-apps + whole-server overview (host CPU/mem/disk, container count) reusing the existing

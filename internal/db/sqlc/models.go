@@ -48,6 +48,8 @@ type Application struct {
 	PidsLimit        pgtype.Int4
 	NotifyOnSuccess  bool
 	DeployStrategy   pgtype.Text
+	ComposePath      string
+	ComposeService   string
 }
 
 type AuditLog struct {

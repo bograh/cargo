@@ -50,6 +50,10 @@ type CreateInput struct {
 	NotifyOnSuccess bool
 	// DeployStrategy overrides the instance default; "" means "use the default".
 	DeployStrategy string
+	// Compose source: the file's path in the repo and the service that
+	// receives traffic.
+	ComposePath    string
+	ComposeService string
 }
 
 type UpdateInput struct {
@@ -73,6 +77,8 @@ type UpdateInput struct {
 	// DeployStrategy; nil leaves it unchanged, a non-nil empty string clears
 	// the override back to the instance default (NULL).
 	DeployStrategy *string
+	ComposePath    *string
+	ComposeService *string
 }
 
 // AttachmentCleaner tears down the engine-level credentials for every managed
@@ -141,8 +147,15 @@ func validateCreate(in CreateInput) error {
 		if in.ImageRef == "" {
 			return fmt.Errorf("%w: image source requires image_ref", ErrValidation)
 		}
+	case "compose":
+		if in.GitRepoURL == "" || in.GitBranch == "" {
+			return fmt.Errorf("%w: compose source requires git_repo_url and git_branch", ErrValidation)
+		}
+		if in.ComposeService == "" {
+			return fmt.Errorf("%w: compose source requires compose_service (the service that serves HTTP)", ErrValidation)
+		}
 	default:
-		return fmt.Errorf("%w: source_type must be git or image", ErrValidation)
+		return fmt.Errorf("%w: source_type must be git, image, or compose", ErrValidation)
 	}
 	switch in.Builder {
 	case "", "auto", "dockerfile", "nixpacks":
@@ -189,6 +202,9 @@ func (s *Service) Create(ctx context.Context, orgID, actor pgtype.UUID, in Creat
 	if in.DockerfilePath == "" {
 		in.DockerfilePath = "Dockerfile"
 	}
+	if in.SourceType == "compose" && in.ComposePath == "" {
+		in.ComposePath = "docker-compose.yml"
+	}
 	if in.BuildArgs == nil {
 		in.BuildArgs = map[string]string{}
 	}
@@ -210,6 +226,7 @@ func (s *Service) Create(ctx context.Context, orgID, actor pgtype.UUID, in Creat
 		MemLimit: textOrNull(in.MemLimit), CpuLimit: textOrNull(in.CPULimit),
 		PidsLimit: int4OrNull(in.PidsLimit), NotifyOnSuccess: in.NotifyOnSuccess,
 		DeployStrategy: textOrNull(in.DeployStrategy),
+		ComposePath:    in.ComposePath, ComposeService: in.ComposeService,
 	}
 	app, err := s.q.CreateApplication(ctx, params)
 	var pgErr *pgconn.PgError
@@ -252,6 +269,8 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 	set(&app.HealthcheckPath, in.HealthcheckPath)
 	set(&app.BuildContext, in.BuildContext)
 	set(&app.DockerfilePath, in.DockerfilePath)
+	set(&app.ComposePath, in.ComposePath)
+	set(&app.ComposeService, in.ComposeService)
 	if in.ExposedPort != nil {
 		app.ExposedPort = *in.ExposedPort
 	}
@@ -308,6 +327,7 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 		BuildArgs: app.BuildArgs, RegistryCredsEnc: app.RegistryCredsEnc,
 		MemLimit: app.MemLimit, CpuLimit: app.CpuLimit, PidsLimit: app.PidsLimit,
 		NotifyOnSuccess: app.NotifyOnSuccess, DeployStrategy: app.DeployStrategy,
+		ComposePath: app.ComposePath, ComposeService: app.ComposeService,
 	})
 }
 

@@ -49,3 +49,31 @@ test("git mode shows repo picker when org is connected", async () => {
     "https://github.com/acme/api.git",
   );
 });
+
+test("compose source collects the file path and web service", async () => {
+  const user = userEvent.setup();
+  const calls = mockApi({
+    "GET /auth/me": { status: 200, body: { id: "u1", email: "a@b.co", is_instance_admin: false } },
+    "GET /orgs/o1/github/status": { status: 200, body: { connected: false } },
+    "POST /orgs/o1/apps": { status: 201, body: { id: "a1", org_id: "o1" } },
+  });
+  renderPage(<NewApp />, { path: "/orgs/:orgId/apps/new", route: "/orgs/o1/apps/new" });
+
+  await user.click(await screen.findByRole("button", { name: /compose file/i }));
+
+  await user.type(screen.getByLabelText(/^name$/i), "stack");
+  await user.type(screen.getByLabelText(/repository url/i), "https://github.com/acme/stack.git");
+  await user.type(screen.getByLabelText(/web service/i), "frontend");
+  await user.click(screen.getByRole("button", { name: /create & deploy/i }));
+
+  await waitFor(() => {
+    const post = calls.find((c) => c.method === "POST" && c.path === "/orgs/o1/apps");
+    expect(post).toBeTruthy();
+    const body = post!.body as Record<string, unknown>;
+    expect(body.source_type).toBe("compose");
+    expect(body.compose_service).toBe("frontend");
+    // Defaulted rather than left blank, matching the placeholder.
+    expect(body.compose_path).toBe("docker-compose.yml");
+    expect(body.git_repo_url).toBe("https://github.com/acme/stack.git");
+  });
+});

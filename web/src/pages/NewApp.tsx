@@ -26,7 +26,9 @@ export default function NewApp() {
   const { data: orgData } = useOrg(orgId);
 
   const [name, setName] = useState("");
-  const [sourceType, setSourceType] = useState<"git" | "image">("git");
+  const [sourceType, setSourceType] = useState<"git" | "image" | "compose">("git");
+  const [composePath, setComposePath] = useState("docker-compose.yml");
+  const [composeService, setComposeService] = useState("");
   const [gitRepoURL, setGitRepoURL] = useState("");
   const [gitBranch, setGitBranch] = useState("main");
   const [imageRef, setImageRef] = useState("");
@@ -47,7 +49,7 @@ export default function NewApp() {
   const { data: repos } = useQuery({
     queryKey: ["github-repos", orgId],
     queryFn: () => api<GithubRepo[]>(`/orgs/${orgId}/github/repos`),
-    enabled: connected && sourceType === "git",
+    enabled: connected && sourceType !== "image",
   });
   const { data: branches } = useQuery({
     queryKey: ["github-branches", orgId, selectedRepo],
@@ -77,10 +79,12 @@ export default function NewApp() {
       const app = await post<App>(`/orgs/${orgId}/apps`, {
         name,
         source_type: sourceType,
-        git_repo_url: sourceType === "git" ? gitRepoURL : "",
-        git_branch: sourceType === "git" ? gitBranch : "",
+        git_repo_url: sourceType === "image" ? "" : gitRepoURL,
+        git_branch: sourceType === "image" ? "" : gitBranch,
         image_ref: sourceType === "image" ? imageRef : "",
         builder: sourceType === "git" ? builder : "auto",
+        compose_path: sourceType === "compose" ? composePath : "",
+        compose_service: sourceType === "compose" ? composeService : "",
         exposed_port: port,
         healthcheck_path: healthPath,
         auto_deploy: autoDeploy,
@@ -114,7 +118,7 @@ export default function NewApp() {
           <div>
             <Label>Source</Label>
             <div className="flex rounded-lg border border-border bg-raised p-0.5">
-              {(["git", "image"] as const).map((s) => (
+              {(["git", "image", "compose"] as const).map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -124,12 +128,12 @@ export default function NewApp() {
                     sourceType === s ? "bg-amber-tint text-amber" : "text-muted hover:text-text",
                   )}
                 >
-                  {s === "git" ? "Git repository" : "Container image"}
+                  {s === "git" ? "Git repository" : s === "image" ? "Container image" : "Compose file"}
                 </button>
               ))}
             </div>
           </div>
-          {sourceType === "git" ? (
+          {sourceType !== "image" ? (
             <>
               {connected && (
                 <div>
@@ -179,15 +183,44 @@ export default function NewApp() {
                     <Input id="branch" value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} required />
                   )}
                 </div>
-                <div>
-                  <Label htmlFor="builder">Builder</Label>
-                  <Select id="builder" className="w-full" value={builder} onChange={(e) => setBuilder(e.target.value)}>
-                    <option value="auto">Auto-detect</option>
-                    <option value="dockerfile">Dockerfile</option>
-                    <option value="nixpacks">Nixpacks</option>
-                  </Select>
-                </div>
+                {sourceType === "git" ? (
+                  <div>
+                    <Label htmlFor="builder">Builder</Label>
+                    <Select id="builder" className="w-full" value={builder} onChange={(e) => setBuilder(e.target.value)}>
+                      <option value="auto">Auto-detect</option>
+                      <option value="dockerfile">Dockerfile</option>
+                      <option value="nixpacks">Nixpacks</option>
+                    </Select>
+                  </div>
+                ) : (
+                  <div>
+                    <Label htmlFor="compose-path">Compose file</Label>
+                    <Input
+                      id="compose-path"
+                      value={composePath}
+                      onChange={(e) => setComposePath(e.target.value)}
+                      placeholder="docker-compose.yml"
+                    />
+                  </div>
+                )}
               </div>
+              {sourceType === "compose" && (
+                <div>
+                  <Label htmlFor="compose-service">Web service</Label>
+                  <Input
+                    id="compose-service"
+                    value={composeService}
+                    onChange={(e) => setComposeService(e.target.value)}
+                    placeholder="web"
+                    required
+                  />
+                  <p className="mt-1 text-xs text-muted">
+                    The service in your compose file that serves HTTP. Cargo routes the app's domain to it and
+                    layers networking, limits, and TLS over your file — your other services run untouched.
+                    Remove any <code className="font-mono">ports:</code> blocks; traffic arrives through Traefik.
+                  </p>
+                </div>
+              )}
             </>
           ) : (
             <div>

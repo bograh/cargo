@@ -380,3 +380,95 @@ func TestApplyRecreateRetiresColorProject(t *testing.T) {
 		t.Fatalf("blue project survived the switch to recreate: %v\n%s", err, log.String())
 	}
 }
+
+// End-to-end for the compose app source: a real two-service compose file from a
+// "repository" is applied together with Cargo's overlay, and the overlay's
+// additions land on the running web container without disturbing the other
+// service.
+func TestApplyComposeSource(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs docker")
+	}
+	dataDir := t.TempDir()
+	d := NewDocker(dataDir)
+	d.HealthTimeout = 60 * time.Second
+
+	src := filepath.Join(dataDir, "apps", "cs-1", "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userFile := `services:
+  web:
+    image: nginx:alpine
+  cache:
+    image: redis:7-alpine
+`
+	if err := os.WriteFile(filepath.Join(src, "docker-compose.yml"), []byte(userFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	spec := Spec{
+		AppID: "cs-1", Slug: "cs-test", Port: 80, HealthcheckPath: "/",
+		Domains:     []string{"cs-test.apps.localhost"},
+		Env:         map[string]string{"FROM_CARGO": "yes"},
+		ComposeFile: "docker-compose.yml", ComposeService: "web",
+		SourceDir:   src,
+		MemoryLimit: "256m",
+	}
+	ctx := context.Background()
+	var log bytes.Buffer
+	t.Cleanup(func() { _ = d.Teardown(ctx, spec.AppID, spec.Slug, &log) })
+
+	if err := d.Apply(ctx, spec, &log); err != nil {
+		t.Fatalf("apply: %v\n%s", err, log.String())
+	}
+
+	args, service, err := d.activeProject(spec.AppID)
+	if err != nil {
+		t.Fatalf("activeProject: %v", err)
+	}
+	if service != "web" {
+		t.Fatalf("service = %q, want web", service)
+	}
+
+	// Both of the user's services run...
+	for _, svc := range []string{"web", "cache"} {
+		cid, err := outputCompose(ctx, args, "ps", "-q", svc)
+		if err != nil || cid == "" {
+			t.Fatalf("service %q not running (err=%v)\n%s", svc, err, log.String())
+		}
+	}
+
+	// ...and Cargo's overlay reached the web container: Traefik labels, the
+	// memory cap, and the app's environment.
+	webID, _ := outputCompose(ctx, args, "ps", "-q", "web")
+	labels, _ := output(ctx, "docker", "inspect", "-f",
+		"{{index .Config.Labels \"traefik.http.routers.app-cs-test.rule\"}}", webID)
+	if !strings.Contains(labels, "cs-test.apps.localhost") {
+		t.Fatalf("traefik label missing from the web container: %q\n%s", labels, log.String())
+	}
+	mem, _ := output(ctx, "docker", "inspect", "-f", "{{.HostConfig.Memory}}", webID)
+	if mem != "268435456" {
+		t.Fatalf("mem_limit = %s, want 268435456 (256m)", mem)
+	}
+	env, _ := output(ctx, "docker", "inspect", "-f", "{{json .Config.Env}}", webID)
+	if !strings.Contains(env, "FROM_CARGO=yes") {
+		t.Fatalf("cargo env not injected: %s", env)
+	}
+
+	// The overlay must not have capped or relabelled the user's other service.
+	cacheID, _ := outputCompose(ctx, args, "ps", "-q", "cache")
+	cacheMem, _ := output(ctx, "docker", "inspect", "-f", "{{.HostConfig.Memory}}", cacheID)
+	if cacheMem != "0" {
+		t.Fatalf("overlay capped a service it should not have touched: %s", cacheMem)
+	}
+
+	// Teardown removes every service, not just the one Cargo routes to.
+	if err := d.Teardown(ctx, spec.AppID, spec.Slug, &log); err != nil {
+		t.Fatalf("teardown: %v\n%s", err, log.String())
+	}
+	remaining, _ := output(ctx, "docker", "ps", "-aq", "--filter", "label=com.docker.compose.project=cargo-app-cs-test")
+	if strings.TrimSpace(remaining) != "" {
+		t.Fatalf("containers survived teardown: %q", remaining)
+	}
+}
