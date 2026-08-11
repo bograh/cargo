@@ -363,6 +363,20 @@ func firstIP(networksJSON string) string {
 	return ""
 }
 
+// RunningContainers counts every running container on the host — tenant apps,
+// managed databases, and the platform's own three. Feeds the instance-wide
+// monitoring view.
+func (d *Docker) RunningContainers(ctx context.Context) (int, error) {
+	out, err := output(ctx, "docker", "ps", "-q")
+	if err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return 0, nil
+	}
+	return len(strings.Split(strings.TrimSpace(out), "\n")), nil
+}
+
 // AppLogs streams the running app container's stdout+stderr (application and
 // request logs) via `docker compose logs -f`, starting with the last `tail`
 // lines. The returned reader is closed — and the underlying process killed —

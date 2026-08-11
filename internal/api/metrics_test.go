@@ -12,7 +12,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type stubMetrics struct{ rows []sqlc.AppMetric }
+type stubMetrics struct {
+	rows     []sqlc.AppMetric
+	host     []sqlc.HostMetric
+	perApp   []sqlc.ListLatestAppMetricsRow
+	hostLast sqlc.HostMetric
+}
+
+func (s stubMetrics) ListHostSince(_ context.Context, _ time.Time) ([]sqlc.HostMetric, error) {
+	return s.host, nil
+}
+func (s stubMetrics) LatestHost(_ context.Context) (sqlc.HostMetric, error) {
+	return s.hostLast, nil
+}
+func (s stubMetrics) LatestPerApp(_ context.Context) ([]sqlc.ListLatestAppMetricsRow, error) {
+	return s.perApp, nil
+}
 
 func (s stubMetrics) ListSince(_ context.Context, _ pgtype.UUID, _ time.Time) ([]sqlc.AppMetric, error) {
 	return s.rows, nil

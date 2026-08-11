@@ -97,6 +97,32 @@ export interface Snapshot {
   created_at: string;
 }
 
+export interface HostMetric {
+  ts: string;
+  cpu_pct: number;
+  mem_used_bytes: number;
+  mem_total_bytes: number;
+  disk_free_bytes: number;
+  disk_total_bytes: number;
+  containers: number;
+  running_apps: number;
+}
+
+export interface AppMetricSummary {
+  app_id: string;
+  org_id: string;
+  name: string;
+  slug: string;
+  desired_state: "running" | "stopped";
+  ts: string;
+  cpu_pct: number;
+  mem_bytes: number;
+  mem_limit_bytes: number;
+  req_rate: number;
+  err_rate: number;
+  p95_ms: number;
+}
+
 export interface AppMetric {
   ts: string;
   cpu_pct: number;

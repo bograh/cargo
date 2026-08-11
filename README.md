@@ -80,6 +80,7 @@ Cargo runs several background safeguards, all configurable via env vars in `depl
 - **Disk guardrail** — a periodic check warns/alerts below `CARGO_DISK_MIN_FREE_PCT` (10%) free and reclaims dangling images below 5%; shown as a gauge in the admin area.
 - **Alerts** — configure a Slack/Discord-compatible incoming webhook under **Admin → Alerts webhook** to be notified of deploy failures, low disk, and backup failures (plus per-app opt-in success notifications). Email is also sent when SMTP is configured.
 - **Health & observability** — `GET /readyz` reports readiness (Postgres + Docker); a Prometheus endpoint is served on an internal-only listener (`CARGO_METRICS_ADDR`, `:9090`) exposing deploy, queue, and DB-pool metrics.
+- **Instance monitoring** — the admin area charts whole-server CPU, memory, disk, and container count on the same 15s tick as app metrics, plus an all-apps table spanning every organization.
 - **Master-key rotation** — if `CARGO_MASTER_KEY` leaks, `cargod rotate-key` re-seals every stored secret (env vars, registry credentials, database passwords, SMTP/GitHub/OIDC/webhook settings) under a new key in one transaction; `cargod gen-key` produces one. Stop the control plane, rotate, update `.env`, start. See [Operations](https://usecargo.vercel.app/docs/operations/).
 - **Audit log** — every state-changing action is recorded (who/what/when), viewable under **Admin → Audit log** and per-org; retained `CARGO_AUDIT_RETENTION_DAYS` (180) days.
 

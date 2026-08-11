@@ -21,7 +21,7 @@ Verified against the code, not just the plan docs. Full detail in [PhasedPlans.m
 | Foundation, auth/orgs/invites, deployment core, GitHub, domains/SSL, frontend, install | 0–7 (v1) | ✅ |
 | Managed databases (PG/Redis/MySQL/Mongo) | 8.1 | ✅ |
 | OIDC login | 8.2 | ✅ |
-| App metrics (docker stats + Traefik Prometheus, live charts + 48h history) | 9.3 | ◑ app-level only |
+| App metrics (docker stats + Traefik Prometheus, live charts + 48h history) | 9.3 | ✅ app + host (13.2) |
 | Web UI redesign · app stop/start · deployment supersede | extra | ✅ |
 
 **Still open from the original roadmap:** docker-compose app source (8.3), multi-server
@@ -149,9 +149,14 @@ Independent, each a small-to-medium own cycle; sequence by demand.
 Users deploy a repo containing their own compose file; Cargo layers networking/labels/limits
 over it. Last open PRD "Phase 2" item.
 
-### 13.2 Instance & host monitoring (finish 9.3) ⬜
+### 13.2 Instance & host monitoring (finish 9.3) ✅
 All-apps + whole-server overview (host CPU/mem/disk, container count) reusing the existing
 collector and chart components; complements 10.7's self-metrics.
+- ✅ `host_metrics` (migration 00018) sampled on the existing 15s collector tick, 48h retention via the same housekeeping job as `app_metrics`
+- ✅ Host CPU from `/proc/stat` (delta between ticks), memory from `/proc/meminfo` via `MemAvailable` (not `MemFree` — page cache is reclaimable and would read as "full"), disk via `statfs`, containers via `docker ps`. Docker does not namespace `/proc/stat` or `/proc/meminfo`, so a containerised controlplane genuinely reads the host; verified against `free` (8.4/15.4 GiB exact match)
+- ✅ Each source degrades independently — an unavailable Docker socket zeroes the container count without costing the CPU/memory/disk series
+- ✅ `GET /admin/host/metrics` (+ SSE stream) and `GET /admin/apps/metrics`, instance-admin only; the all-apps view is the one place that deliberately crosses org boundaries, so it is not exposed org-scoped (FR-2.4)
+- ✅ Admin UI: Server tiles (live SSE + 24h history, reusing `Sparkline`) and an All-applications table linking through to each app, error rate >5% badged
 
 ### 13.3 Master-key rotation ✅
 `cargod rotate-key` re-seals all secrets under a new key, bumping the existing `key_version`

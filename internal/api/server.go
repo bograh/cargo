@@ -134,6 +134,10 @@ func (s *Server) WireNotify(n NotifyService) { s.notify = n }
 type MetricStore interface {
 	ListSince(ctx context.Context, appID pgtype.UUID, since time.Time) ([]sqlc.AppMetric, error)
 	Latest(ctx context.Context, appID pgtype.UUID) (sqlc.AppMetric, error)
+	// Instance-wide views, admin-only at the route level.
+	ListHostSince(ctx context.Context, since time.Time) ([]sqlc.HostMetric, error)
+	LatestHost(ctx context.Context) (sqlc.HostMetric, error)
+	LatestPerApp(ctx context.Context) ([]sqlc.ListLatestAppMetricsRow, error)
 }
 
 // DatabaseService is satisfied by *databases.Service.

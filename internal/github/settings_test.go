@@ -18,7 +18,7 @@ func TestAppConfigRoundTripEncrypted(t *testing.T) {
 	ctx := context.Background()
 	ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
 		tcpostgres.WithDatabase("cargo"), tcpostgres.WithUsername("cargo"), tcpostgres.WithPassword("cargo"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")))
+		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2)))
 	if err != nil {
 		t.Fatal(err)
 	}

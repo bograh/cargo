@@ -133,6 +133,17 @@ type GithubInstallation struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type HostMetric struct {
+	CreatedAt      pgtype.Timestamptz
+	CpuPct         float64
+	MemUsedBytes   int64
+	MemTotalBytes  int64
+	DiskFreeBytes  int64
+	DiskTotalBytes int64
+	Containers     int32
+	RunningApps    int32
+}
+
 type InstanceSetting struct {
 	Key       string
 	Value     []byte

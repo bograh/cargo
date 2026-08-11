@@ -37,21 +37,21 @@ type Config struct {
 
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		HTTPAddr:           ":8080",
-		DatabaseURL:        getenv("CARGO_DATABASE_URL"),
-		DataDir:            "/var/lib/cargo",
-		Env:                "development",
-		DefaultMemLimit:    "512m",
-		DefaultCPULimit:    "1",
-		DefaultPidsLimit:   512,
+		HTTPAddr:         ":8080",
+		DatabaseURL:      getenv("CARGO_DATABASE_URL"),
+		DataDir:          "/var/lib/cargo",
+		Env:              "development",
+		DefaultMemLimit:  "512m",
+		DefaultCPULimit:  "1",
+		DefaultPidsLimit: 512,
 
 		DefaultDeployStrategy: "bluegreen",
-		PlatformBackupKeep: 14,
-		PlatformDBService:  "db",
-		DiskMinFreePct:     10,
-		APIRateLimitRPS:    20,
-		MetricsAddr:        ":9090",
-		AuditRetentionDays: 180,
+		PlatformBackupKeep:    14,
+		PlatformDBService:     "db",
+		DiskMinFreePct:        10,
+		APIRateLimitRPS:       20,
+		MetricsAddr:           ":9090",
+		AuditRetentionDays:    180,
 	}
 	if v := getenv("CARGO_HTTP_ADDR"); v != "" {
 		cfg.HTTPAddr = v

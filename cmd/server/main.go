@@ -117,7 +117,8 @@ func main() {
 		DefaultDeployStrategy: cfg.DefaultDeployStrategy,
 	}
 	traefikURL := getenvDefault("CARGO_TRAEFIK_METRICS_URL", "http://traefik:8082/metrics")
-	collector := metrics.NewCollector(pool, hub, provider, traefikURL)
+	collector := metrics.NewCollector(pool, hub, provider, traefikURL).
+		WithHost(metrics.NewHostCollector(cfg.DataDir, provider))
 	backuper := &jobs.PlatformBackuper{
 		DataDir:     cfg.DataDir,
 		DatabaseURL: cfg.DatabaseURL,

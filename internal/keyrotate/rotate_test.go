@@ -33,7 +33,12 @@ func testPool(t *testing.T) *pgxpool.Pool {
 			tcpostgres.WithDatabase("cargo"),
 			tcpostgres.WithUsername("cargo"),
 			tcpostgres.WithPassword("cargo"),
-			testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+			// The postgres image starts a temporary server for initdb and then
+			// restarts it, so "the port is open" is not "the database is up" --
+			// waiting on the port raced that restart and failed migrations with
+			// connection resets. The readiness line appears twice: once for the
+			// init server, once for the real one.
+			testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2)),
 		)
 		if err != nil {
 			sharedErr = err
@@ -354,15 +359,14 @@ func TestRotateSkipsLegacyCorruptWebhook(t *testing.T) {
 	f := seed(t, oldBox)
 	ctx := context.Background()
 
-	// Reproduce the old encoding: raw sealed bytes stuffed into a JSON string.
-	sealed, err := oldBox.Seal([]byte("https://hooks.slack.com/services/T/B/X"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	corrupt, err := json.Marshal(map[string]string{"enc": string(sealed)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// A row as the old encoding left it. Raw sealed bytes were written into a
+	// JSON string, so what landed in the column is mangled: encoding/json
+	// replaced the invalid UTF-8 with the replacement character. (Ciphertext
+	// containing a NUL byte could not be stored at all -- Postgres rejects a
+	// \\u0000 escape in jsonb -- so the rows that do exist in the wild are
+	// exactly the mangled ones modelled here.) The result is not valid base64
+	// and decrypts under no key.
+	corrupt := []byte(`{"enc": "\ufffd\ufffdnot-base64\ufffd"}`)
 	if _, err := f.pool.Exec(ctx,
 		`INSERT INTO instance_settings (key, value) VALUES ('notify_webhook', $1)`, corrupt); err != nil {
 		t.Fatal(err)

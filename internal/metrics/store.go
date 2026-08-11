@@ -26,3 +26,19 @@ func (s *Store) ListSince(ctx context.Context, appID pgtype.UUID, since time.Tim
 func (s *Store) Latest(ctx context.Context, appID pgtype.UUID) (sqlc.AppMetric, error) {
 	return s.q.LatestAppMetric(ctx, appID)
 }
+
+// ListHostSince returns whole-server samples recorded since the given time.
+func (s *Store) ListHostSince(ctx context.Context, since time.Time) ([]sqlc.HostMetric, error) {
+	return s.q.ListHostMetricsSince(ctx, pgtype.Timestamptz{Time: since, Valid: true})
+}
+
+// LatestHost returns the most recent whole-server sample.
+func (s *Store) LatestHost(ctx context.Context) (sqlc.HostMetric, error) {
+	return s.q.LatestHostMetric(ctx)
+}
+
+// LatestPerApp returns the newest sample for every app that has one, for the
+// all-apps overview.
+func (s *Store) LatestPerApp(ctx context.Context) ([]sqlc.ListLatestAppMetricsRow, error) {
+	return s.q.ListLatestAppMetrics(ctx)
+}

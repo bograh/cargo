@@ -21,7 +21,12 @@ func startPool(t *testing.T) *pgxpool.Pool {
 		tcpostgres.WithDatabase("cargo"),
 		tcpostgres.WithUsername("cargo"),
 		tcpostgres.WithPassword("cargo"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+		// The postgres image starts a temporary server for initdb and then
+		// restarts it, so "the port is open" is not "the database is up" --
+		// waiting on the port raced that restart and failed migrations with
+		// connection resets. The readiness line appears twice: once for the
+		// init server, once for the real one.
+		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2)),
 	)
 	if err != nil {
 		t.Fatalf("start postgres: %v", err)

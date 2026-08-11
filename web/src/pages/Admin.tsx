@@ -5,6 +5,7 @@ import { api, del, post, put } from "../lib/api";
 import { useAuth } from "../auth";
 import type { User } from "../lib/types";
 import { Badge, Button, Card, FieldError, Icon, Input, Label, PageHeader, Spinner, Textarea, useToast } from "../components/ui";
+import { AllAppsMonitor, HostMonitor } from "../components/HostMonitor";
 
 function SectionHeading({ eyebrow, title, aside }: { eyebrow: string; title: string; aside?: ReactNode }) {
   return (
@@ -672,6 +673,8 @@ export default function Admin() {
   return (
     <div className="space-y-6">
       <PageHeader eyebrow="instance" title="Admin" />
+      <HostMonitor />
+      <AllAppsMonitor />
       <InstanceSettingsCard />
       <GithubAppForm />
       <OIDCForm />

@@ -16,7 +16,7 @@ func startPostgres(t *testing.T) string {
 		tcpostgres.WithDatabase("cargo"),
 		tcpostgres.WithUsername("cargo"),
 		tcpostgres.WithPassword("cargo"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2)),
 	)
 	if err != nil {
 		t.Fatalf("start postgres: %v", err)
