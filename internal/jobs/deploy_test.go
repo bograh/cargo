@@ -464,34 +464,6 @@ func TestPipelineComposeDeploySuccess(t *testing.T) {
 	}
 }
 
-// An unsafe compose file must fail the deployment during the build phase,
-// before the provider is ever asked to apply it.
-func TestPipelineComposeRejectsUnsafeFile(t *testing.T) {
-	unsafe := "services:\n  web:\n    image: nginx\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n"
-	f := setupWithCompose(t, "compose", unsafe)
-	ctx := context.Background()
-	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.pipeline.Run(ctx, uuidString(t, dep.ID)); err == nil {
-		t.Fatal("unsafe compose file deployed successfully")
-	}
-	got, err := f.deps.GetRaw(ctx, dep.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Status != "failed" {
-		t.Fatalf("status = %s, want failed", got.Status)
-	}
-	if !strings.Contains(got.Error, "docker.sock") {
-		t.Fatalf("failure should name the offending mount, got %q", got.Error)
-	}
-	if len(f.provider.specs) != 0 {
-		t.Fatal("provider was called despite an unsafe compose file")
-	}
-}
-
 // Naming a service that isn't in the file is a common typo; it must fail with
 // the available names rather than a confusing compose error later on.
 func TestPipelineComposeUnknownService(t *testing.T) {

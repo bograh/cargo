@@ -1,11 +1,13 @@
 package reconciler
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Each case below is a confirmed bypass of validating the compose file as
@@ -167,5 +169,46 @@ func TestValidateComposeSourceSurfacesComposeError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "missing.yml") {
 		t.Fatalf("error should surface compose's own message, got: %v", err)
+	}
+}
+
+// The safety gate lives in Apply, not in the deploy pipeline, so this is the
+// test that matters: an unsafe file must fail the apply and leave nothing
+// running. It also pins the gate to Apply rather than to one strategy branch.
+func TestApplyComposeSourceRefusesUnsafeFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs docker")
+	}
+	src := t.TempDir()
+	unsafe := "services:\n  web:\n    image: nginx:alpine\n" +
+		"    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n"
+	if err := os.WriteFile(filepath.Join(src, "docker-compose.yml"), []byte(unsafe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dataDir := t.TempDir()
+	d := NewDocker(dataDir)
+	d.HealthTimeout = 30 * time.Second
+	spec := Spec{
+		AppID: "cs-unsafe", Slug: "cs-unsafe", Port: 80,
+		Domains:     []string{"cs-unsafe.apps.localhost"},
+		ComposeFile: "docker-compose.yml", ComposeService: "web", SourceDir: src,
+	}
+	ctx := context.Background()
+	var log bytes.Buffer
+	t.Cleanup(func() { _ = d.Teardown(ctx, spec.AppID, spec.Slug, &log) })
+
+	err := d.Apply(ctx, spec, &log)
+	if err == nil {
+		t.Fatalf("apply accepted a docker-socket mount\n%s", log.String())
+	}
+	if !strings.Contains(err.Error(), "docker.sock") {
+		t.Fatalf("error should name the offending mount, got: %v", err)
+	}
+	// Nothing may have been started: the gate runs before `up`.
+	running, _ := output(ctx, "docker", "ps", "-aq",
+		"--filter", "label=com.docker.compose.project=cargo-app-cs-unsafe")
+	if strings.TrimSpace(running) != "" {
+		t.Fatalf("containers were started despite validation failing: %q", running)
 	}
 }
