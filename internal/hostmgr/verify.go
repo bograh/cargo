@@ -13,6 +13,7 @@ import (
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/hosts"
 	"github.com/bograh/cargo/internal/reconciler"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -44,6 +45,7 @@ type Manager struct {
 	mat     *Materializer
 	hostSvc *hosts.Service
 	run     runFunc
+	pool    *pgxpool.Pool
 }
 
 func NewManager(dataDir string, hostSvc *hosts.Service) *Manager {
