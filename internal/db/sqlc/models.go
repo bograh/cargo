@@ -50,6 +50,8 @@ type Application struct {
 	DeployStrategy   pgtype.Text
 	ComposePath      string
 	ComposeService   string
+	HostID           pgtype.UUID
+	ActiveColor      pgtype.Text
 }
 
 type AuditLog struct {
@@ -109,6 +111,7 @@ type Deployment struct {
 	CreatedAt  pgtype.Timestamptz
 	StartedAt  pgtype.Timestamptz
 	FinishedAt pgtype.Timestamptz
+	HostID     pgtype.UUID
 }
 
 type Domain struct {
@@ -133,6 +136,23 @@ type GithubInstallation struct {
 	InstallationID int64
 	AccountLogin   string
 	CreatedAt      pgtype.Timestamptz
+}
+
+type Host struct {
+	ID                 pgtype.UUID
+	Name               string
+	Address            string
+	Port               int32
+	PrivateKeyEnc      []byte
+	KeyVersion         int32
+	HostKeyFingerprint pgtype.Text
+	Status             string
+	EngineVersion      pgtype.Text
+	CpuCount           pgtype.Int4
+	MemTotalMb         pgtype.Int8
+	AppsDomainSuffix   string
+	LetsencryptEmail   string
+	CreatedAt          pgtype.Timestamptz
 }
 
 type HostMetric struct {
