@@ -40,6 +40,37 @@ if [[ -f .env && $FORCE -ne 1 ]]; then
   fail ".env already exists — this looks like an existing install. Re-run with --force to overwrite (this changes secrets!)"
 fi
 
+# --- reverse-proxy coexistence detection ---------------------------------
+# A server already running nginx/Traefik/Apache owns ports 80/443; Cargo's
+# bundled Traefik must not fight it for them. In external-proxy mode Cargo
+# binds loopback-only ports and the existing proxy forwards traffic.
+port_busy() { # port_busy PORT — 0 if something is listening on PORT
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH 2>/dev/null | awk '{print $4}' | grep -E "[:.]${port}\$" >/dev/null 2>&1
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | awk '{print $4}' | grep -E "[:.]${port}\$" >/dev/null 2>&1
+  else
+    return 1 # no tooling: assume free rather than block the install
+  fi
+}
+
+EXTERNAL_PROXY="${CARGO_PROXY_MODE:-}"
+if [[ -z $EXTERNAL_PROXY ]]; then
+  if port_busy 80 || port_busy 443; then
+    say "ports 80/443 are already in use on this host (existing nginx/Traefik/Apache?)"
+    if [[ ! -t 0 ]]; then
+      fail "ports 80/443 are in use. Re-run with CARGO_PROXY_MODE=external to run behind your existing reverse proxy."
+    fi
+    read -r -p "Run Cargo behind your existing reverse proxy instead of binding 80/443? [Y/n]: " reply
+    [[ $reply =~ ^[Nn] ]] && fail "free ports 80/443 (or accept external-proxy mode) and rerun the installer."
+    EXTERNAL_PROXY=external
+  fi
+fi
+
+EXTERNAL_HTTP_PORT="${CARGO_EXTERNAL_HTTP_PORT:-8080}"
+EXTERNAL_HTTPS_PORT="${CARGO_EXTERNAL_HTTPS_PORT:-8443}"
+
 # --- prompts ------------------------------------------------------------
 ask() { # ask VAR "prompt" [default]
   local var="$1" prompt="$2" default="${3:-}" current
@@ -113,6 +144,15 @@ EOF
 chmod 600 .env
 say "wrote .env (mode 0600)"
 
+if [[ $EXTERNAL_PROXY == external ]]; then
+  cat >> .env <<EOF
+# Existing reverse proxy on 80/443: Cargo's Traefik binds loopback only.
+CARGO_HTTP_PUBLISH=127.0.0.1:${EXTERNAL_HTTP_PORT}
+CARGO_HTTPS_PUBLISH=127.0.0.1:${EXTERNAL_HTTPS_PORT}
+EOF
+  say "external-proxy mode: Cargo's Traefik will bind 127.0.0.1:${EXTERNAL_HTTP_PORT} (HTTP) and 127.0.0.1:${EXTERNAL_HTTPS_PORT} (HTTPS)"
+fi
+
 cat <<'EOF'
 
   ┌─────────────────────────────────────────────────────────────────┐
@@ -153,4 +193,20 @@ if [[ $MODE == local ]]; then
   say "apps will be served at https://<name>.${CARGO_APPS_SUFFIX} with a self-signed certificate (accept the browser warning)"
 else
   say "done. Open https://${CARGO_PLATFORM_DOMAIN} and register — the first account becomes the instance admin."
+fi
+
+if [[ $EXTERNAL_PROXY == external ]]; then
+  cat <<EOF
+
+  Your existing reverse proxy must now forward traffic to Cargo:
+    HTTP  → 127.0.0.1:${EXTERNAL_HTTP_PORT}
+    HTTPS → 127.0.0.1:${EXTERNAL_HTTPS_PORT}
+
+  Routes needed: ${CARGO_PLATFORM_DOMAIN} and *.${CARGO_APPS_SUFFIX}
+  Ready-made configs: $(pwd)/examples/nginx-cargo.conf and
+                      $(pwd)/examples/traefik-cargo-dynamic.yml
+  Tip: TLS passthrough on 443 lets Cargo keep managing its own Let's
+  Encrypt certificates; or terminate TLS at your proxy and forward to
+  ${EXTERNAL_HTTP_PORT}.
+EOF
 fi

@@ -3,7 +3,7 @@
 ## Prerequisites (FR-8.2)
 
 - A Linux host with Docker Engine + the compose plugin
-- Ports 80 and 443 open
+- Ports 80 and 443 open (or an existing reverse proxy you'll put in front — see below)
 - For a production (domain) install, DNS records pointing at the host:
   - `cargo.yourdomain.com` → server IP (platform UI)
   - `*.apps.yourdomain.com` → server IP (wildcard for app subdomains)
@@ -54,6 +54,29 @@ First registered account becomes the instance admin.
   and set `CARGO_DNS_PROVIDER` (a [Traefik DNS provider name](https://doc.traefik.io/traefik/https/acme/#providers),
   e.g. `cloudflare`) plus the provider's credential env vars in `.env`
   (e.g. `CF_DNS_API_TOKEN`). One certificate covers `*.apps.yourdomain.com`.
+
+### Running behind an existing reverse proxy (nginx / Traefik / Apache)
+
+If the host already runs a reverse proxy on 80/443, Cargo's bundled Traefik
+must not fight it for those ports. The installer detects busy ports and offers
+**external-proxy mode**: Cargo's Traefik then binds loopback-only ports
+(`127.0.0.1:8080` HTTP, `127.0.0.1:8443` HTTPS — tunable with
+`CARGO_EXTERNAL_HTTP_PORT` / `CARGO_EXTERNAL_HTTPS_PORT`), and your existing
+proxy forwards traffic for `cargo.example.com` and `*.apps.example.com` to it.
+You can also opt in non-interactively with `CARGO_PROXY_MODE=external`.
+
+Ready-made forwarding configs live in [`examples/`](examples/):
+[`nginx-cargo.conf`](examples/nginx-cargo.conf) and
+[`traefik-cargo-dynamic.yml`](examples/traefik-cargo-dynamic.yml).
+TLS passthrough on 443 is recommended so Cargo keeps managing its own Let's
+Encrypt certificates; terminating TLS at your own proxy works too.
+
+Manual equivalent: set in `.env`
+
+```bash
+CARGO_HTTP_PUBLISH=127.0.0.1:8080
+CARGO_HTTPS_PUBLISH=127.0.0.1:8443
+```
 
 Custom domains always use HTTP-01 once their DNS points at the server.
 

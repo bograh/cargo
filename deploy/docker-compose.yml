@@ -32,8 +32,12 @@ services:
     image: traefik:v3.6
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      # Overridable so Cargo can run behind an existing host reverse proxy
+      # (nginx/Traefik already on 80/443): set CARGO_HTTP_PUBLISH /
+      # CARGO_HTTPS_PUBLISH in .env, e.g. 127.0.0.1:8080 / 127.0.0.1:8443,
+      # and forward traffic from your proxy (see examples/).
+      - "${CARGO_HTTP_PUBLISH:-80}:80"
+      - "${CARGO_HTTPS_PUBLISH:-443}:443"
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
