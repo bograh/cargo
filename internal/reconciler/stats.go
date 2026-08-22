@@ -100,11 +100,11 @@ func (d *Docker) AppStats(ctx context.Context, appID string) (ContainerStats, bo
 	if err != nil {
 		return ContainerStats{}, false, nil
 	}
-	cid, err := outputCompose(ctx, args, "ps", "-q", service)
+	cid, err := d.outputCompose(ctx, args, "ps", "-q", service)
 	if err != nil || cid == "" {
 		return ContainerStats{}, false, nil
 	}
-	out, err := output(ctx, "docker", "stats", "--no-stream", "--format", "{{json .}}", cid)
+	out, err := d.output(ctx, "docker", "stats", "--no-stream", "--format", "{{json .}}", cid)
 	if err != nil {
 		return ContainerStats{}, false, fmt.Errorf("docker stats: %w", err)
 	}

@@ -19,14 +19,46 @@ import (
 )
 
 // Docker applies specs as per-app compose projects via the docker CLI.
+// A nil target means the control plane's own daemon; a non-nil target (set
+// via ForHost) redirects every invocation to a worker host through its
+// materialized docker context.
 type Docker struct {
 	dataDir string
+	target  *Target
 	// HealthTimeout bounds the post-apply health gate (default 2 min).
 	HealthTimeout time.Duration
 }
 
 func NewDocker(dataDir string) *Docker {
 	return &Docker{dataDir: dataDir, HealthTimeout: 2 * time.Minute}
+}
+
+// ForHost returns a view of this provider bound to one worker host. The
+// receiver is left untouched; data dir and timeouts are shared.
+func (d *Docker) ForHost(t Target) *Docker {
+	tt := t
+	return &Docker{dataDir: d.dataDir, target: &tt, HealthTimeout: d.HealthTimeout}
+}
+
+// buildCmd is the single point where target routing happens: every docker
+// exec in this package flows through it. Local invocations inherit the
+// process env exactly as they always did; host invocations carry the
+// per-host DOCKER_CONFIG / HOME / DOCKER_CONTEXT on top of it.
+func (d *Docker) buildCmd(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	if d.target != nil {
+		cmd.Env = append(os.Environ(), d.target.Env...)
+	}
+	return cmd
+}
+
+func (d *Docker) run(ctx context.Context, log io.Writer, name string, args ...string) error {
+	cmd := d.buildCmd(ctx, name, args...)
+	cmd.Stdout, cmd.Stderr = log, log
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return nil
 }
 
 func (d *Docker) projectDir(appID string) string {
@@ -222,7 +254,7 @@ func (d *Docker) downColor(ctx context.Context, appID, color string, log io.Writ
 				}
 			}
 		}
-		_ = runCompose(ctx, log, args, "down", "--remove-orphans")
+		_ = d.runCompose(ctx, log, args, "down", "--remove-orphans")
 	}
 	if color != "" {
 		_ = os.RemoveAll(d.colorDir(appID, color))
@@ -261,10 +293,30 @@ func output(ctx context.Context, name string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// Target-aware twins of the package helpers above. Production code paths
+// (apply, teardown, stop/start, logs/stats) use these so a host-bound
+// provider reaches the right daemon; the package functions stay for tests
+// that drive the local docker directly.
+
+func (d *Docker) output(ctx context.Context, name string, args ...string) (string, error) {
+	out, err := d.buildCmd(ctx, name, args...).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func (d *Docker) runCompose(ctx context.Context, log io.Writer, files []string, args ...string) error {
+	full := append([]string{"compose"}, files...)
+	return d.run(ctx, log, "docker", append(full, args...)...)
+}
+
+func (d *Docker) outputCompose(ctx context.Context, files []string, args ...string) (string, error) {
+	full := append([]string{"compose"}, files...)
+	return d.output(ctx, "docker", append(full, args...)...)
+}
+
 func (d *Docker) ensureNetwork(ctx context.Context) {
 	// "already exists" is the common case — ignore the error and keep its
 	// noisy "network already exists" output out of the user's deploy log.
-	_ = run(ctx, io.Discard, "docker", "network", "create", "cargo-proxy")
+	_ = d.run(ctx, io.Discard, "docker", "network", "create", "cargo-proxy")
 }
 
 func (d *Docker) Apply(ctx context.Context, spec Spec, log io.Writer) error {
@@ -299,7 +351,7 @@ func (d *Docker) applyRecreate(ctx context.Context, spec Spec, log io.Writer) er
 	}
 	d.ensureNetwork(ctx)
 	args := d.composeArgs(spec, composePath)
-	if err := runCompose(ctx, log, args, "up", "-d", "--remove-orphans"); err != nil {
+	if err := d.runCompose(ctx, log, args, "up", "-d", "--remove-orphans"); err != nil {
 		return err
 	}
 	if err := d.waitHealthy(ctx, args, serviceName(spec), spec, log); err != nil {
@@ -354,7 +406,7 @@ func (d *Docker) applyBlueGreen(ctx context.Context, spec Spec, log io.Writer) e
 		_, _ = fmt.Fprintf(log, "==> starting %s\n", spec.Color)
 	}
 	args := d.composeArgs(spec, composePath)
-	if err := runCompose(ctx, log, args, "up", "-d", "--remove-orphans"); err != nil {
+	if err := d.runCompose(ctx, log, args, "up", "-d", "--remove-orphans"); err != nil {
 		d.downColor(ctx, spec.AppID, spec.Color, io.Discard)
 		return err
 	}
@@ -406,12 +458,12 @@ func (d *Docker) waitHealthy(ctx context.Context, args []string, service string,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		cid, err := outputCompose(ctx, args, "ps", "-q", service)
+		cid, err := d.outputCompose(ctx, args, "ps", "-q", service)
 		if err != nil || cid == "" {
 			time.Sleep(2 * time.Second)
 			continue
 		}
-		state, _ := output(ctx, "docker", "inspect", "-f", "{{.State.Status}}", cid)
+		state, _ := d.output(ctx, "docker", "inspect", "-f", "{{.State.Status}}", cid)
 		if state == "exited" || state == "dead" {
 			return fmt.Errorf("container exited during startup — check the app's logs")
 		}
@@ -420,7 +472,7 @@ func (d *Docker) waitHealthy(ctx context.Context, args []string, service string,
 			continue
 		}
 		// A restart during startup means the app crashed on boot.
-		if rc, _ := output(ctx, "docker", "inspect", "-f", "{{.RestartCount}}", cid); rc != "0" && rc != "" {
+		if rc, _ := d.output(ctx, "docker", "inspect", "-f", "{{.RestartCount}}", cid); rc != "0" && rc != "" {
 			return fmt.Errorf("container keeps restarting (crash loop) — check the app's logs")
 		}
 		if runningSince.IsZero() {
@@ -438,7 +490,7 @@ func (d *Docker) waitHealthy(ctx context.Context, args []string, service string,
 			continue
 		}
 
-		ip, _ := output(ctx, "docker", "inspect", "-f",
+		ip, _ := d.output(ctx, "docker", "inspect", "-f",
 			`{{json .NetworkSettings.Networks}}`, cid)
 		if addr := firstIP(ip); addr != "" {
 			url := fmt.Sprintf("http://%s:%d%s", addr, spec.Port, spec.HealthcheckPath)
@@ -504,7 +556,7 @@ func firstIP(networksJSON string) string {
 // managed databases, and the platform's own three. Feeds the instance-wide
 // monitoring view.
 func (d *Docker) RunningContainers(ctx context.Context) (int, error) {
-	out, err := output(ctx, "docker", "ps", "-q")
+	out, err := d.output(ctx, "docker", "ps", "-q")
 	if err != nil {
 		return 0, err
 	}
@@ -525,7 +577,7 @@ func (d *Docker) AppLogs(ctx context.Context, appID string, tail int) (io.ReadCl
 	}
 	full := append(append([]string{"compose"}, args...),
 		"logs", "--no-color", "--tail", strconv.Itoa(tail), "-f", service)
-	cmd := exec.CommandContext(ctx, "docker", full...)
+	cmd := d.buildCmd(ctx, "docker", full...)
 	pr, pw := io.Pipe()
 	cmd.Stdout = pw
 	cmd.Stderr = pw
@@ -545,7 +597,7 @@ func (d *Docker) Stop(ctx context.Context, appID string, log io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("app is not running")
 	}
-	return runCompose(ctx, log, args, "stop")
+	return d.runCompose(ctx, log, args, "stop")
 }
 
 // Start resumes a previously stopped app's containers.
@@ -555,7 +607,7 @@ func (d *Docker) Start(ctx context.Context, appID string, log io.Writer) error {
 		return fmt.Errorf("app has not been deployed")
 	}
 	d.ensureNetwork(ctx)
-	return runCompose(ctx, log, args, "start")
+	return d.runCompose(ctx, log, args, "start")
 }
 
 // Teardown removes every color's compose project, not just the active one: a

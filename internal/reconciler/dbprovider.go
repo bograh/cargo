@@ -41,7 +41,7 @@ func (d *Docker) dbDir(instanceID string) string {
 
 func (d *Docker) ensureDataNetwork(ctx context.Context, log io.Writer) {
 	// "already exists" is fine — ignore the error entirely.
-	_ = run(ctx, log, "docker", "network", "create", "cargo-data")
+	_ = d.run(ctx, log, "docker", "network", "create", "cargo-data")
 }
 
 // ProvisionDB writes the compose project for a managed database instance,
@@ -100,7 +100,7 @@ func (d *Docker) ProvisionDB(ctx context.Context, spec DBSpec, log io.Writer) er
 		return err
 	}
 	d.ensureDataNetwork(ctx, log)
-	if err := run(ctx, log, "docker", "compose", "-f", composePath, "up", "-d"); err != nil {
+	if err := d.run(ctx, log, "docker", "compose", "-f", composePath, "up", "-d"); err != nil {
 		return err
 	}
 	return d.waitDBReady(ctx, spec, log)
@@ -180,7 +180,7 @@ func (d *Docker) SnapshotDB(ctx context.Context, instanceID, engine, adminPass, 
 		if !saved {
 			return fmt.Errorf("redis snapshot: BGSAVE did not complete within 10s")
 		}
-		return run(ctx, os.Stderr, "docker", "compose", "-f", composePath, "cp",
+		return d.run(ctx, os.Stderr, "docker", "compose", "-f", composePath, "cp",
 			"db:/data/dump.rdb", destPath+".rdb")
 	case "mysql":
 		out, errOut, err := execCapturedSplit(ctx, "", nil, "docker",
@@ -215,7 +215,7 @@ func (d *Docker) TeardownDB(ctx context.Context, instanceID string, log io.Write
 	dir := d.dbDir(instanceID)
 	composePath := filepath.Join(dir, "compose.yaml")
 	if _, err := os.Stat(composePath); err == nil {
-		if err := run(ctx, log, "docker", "compose", "-f", composePath, "down", "-v", "--remove-orphans"); err != nil {
+		if err := d.run(ctx, log, "docker", "compose", "-f", composePath, "down", "-v", "--remove-orphans"); err != nil {
 			return err
 		}
 	}

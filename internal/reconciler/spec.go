@@ -9,7 +9,12 @@ import (
 )
 
 type Spec struct {
-	AppID           string
+	AppID string
+	// HostID routes the deploy to a worker host ("" = the control plane
+	// itself). The provider does not act on it directly — the pipeline binds
+	// the matching Target via ForHost — but it documents intent and lets the
+	// reconciler log which host an app is on.
+	HostID          string
 	Slug            string
 	Image           string
 	Port            int32
