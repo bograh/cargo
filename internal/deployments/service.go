@@ -155,6 +155,12 @@ func (s *Service) GetRaw(ctx context.Context, id pgtype.UUID) (sqlc.Deployment, 
 	return dep, err
 }
 
+// SetHost records which worker host a deployment targets (control-plane
+// deployments keep NULL).
+func (s *Service) SetHost(ctx context.Context, id, hostID pgtype.UUID) error {
+	return s.q.SetDeploymentHost(ctx, sqlc.SetDeploymentHostParams{ID: id, HostID: hostID})
+}
+
 func (s *Service) SetStatus(ctx context.Context, id pgtype.UUID, status string) error {
 	dep, err := s.GetRaw(ctx, id)
 	if err != nil {

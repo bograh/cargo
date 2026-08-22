@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -103,6 +105,8 @@ type appBody struct {
 	DeployStrategy  *string             `json:"deploy_strategy"`
 	ComposePath     *string             `json:"compose_path"`
 	ComposeService  *string             `json:"compose_service"`
+	// HostID targets a worker host; omitted/"" = the control plane.
+	HostID *string `json:"host_id"`
 }
 
 func str(p *string) string {
@@ -158,7 +162,36 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		appError(w, err)
 		return
 	}
+	// Host assignment is validated and applied after creation (the app row
+	// must exist to reference). A bad host id fails the request.
+	if body.HostID != nil && *body.HostID != "" {
+		if err := s.assignHost(r.Context(), app.ID, orgID, userFrom(r.Context()).ID, *body.HostID); err != nil {
+			hostError(w, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, appJSON(app))
+}
+
+// assignHost validates that the host exists and can take work, then points
+// the app at it.
+func (s *Server) assignHost(ctx context.Context, appID, orgID, actor pgtype.UUID, hostID string) error {
+	h, err := s.hostSvc.GetByID(ctx, hostID)
+	if err != nil || !h.ID.Valid {
+		return errors.New("worker host not found")
+	}
+	if h.Status == "unreachable" {
+		return fmt.Errorf("worker host %q is unreachable", h.Name)
+	}
+	if _, _, err := s.orgs.Get(ctx, orgID, actor); err != nil {
+		return errors.New("organization not found")
+	}
+	_, err = s.pool.Exec(ctx, `UPDATE applications SET host_id = $2::uuid WHERE id = $1`, appID, hostID)
+	return err
+}
+
+func hostError(w http.ResponseWriter, err error) {
+	Error(w, http.StatusBadRequest, "validation_failed", err.Error())
 }
 
 func (s *Server) handleListApps(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +248,19 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		appError(w, err)
 		return
+	}
+	if body.HostID != nil {
+		if *body.HostID == "" {
+			// Clearing the assignment moves the app back to the control plane.
+			if _, err := s.pool.Exec(r.Context(),
+				`UPDATE applications SET host_id = NULL WHERE id = $1`, id); err != nil {
+				Error(w, http.StatusInternalServerError, "internal", "could not clear host")
+				return
+			}
+		} else if err := s.assignHost(r.Context(), id, app.OrgID, userFrom(r.Context()).ID, *body.HostID); err != nil {
+			hostError(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, appJSON(app))
 }

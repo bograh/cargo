@@ -12,6 +12,9 @@ SELECT * FROM deployments WHERE app_id = $1 ORDER BY created_at DESC LIMIT 50;
 -- name: SetDeploymentBuildInfo :exec
 UPDATE deployments SET commit_sha = $2, image_tag = $3 WHERE id = $1;
 
+-- name: SetDeploymentHost :exec
+UPDATE deployments SET host_id = $2 WHERE id = $1;
+
 -- name: MarkDeploymentStatus :exec
 UPDATE deployments SET status = $2,
     started_at = COALESCE(started_at, now())

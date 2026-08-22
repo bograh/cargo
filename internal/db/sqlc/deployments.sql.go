@@ -14,7 +14,7 @@ import (
 const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (app_id, trigger, actor, image_tag, commit_sha)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, app_id, trigger, status, commit_sha, image_tag, error, actor, created_at, started_at, finished_at
+RETURNING id, app_id, trigger, status, commit_sha, image_tag, error, actor, created_at, started_at, finished_at, host_id
 `
 
 type CreateDeploymentParams struct {
@@ -46,6 +46,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.HostID,
 	)
 	return i, err
 }
@@ -93,7 +94,7 @@ func (q *Queries) FinishDeployment(ctx context.Context, arg FinishDeploymentPara
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, app_id, trigger, status, commit_sha, image_tag, error, actor, created_at, started_at, finished_at FROM deployments WHERE id = $1
+SELECT id, app_id, trigger, status, commit_sha, image_tag, error, actor, created_at, started_at, finished_at, host_id FROM deployments WHERE id = $1
 `
 
 func (q *Queries) GetDeployment(ctx context.Context, id pgtype.UUID) (Deployment, error) {
@@ -111,12 +112,13 @@ func (q *Queries) GetDeployment(ctx context.Context, id pgtype.UUID) (Deployment
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.HostID,
 	)
 	return i, err
 }
 
 const listDeploymentsForApp = `-- name: ListDeploymentsForApp :many
-SELECT id, app_id, trigger, status, commit_sha, image_tag, error, actor, created_at, started_at, finished_at FROM deployments WHERE app_id = $1 ORDER BY created_at DESC LIMIT 50
+SELECT id, app_id, trigger, status, commit_sha, image_tag, error, actor, created_at, started_at, finished_at, host_id FROM deployments WHERE app_id = $1 ORDER BY created_at DESC LIMIT 50
 `
 
 func (q *Queries) ListDeploymentsForApp(ctx context.Context, appID pgtype.UUID) ([]Deployment, error) {
@@ -140,6 +142,7 @@ func (q *Queries) ListDeploymentsForApp(ctx context.Context, appID pgtype.UUID) 
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.HostID,
 		); err != nil {
 			return nil, err
 		}
@@ -152,7 +155,7 @@ func (q *Queries) ListDeploymentsForApp(ctx context.Context, appID pgtype.UUID) 
 }
 
 const listPrunableDeployments = `-- name: ListPrunableDeployments :many
-SELECT id, app_id, trigger, status, commit_sha, image_tag, error, actor, created_at, started_at, finished_at FROM deployments WHERE app_id = $1 ORDER BY created_at DESC OFFSET $2
+SELECT id, app_id, trigger, status, commit_sha, image_tag, error, actor, created_at, started_at, finished_at, host_id FROM deployments WHERE app_id = $1 ORDER BY created_at DESC OFFSET $2
 `
 
 type ListPrunableDeploymentsParams struct {
@@ -181,6 +184,7 @@ func (q *Queries) ListPrunableDeployments(ctx context.Context, arg ListPrunableD
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.HostID,
 		); err != nil {
 			return nil, err
 		}
@@ -260,6 +264,20 @@ type SetDeploymentBuildInfoParams struct {
 
 func (q *Queries) SetDeploymentBuildInfo(ctx context.Context, arg SetDeploymentBuildInfoParams) error {
 	_, err := q.db.Exec(ctx, setDeploymentBuildInfo, arg.ID, arg.CommitSha, arg.ImageTag)
+	return err
+}
+
+const setDeploymentHost = `-- name: SetDeploymentHost :exec
+UPDATE deployments SET host_id = $2 WHERE id = $1
+`
+
+type SetDeploymentHostParams struct {
+	ID     pgtype.UUID
+	HostID pgtype.UUID
+}
+
+func (q *Queries) SetDeploymentHost(ctx context.Context, arg SetDeploymentHostParams) error {
+	_, err := q.db.Exec(ctx, setDeploymentHost, arg.ID, arg.HostID)
 	return err
 }
 

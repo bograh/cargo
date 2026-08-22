@@ -41,7 +41,7 @@ func (d *Docker) validateComposeSource(ctx context.Context, spec Spec) error {
 	userFile := filepath.Join(spec.SourceDir, spec.ComposeFile)
 	// The user's file alone: the overlay's own additions are Cargo's and need
 	// no checking, and excluding it keeps the rules free of special cases.
-	rendered, err := output(ctx, "docker", "compose", "-f", userFile, "config")
+	rendered, err := d.output(ctx, "docker", "compose", "-f", userFile, "config")
 	if err != nil {
 		// compose reports the actual problem (bad YAML, an unknown `extends`
 		// target) on stderr; without it the user just sees "exit status 1".

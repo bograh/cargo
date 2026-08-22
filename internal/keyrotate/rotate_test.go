@@ -64,7 +64,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	_, err = pool.Exec(ctx, `TRUNCATE database_attachments, database_instances,
-		env_vars, applications, memberships, organizations, users, instance_settings CASCADE`)
+		env_vars, applications, hosts, memberships, organizations, users, instance_settings CASCADE`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -125,6 +125,18 @@ func seed(t *testing.T, box *crypto.Box) fixture {
 		`INSERT INTO applications (org_id, name, slug, source_type, image_ref, registry_creds_enc)
 		 VALUES ($1,'web','web','image','nginx:alpine',$2) RETURNING id::text`,
 		orgID, regEnc).Scan(&f.appID); err != nil {
+		t.Fatal(err)
+	}
+
+	// hosts.private_key_enc — raw BYTEA (worker SSH keys).
+	f.plain["hostkey"] = "-----BEGIN OPENSSH PRIVATE KEY-----test-host-key"
+	hostEnc, err := box.Seal([]byte(f.plain["hostkey"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO hosts (name, address, port, private_key_enc)
+		 VALUES ('w1','deploy@10.0.0.5',22,$1)`, hostEnc); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,6 +214,13 @@ func (f fixture) assertReadable(t *testing.T, box *crypto.Box) {
 		}
 	}
 	open("registry", regEnc)
+
+	var hostEnc []byte
+	if err := f.pool.QueryRow(ctx,
+		`SELECT private_key_enc FROM hosts WHERE name = 'w1'`).Scan(&hostEnc); err != nil {
+		t.Fatal(err)
+	}
+	open("hostkey", hostEnc)
 
 	var envEnc []byte
 	if err := f.pool.QueryRow(ctx,

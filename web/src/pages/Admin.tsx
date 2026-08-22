@@ -629,6 +629,171 @@ interface AdminOrg {
   slug: string;
 }
 
+interface WorkerHost {
+  id: string;
+  name: string;
+  address: string;
+  port: number;
+  status: string;
+  engine_version?: string;
+  cpu_count?: number;
+  mem_total_mb?: number;
+  has_key: boolean;
+}
+
+interface HostVerify {
+  status: string;
+  engine_version?: string;
+  cpu_count?: number;
+  mem_total_mb?: number;
+  install_hint?: string;
+}
+
+const HOST_STATUS_TONES: Record<string, "live" | "amber" | "danger" | "neutral"> = {
+  online: "live",
+  degraded: "amber",
+  unreachable: "danger",
+  pending: "neutral",
+};
+
+function WorkersCard() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { data: hosts } = useQuery({
+    queryKey: ["admin", "hosts"],
+    queryFn: () => api<WorkerHost[]>("/admin/hosts"),
+  });
+  const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
+  const [port, setPort] = useState("22");
+  const [keyPem, setKeyPem] = useState("");
+  const [domainSuffix, setDomainSuffix] = useState("");
+  const [leEmail, setLeEmail] = useState("");
+  const [error, setError] = useState("");
+  const [lastVerify, setLastVerify] = useState<HostVerify | null>(null);
+
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ["admin", "hosts"] });
+
+  const addHost = useMutation({
+    mutationFn: () =>
+      post<{ host: WorkerHost; verify?: HostVerify }>("/admin/hosts", {
+        name,
+        address,
+        port: Number(port) || 22,
+        key_pem: keyPem,
+        apps_domain_suffix: domainSuffix,
+        letsencrypt_email: leEmail,
+      }),
+    onSuccess: ({ verify }) => {
+      setName("");
+      setAddress("");
+      setPort("22");
+      setKeyPem("");
+      setDomainSuffix("");
+      setLeEmail("");
+      setError("");
+      setLastVerify(verify ?? null);
+      invalidate();
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "could not add host";
+      setError(message);
+      toast(message, "error");
+    },
+  });
+  const removeHost = useMutation({
+    mutationFn: (id: string) => del(`/admin/hosts/${id}`),
+    onSuccess: () => {
+      invalidate();
+      toast("Host removed");
+    },
+    onError: (err) => toast(err instanceof Error ? err.message : "remove failed", "error"),
+  });
+
+  return (
+    <Card>
+      <SectionHeading eyebrow="workers" title="Worker hosts" />
+      <div className="space-y-4">
+        <ul className="space-y-2 text-sm">
+          {hosts?.map((h) => (
+            <li key={h.id} className="flex items-center justify-between border-t border-border pt-2 first:border-0 first:pt-0">
+              <span>
+                {h.name} <span className="font-mono text-xs text-muted">{h.address}</span>
+                {h.engine_version && (
+                  <span className="ml-2 font-mono text-xs text-muted">{h.engine_version}</span>
+                )}
+              </span>
+              <span className="flex items-center gap-2">
+                <Badge tone={HOST_STATUS_TONES[h.status] ?? "muted"}>{h.status}</Badge>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    if (confirm(`Remove worker ${h.name}?`)) removeHost.mutate(h.id);
+                  }}
+                  disabled={removeHost.isPending}
+                >
+                  Remove
+                </Button>
+              </span>
+            </li>
+          ))}
+          {hosts?.length === 0 && (
+            <li className="border-t-0 text-muted">No worker hosts — apps deploy to this machine.</li>
+          )}
+        </ul>
+
+        {lastVerify?.install_hint && (
+          <div className="rounded border border-border bg-surface p-3 text-xs">
+            <p className="mb-1 font-medium">Run this on the worker to finish setup:</p>
+            <code className="font-mono text-amber">{lastVerify.install_hint}</code>
+          </div>
+        )}
+
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim() && address.trim() && keyPem.trim()) addHost.mutate();
+          }}
+        >
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <Label htmlFor="wh-name">Name</Label>
+              <Input id="wh-name" placeholder="worker-1" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div>
+              <Label htmlFor="wh-address">Address (user@host)</Label>
+              <Input id="wh-address" placeholder="deploy@10.0.0.5" value={address} onChange={(e) => setAddress(e.target.value)} />
+            </div>
+            <div>
+              <Label htmlFor="wh-port">SSH port</Label>
+              <Input id="wh-port" placeholder="22" value={port} onChange={(e) => setPort(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="wh-key">SSH private key</Label>
+            <Textarea id="wh-key" rows={4} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={keyPem} onChange={(e) => setKeyPem(e.target.value)} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="wh-suffix">Worker domain suffix</Label>
+              <Input id="wh-suffix" placeholder="w1.example.com" value={domainSuffix} onChange={(e) => setDomainSuffix(e.target.value)} />
+            </div>
+            <div>
+              <Label htmlFor="wh-email">Let's Encrypt email</Label>
+              <Input id="wh-email" placeholder="ops@example.com" value={leEmail} onChange={(e) => setLeEmail(e.target.value)} />
+            </div>
+          </div>
+          {error && <FieldError message={error} />}
+          <Button type="submit" disabled={addHost.isPending || !name.trim() || !address.trim() || !keyPem.trim()}>
+            Add worker
+          </Button>
+        </form>
+      </div>
+    </Card>
+  );
+}
+
 export default function Admin() {
   const { user, loading } = useAuth();
   const isAdmin = !!user?.is_instance_admin;
@@ -685,6 +850,7 @@ export default function Admin() {
       <HostMonitor />
       <AllAppsMonitor />
       <InstanceSettingsCard />
+      <WorkersCard />
       <GithubAppForm />
       <OIDCForm />
       <DiskCard />

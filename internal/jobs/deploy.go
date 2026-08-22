@@ -78,11 +78,30 @@ type Pipeline struct {
 	DefaultDeployStrategy string
 	// Notify, when set, is called on a terminal deploy result. Optional.
 	Notify Notifier
+	// Hosts resolves an app's worker host into a materialized target. May be
+	// nil (single-host installs): every app then deploys locally regardless
+	// of its host assignment.
+	Hosts HostRouter
+}
+
+// HostRouter is satisfied by *hostmgr.Manager.
+type HostRouter interface {
+	// Resolve returns a nil target for a control-plane app. For a hosted app
+	// it returns the materialized target plus the host's recorded health.
+	Resolve(ctx context.Context, appID string) (target *reconciler.Target, hostStatus string, err error)
 }
 
 // Notifier is the deploy-notification seam, implemented by *notify.Service.
 type Notifier interface {
 	DeployFinished(ctx context.Context, appID pgtype.UUID, result string)
+}
+
+// hostLabel names a target in deploy logs: the host ID's short form.
+func hostLabel(t *reconciler.Target) string {
+	if len(t.HostID) >= 8 {
+		return t.HostID[:8]
+	}
+	return t.HostID
 }
 
 func uuidOf(s string) (pgtype.UUID, error) {
@@ -172,6 +191,35 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	app, err := p.Apps.GetRaw(ctx, dep.AppID)
 	if err != nil {
 		return fmt.Errorf("load app: %w", err)
+	}
+
+	// Route the deploy to the app's worker host (Phase 12a). A nil target
+	// means the control plane itself — the default for every existing app.
+	provider := p.Provider
+	if app.HostID.Valid && p.Hosts != nil {
+		target, hostStatus, err := p.Hosts.Resolve(ctx, uuidStr(app.HostID))
+		if err != nil {
+			return fmt.Errorf("resolve worker host: %w", err)
+		}
+		if target == nil {
+			return fmt.Errorf("app references worker host %s but it could not be resolved", uuidStr(app.HostID))
+		}
+		if hostStatus == "unreachable" {
+			return fmt.Errorf("worker host %s is unreachable — fix connectivity or re-point the app before deploying", hostLabel(target))
+		}
+		// Record the host on this deployment row before applying: an audit
+		// trail of where each version ran.
+		if err := p.Deployments.SetHost(ctx, dep.ID, app.HostID); err != nil {
+			return fmt.Errorf("record deployment host: %w", err)
+		}
+		if fb, ok := provider.(interface {
+			ForTarget(reconciler.Target) reconciler.DeployProvider
+		}); ok {
+			_, _ = fmt.Fprintf(logw, "==> deploying to worker host %s\n", hostLabel(target))
+			provider = fb.ForTarget(*target)
+		} else {
+			return fmt.Errorf("deploy provider does not support worker hosts")
+		}
 	}
 
 	imageTag := dep.ImageTag
@@ -270,6 +318,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	}
 	spec := reconciler.Spec{
 		AppID:           uuidStr(app.ID),
+		HostID:          uuidStr(app.HostID), // "" = control plane
 		Slug:            app.Slug,
 		Image:           imageTag,
 		Port:            app.ExposedPort,
@@ -287,7 +336,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		spec.ComposeService = app.ComposeService
 		spec.SourceDir = p.composeSourceDir(uuidStr(app.ID))
 	}
-	if err := p.Provider.Apply(ctx, spec, logw); err != nil {
+	if err := provider.Apply(ctx, spec, logw); err != nil {
 		return err
 	}
 	// A successful deploy means the app should be up: clear any prior "stopped"

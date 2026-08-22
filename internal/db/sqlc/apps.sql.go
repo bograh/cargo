@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAppsOnHost = `-- name: CountAppsOnHost :one
+SELECT count(*) FROM applications WHERE host_id = $1
+`
+
+func (q *Queries) CountAppsOnHost(ctx context.Context, hostID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countAppsOnHost, hostID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAppMetric = `-- name: CreateAppMetric :exec
 INSERT INTO app_metrics (
     app_id, cpu_pct, mem_bytes, mem_limit_bytes,
@@ -54,7 +65,7 @@ INSERT INTO applications (
     build_context, dockerfile_path, build_args, mem_limit, cpu_limit, pids_limit,
     notify_on_success, deploy_strategy, compose_path, compose_service
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service, host_id, active_color
 `
 
 type CreateApplicationParams struct {
@@ -136,6 +147,8 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.DeployStrategy,
 		&i.ComposePath,
 		&i.ComposeService,
+		&i.HostID,
+		&i.ActiveColor,
 	)
 	return i, err
 }
@@ -149,8 +162,19 @@ func (q *Queries) DeleteApplication(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const getActiveColor = `-- name: GetActiveColor :one
+SELECT active_color FROM applications WHERE id = $1
+`
+
+func (q *Queries) GetActiveColor(ctx context.Context, id pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getActiveColor, id)
+	var active_color pgtype.Text
+	err := row.Scan(&active_color)
+	return active_color, err
+}
+
 const getApplication = `-- name: GetApplication :one
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service FROM applications WHERE id = $1
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service, host_id, active_color FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id pgtype.UUID) (Application, error) {
@@ -184,6 +208,8 @@ func (q *Queries) GetApplication(ctx context.Context, id pgtype.UUID) (Applicati
 		&i.DeployStrategy,
 		&i.ComposePath,
 		&i.ComposeService,
+		&i.HostID,
+		&i.ActiveColor,
 	)
 	return i, err
 }
@@ -287,7 +313,7 @@ func (q *Queries) ListAppMetricsSince(ctx context.Context, arg ListAppMetricsSin
 }
 
 const listApplicationsForOrg = `-- name: ListApplicationsForOrg :many
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service FROM applications WHERE org_id = $1 ORDER BY created_at
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service, host_id, active_color FROM applications WHERE org_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID) ([]Application, error) {
@@ -327,6 +353,8 @@ func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID)
 			&i.DeployStrategy,
 			&i.ComposePath,
 			&i.ComposeService,
+			&i.HostID,
+			&i.ActiveColor,
 		); err != nil {
 			return nil, err
 		}
@@ -339,7 +367,7 @@ func (q *Queries) ListApplicationsForOrg(ctx context.Context, orgID pgtype.UUID)
 }
 
 const listGitAppsByBranch = `-- name: ListGitAppsByBranch :many
-SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service FROM applications WHERE source_type = 'git' AND git_branch = $1
+SELECT id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service, host_id, active_color FROM applications WHERE source_type = 'git' AND git_branch = $1
 `
 
 func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]Application, error) {
@@ -379,6 +407,8 @@ func (q *Queries) ListGitAppsByBranch(ctx context.Context, gitBranch string) ([]
 			&i.DeployStrategy,
 			&i.ComposePath,
 			&i.ComposeService,
+			&i.HostID,
+			&i.ActiveColor,
 		); err != nil {
 			return nil, err
 		}
@@ -402,10 +432,38 @@ func (q *Queries) PurgeAppMetrics(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const setActiveColor = `-- name: SetActiveColor :exec
+UPDATE applications SET active_color = $2 WHERE id = $1
+`
+
+type SetActiveColorParams struct {
+	ID          pgtype.UUID
+	ActiveColor pgtype.Text
+}
+
+func (q *Queries) SetActiveColor(ctx context.Context, arg SetActiveColorParams) error {
+	_, err := q.db.Exec(ctx, setActiveColor, arg.ID, arg.ActiveColor)
+	return err
+}
+
+const setAppHost = `-- name: SetAppHost :exec
+UPDATE applications SET host_id = $2, updated_at = now() WHERE id = $1
+`
+
+type SetAppHostParams struct {
+	ID     pgtype.UUID
+	HostID pgtype.UUID
+}
+
+func (q *Queries) SetAppHost(ctx context.Context, arg SetAppHostParams) error {
+	_, err := q.db.Exec(ctx, setAppHost, arg.ID, arg.HostID)
+	return err
+}
+
 const setApplicationDesiredState = `-- name: SetApplicationDesiredState :one
 UPDATE applications SET desired_state = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service, host_id, active_color
 `
 
 type SetApplicationDesiredStateParams struct {
@@ -444,6 +502,8 @@ func (q *Queries) SetApplicationDesiredState(ctx context.Context, arg SetApplica
 		&i.DeployStrategy,
 		&i.ComposePath,
 		&i.ComposeService,
+		&i.HostID,
+		&i.ActiveColor,
 	)
 	return i, err
 }
@@ -457,7 +517,7 @@ UPDATE applications SET
     pids_limit = $15, notify_on_success = $16, deploy_strategy = $17,
     compose_path = $18, compose_service = $19, updated_at = now()
 WHERE id = $1
-RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service
+RETURNING id, org_id, name, slug, source_type, builder, git_repo_url, git_branch, image_ref, registry_creds_enc, exposed_port, healthcheck_path, auto_deploy, build_context, dockerfile_path, build_args, key_version, created_at, updated_at, desired_state, mem_limit, cpu_limit, pids_limit, notify_on_success, deploy_strategy, compose_path, compose_service, host_id, active_color
 `
 
 type UpdateApplicationParams struct {
@@ -533,6 +593,8 @@ func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationPa
 		&i.DeployStrategy,
 		&i.ComposePath,
 		&i.ComposeService,
+		&i.HostID,
+		&i.ActiveColor,
 	)
 	return i, err
 }

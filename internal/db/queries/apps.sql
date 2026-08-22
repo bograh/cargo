@@ -32,6 +32,18 @@ RETURNING *;
 -- name: DeleteApplication :exec
 DELETE FROM applications WHERE id = $1;
 
+-- name: SetAppHost :exec
+UPDATE applications SET host_id = $2, updated_at = now() WHERE id = $1;
+
+-- name: CountAppsOnHost :one
+SELECT count(*) FROM applications WHERE host_id = $1;
+
+-- name: GetActiveColor :one
+SELECT active_color FROM applications WHERE id = $1;
+
+-- name: SetActiveColor :exec
+UPDATE applications SET active_color = $2 WHERE id = $1;
+
 -- name: ListGitAppsByBranch :many
 SELECT * FROM applications WHERE source_type = 'git' AND git_branch = $1;
 

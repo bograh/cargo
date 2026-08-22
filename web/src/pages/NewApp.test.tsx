@@ -77,3 +77,40 @@ test("compose source collects the file path and web service", async () => {
     expect(body.git_repo_url).toBe("https://github.com/acme/stack.git");
   });
 });
+
+test("host selector lists org workers and sends host_id", async () => {
+  const calls = mockApi({
+    "GET /auth/me": { status: 200, body: { id: "u1", email: "a@b.co", is_instance_admin: false } },
+    "GET /orgs/org-1/hosts": {
+      status: 200,
+      body: [
+        { id: "h-online", name: "worker-a", status: "online" },
+        { id: "h-down", name: "worker-b", status: "unreachable" },
+      ],
+    },
+    "POST /orgs/org-1/apps": {
+      status: 201,
+      body: { id: "app-h", org_id: "org-1", name: "api", slug: "api", source_type: "image" },
+    },
+    "POST /apps/app-h/deploy": {
+      status: 202,
+      body: { id: "dep-h", app_id: "app-h", status: "queued", trigger: "manual" },
+    },
+  });
+  renderPage(<NewApp />, { path: "/orgs/:orgId/apps/new", route: "/orgs/org-1/apps/new" });
+
+  const sel = await screen.findByLabelText(/worker host/i);
+  await screen.findByRole("option", { name: /worker-a \(online\)/i });
+  // Unreachable workers are not selectable.
+  expect(screen.queryByRole("option", { name: /worker-b/i })).not.toBeInTheDocument();
+  await userEvent.selectOptions(sel, "h-online");
+
+  await userEvent.type(screen.getByLabelText(/name/i), "api");
+  await userEvent.click(screen.getByRole("button", { name: /container image/i }));
+  await userEvent.type(screen.getByLabelText(/image reference/i), "nginx:alpine");
+  await userEvent.click(screen.getByRole("button", { name: /create & deploy/i }));
+
+  await waitFor(() => expect(screen.getByTestId("navigated")).toBeInTheDocument());
+  const create = calls.find((c) => c.path === "/orgs/org-1/apps");
+  expect(create?.body).toMatchObject({ host_id: "h-online" });
+});

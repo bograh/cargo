@@ -18,6 +18,12 @@ interface EnvRow {
   value: string;
 }
 
+interface OrgHost {
+  id: string;
+  name: string;
+  status: string;
+}
+
 export default function NewApp() {
   const { orgId } = useParams();
   const navigate = useNavigate();
@@ -40,6 +46,13 @@ export default function NewApp() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [selectedRepo, setSelectedRepo] = useState("");
+  const [hostId, setHostId] = useState("");
+
+  // Worker hosts are read-only for org members; "" = this machine.
+  const { data: orgHosts } = useQuery({
+    queryKey: ["org-hosts", orgId],
+    queryFn: () => api<OrgHost[]>(`/orgs/${orgId}/hosts`),
+  });
 
   const { data: gh } = useQuery({
     queryKey: ["github", orgId],
@@ -88,6 +101,7 @@ export default function NewApp() {
         exposed_port: port,
         healthcheck_path: healthPath,
         auto_deploy: autoDeploy,
+        host_id: hostId || undefined,
       });
       const vars = Object.fromEntries(
         envRows.filter((r) => r.key.trim()).map((r) => [r.key.trim(), r.value]),
@@ -246,6 +260,20 @@ export default function NewApp() {
                 onChange={(e) => setPort(Number(e.target.value))}
                 required
               />
+            </div>
+            <div>
+              <Label htmlFor="host">Worker host</Label>
+              <Select id="host" className="w-full" value={hostId} onChange={(e) => setHostId(e.target.value)}>
+                <option value="">This machine (control plane)</option>
+                {(orgHosts ?? [])
+                  .filter((h) => h.status !== "unreachable")
+                  .map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name} ({h.status})
+                    </option>
+                  ))}
+              </Select>
+              <p className="mt-1 text-xs text-muted">Where the app runs. Domains must resolve to the host you pick.</p>
             </div>
             <div>
               <Label htmlFor="health">Healthcheck path</Label>

@@ -134,10 +134,11 @@ merges them into one backend pool and the hand-off needs no proxy reconfiguratio
 
 ---
 
-## Phase 12 — Multi-server (Docker-over-SSH, 9.1) ⬜
+## Phase 12 — Multi-server (Docker-over-SSH, 9.1) ◑
 
 *Largest architectural step; validates the existing `DeployProvider` seam. Own spec → plan
-cycle.*
+cycle. Spec: `docs/superpowers/specs/2026-08-22-cargo-multi-server-design.md`; slice 12a
+plan: `docs/superpowers/plans/2026-08-22-cargo-m12a-multi-server.md`.*
 
 `hosts` table (encrypted SSH creds, status, capacity); apps/deployments gain a target host;
 a second `DeployProvider` running the same compose ops over `DOCKER_HOST=ssh://…`; explicit
@@ -145,6 +146,17 @@ per-app host selection (no auto-bin-packing in v1); per-host Traefik + `cargo-pr
 metrics/logs sample the app's host; install gains a "join a worker host" flow.
 - An app deploys to and runs on a remote host, reachable via that host's Traefik
 - Cross-host isolation and per-host networks verified
+
+### 12a — Hosts & remote deploys (2026-08-22) ✅
+Sliced per the spec: hosts + remote deploys first, observability and bootstrap next.
+- ✅ Migration `00020_multi_server`: `hosts` (sealed key, TOFU fingerprint, status/capacity), `applications.host_id`, `deployments.host_id`
+- ✅ `internal/hosts`: sealed SSH keys (`crypto.Box`, registered in key rotation); delete guarded while apps assigned
+- ✅ Per-host isolation: docker context + managed HOME under `<dataDir>/hosts/<id>/` — nothing global; host key TOFU-pinned, mismatch aborts everything to that host
+- ✅ `Docker.ForHost(Target)` routes every exec through a per-host context; local path byte-identical (golden-tested)
+- ✅ Active color moved from `state.json` to `applications.active_color` (reconciler-owned in the advisory-locked deploy transaction)
+- ✅ Remote-safe health gate: daemon-side state polling; bridge-IP HTTP probes only on local targets
+- ✅ Admin API `/admin/hosts` (+ org-scoped read-only list); UI: Workers card + app-form host selector; log streaming follows the app's host
+- Deferred to 12b/12c: per-host metrics collection, proxy-stack bootstrap/join flow, real-SSH end-to-end test
 
 ---
 

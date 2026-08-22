@@ -23,6 +23,8 @@ import (
 	"github.com/bograh/cargo/internal/deployments"
 	"github.com/bograh/cargo/internal/events"
 	"github.com/bograh/cargo/internal/github"
+	"github.com/bograh/cargo/internal/hostmgr"
+	"github.com/bograh/cargo/internal/hosts"
 	"github.com/bograh/cargo/internal/jobs"
 	"github.com/bograh/cargo/internal/mailer"
 	"github.com/bograh/cargo/internal/metrics"
@@ -88,6 +90,14 @@ func main() {
 	appSvc := apps.NewService(pool, box)
 	depSvc := deployments.NewService(pool, hub, cfg.DataDir)
 	provider := reconciler.NewDocker(cfg.DataDir)
+	hostSvc := hosts.NewService(pool, box)
+	hostMgr := hostmgr.NewManager(cfg.DataDir, hostSvc)
+	hostMgr.SetPool(pool)
+	// Active color lives in Postgres (applications.active_color), not on the
+	// host disk: with multiple worker hosts there is no single disk it can
+	// live on, and a restored backup then agrees with every host by
+	// construction.
+	provider.SetColors(jobs.DBColorStore{Q: sqlc.New(pool)})
 	dbSvc := databases.NewService(pool, box, provider, cfg.DataDir)
 	ghSvc := github.NewService(pool, box)
 	settingsSvc := settings.NewService(pool, box)
@@ -115,6 +125,7 @@ func main() {
 		Notify:           notifySvc,
 
 		DefaultDeployStrategy: cfg.DefaultDeployStrategy,
+		Hosts:                 hostMgr,
 	}
 	traefikURL := getenvDefault("CARGO_TRAEFIK_METRICS_URL", "http://traefik:8082/metrics")
 	collector := metrics.NewCollector(pool, hub, provider, traefikURL).
@@ -166,6 +177,7 @@ func main() {
 	srv.WireDatabases(dbSvc)
 	srv.WireNotify(notifySvc)
 	srv.WireAudit(audit.NewService(pool))
+	srv.WireHosts(hostMgr, hostSvc)
 
 	// Control-plane self-metrics on a separate internal-only listener (never
 	// routed by Traefik / never on the public API port).
