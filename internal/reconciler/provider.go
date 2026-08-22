@@ -25,6 +25,7 @@ import (
 type Docker struct {
 	dataDir string
 	target  *Target
+	colors  ColorStore // nil = legacy state.json on disk
 	// HealthTimeout bounds the post-apply health gate (default 2 min).
 	HealthTimeout time.Duration
 }
@@ -82,42 +83,14 @@ func (d *Docker) composePath(appID, color string) string {
 
 // appState records which color currently serves an app. It lives next to the
 // compose projects rather than in Postgres because it describes what is
-// actually running on this host — the reconciler owns it, and a restored
-// control-plane backup must not disagree with the containers on disk.
-type appState struct {
-	Color string `json:"color"`
-}
-
 func (d *Docker) statePath(appID string) string {
 	return filepath.Join(d.projectDir(appID), "state.json")
 }
 
-// activeColor returns the color currently serving the app, or "" for an app
-// on the legacy single-project layout (or one that was never deployed).
-func (d *Docker) activeColor(appID string) string {
-	raw, err := os.ReadFile(d.statePath(appID))
-	if err != nil {
-		return ""
-	}
-	var st appState
-	if err := json.Unmarshal(raw, &st); err != nil {
-		return ""
-	}
-	return st.Color
-}
-
-func (d *Docker) setActiveColor(appID, color string) error {
-	raw, err := json.Marshal(appState{Color: color})
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(d.statePath(appID), raw, 0o644)
-}
-
 // activeComposePath is the compose file of the color currently serving the
 // app — the one Stop/Start/logs/stats should address.
-func (d *Docker) activeComposePath(appID string) string {
-	return d.composePath(appID, d.activeColor(appID))
+func (d *Docker) activeComposePath(ctx context.Context, appID string) string {
+	return d.composePath(appID, d.activeColor(ctx, appID))
 }
 
 // projectRef records how to address a running project after the fact. Cargo's
@@ -140,8 +113,8 @@ func (d *Docker) writeProjectRef(appID, color string, ref projectRef) error {
 // activeProject returns the compose `-f` arguments and web-service name for
 // whichever color is currently serving. Apps deployed before compose sources
 // existed have no project.json, so it falls back to the single-file layout.
-func (d *Docker) activeProject(appID string) ([]string, string, error) {
-	dir := d.colorDir(appID, d.activeColor(appID))
+func (d *Docker) activeProject(ctx context.Context, appID string) ([]string, string, error) {
+	dir := d.colorDir(appID, d.activeColor(ctx, appID))
 	if raw, err := os.ReadFile(filepath.Join(dir, "project.json")); err == nil {
 		var ref projectRef
 		if err := json.Unmarshal(raw, &ref); err == nil && len(ref.Files) > 0 {
@@ -343,7 +316,7 @@ func (d *Docker) Apply(ctx context.Context, spec Spec, log io.Writer) error {
 func (d *Docker) applyRecreate(ctx context.Context, spec Spec, log io.Writer) error {
 	// An app moving back from blue/green still has a color project running;
 	// note it now and reap it once the recreate project is healthy.
-	prev := d.activeColor(spec.AppID)
+	prev := d.activeColor(ctx, spec.AppID)
 	spec.Color = ""
 	composePath, err := d.writeProject(spec)
 	if err != nil {
@@ -372,7 +345,7 @@ func (d *Docker) applyRecreate(ctx context.Context, spec Spec, log io.Writer) er
 // A new version that fails its gate is torn down and the old color is left
 // untouched and serving — the deployment fails with no manual rollback needed.
 func (d *Docker) applyBlueGreen(ctx context.Context, spec Spec, log io.Writer) error {
-	prev := d.activeColor(spec.AppID)
+	prev := d.activeColor(ctx, spec.AppID)
 	// A previous deploy may have been interrupted after starting a color but
 	// before recording it; clear any stale project for the color we're about
 	// to occupy so `up -d` starts from a clean slate.
@@ -422,7 +395,7 @@ func (d *Docker) applyBlueGreen(ctx context.Context, spec Spec, log io.Writer) e
 	// Record the new color before reaping the old one: it is already in the
 	// Traefik pool and serving, so a crash here must leave it discoverable
 	// rather than stranding a container no later deploy knows about.
-	if err := d.setActiveColor(spec.AppID, spec.Color); err != nil {
+	if err := d.setActiveColor(ctx, spec.AppID, spec.Color); err != nil {
 		return err
 	}
 	if prev != spec.Color {
@@ -571,7 +544,7 @@ func (d *Docker) RunningContainers(ctx context.Context) (int, error) {
 // lines. The returned reader is closed — and the underlying process killed —
 // when ctx is cancelled (e.g. the SSE client disconnects) or the caller Closes.
 func (d *Docker) AppLogs(ctx context.Context, appID string, tail int) (io.ReadCloser, error) {
-	args, service, err := d.activeProject(appID)
+	args, service, err := d.activeProject(ctx, appID)
 	if err != nil {
 		return nil, fmt.Errorf("app is not running")
 	}
@@ -593,7 +566,7 @@ func (d *Docker) AppLogs(ctx context.Context, appID string, tail int) (io.ReadCl
 // Start can bring them back. It's a no-op-with-error if the app was never
 // deployed (no compose project exists).
 func (d *Docker) Stop(ctx context.Context, appID string, log io.Writer) error {
-	args, _, err := d.activeProject(appID)
+	args, _, err := d.activeProject(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("app is not running")
 	}
@@ -602,7 +575,7 @@ func (d *Docker) Stop(ctx context.Context, appID string, log io.Writer) error {
 
 // Start resumes a previously stopped app's containers.
 func (d *Docker) Start(ctx context.Context, appID string, log io.Writer) error {
-	args, _, err := d.activeProject(appID)
+	args, _, err := d.activeProject(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("app has not been deployed")
 	}

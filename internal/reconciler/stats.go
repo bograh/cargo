@@ -96,7 +96,7 @@ func parseDockerStats(line string) (ContainerStats, error) {
 // running is false (with a zero sample and nil error) when the app has no
 // running container. Addressed by appID, mirroring AppLogs.
 func (d *Docker) AppStats(ctx context.Context, appID string) (ContainerStats, bool, error) {
-	args, service, err := d.activeProject(appID)
+	args, service, err := d.activeProject(ctx, appID)
 	if err != nil {
 		return ContainerStats{}, false, nil
 	}

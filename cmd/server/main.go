@@ -88,6 +88,11 @@ func main() {
 	appSvc := apps.NewService(pool, box)
 	depSvc := deployments.NewService(pool, hub, cfg.DataDir)
 	provider := reconciler.NewDocker(cfg.DataDir)
+	// Active color lives in Postgres (applications.active_color), not on the
+	// host disk: with multiple worker hosts there is no single disk it can
+	// live on, and a restored backup then agrees with every host by
+	// construction.
+	provider.SetColors(jobs.DBColorStore{Q: sqlc.New(pool)})
 	dbSvc := databases.NewService(pool, box, provider, cfg.DataDir)
 	ghSvc := github.NewService(pool, box)
 	settingsSvc := settings.NewService(pool, box)

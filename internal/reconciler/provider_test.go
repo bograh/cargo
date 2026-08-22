@@ -57,11 +57,12 @@ func TestApplyRunsContainer(t *testing.T) {
 // the empty color must stay on the original single-project layout so an
 // upgrade doesn't strand containers deployed by an earlier version.
 func TestColorPathsAndState(t *testing.T) {
+	ctx := context.Background()
 	dataDir := t.TempDir()
 	d := NewDocker(dataDir)
 	appDir := filepath.Join(dataDir, "apps", "app-1")
 
-	if got := d.activeColor("app-1"); got != "" {
+	if got := d.activeColor(ctx, "app-1"); got != "" {
 		t.Fatalf("activeColor of a fresh app = %q, want \"\"", got)
 	}
 	if got := d.colorDir("app-1", ""); got != appDir {
@@ -70,21 +71,21 @@ func TestColorPathsAndState(t *testing.T) {
 	if got := d.colorDir("app-1", "green"); got != filepath.Join(appDir, "green") {
 		t.Fatalf("green colorDir = %q", got)
 	}
-	if got := d.activeComposePath("app-1"); got != filepath.Join(appDir, "compose.yaml") {
+	if got := d.activeComposePath(ctx, "app-1"); got != filepath.Join(appDir, "compose.yaml") {
 		t.Fatalf("legacy activeComposePath = %q", got)
 	}
 
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.setActiveColor("app-1", "green"); err != nil {
+	if err := d.setActiveColor(ctx, "app-1", "green"); err != nil {
 		t.Fatalf("setActiveColor: %v", err)
 	}
-	if got := d.activeColor("app-1"); got != "green" {
+	if got := d.activeColor(ctx, "app-1"); got != "green" {
 		t.Fatalf("activeColor = %q, want green", got)
 	}
 	// Logs, stats, stop and start must all follow the color that is serving.
-	if got := d.activeComposePath("app-1"); got != filepath.Join(appDir, "green", "compose.yaml") {
+	if got := d.activeComposePath(ctx, "app-1"); got != filepath.Join(appDir, "green", "compose.yaml") {
 		t.Fatalf("activeComposePath = %q, want the green project", got)
 	}
 }
@@ -92,6 +93,7 @@ func TestColorPathsAndState(t *testing.T) {
 // A corrupt state file must degrade to the legacy layout rather than panicking
 // or inventing a color whose project does not exist.
 func TestActiveColorIgnoresCorruptState(t *testing.T) {
+	ctx := context.Background()
 	dataDir := t.TempDir()
 	d := NewDocker(dataDir)
 	appDir := filepath.Join(dataDir, "apps", "app-1")
@@ -101,7 +103,7 @@ func TestActiveColorIgnoresCorruptState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(appDir, "state.json"), []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := d.activeColor("app-1"); got != "" {
+	if got := d.activeColor(ctx, "app-1"); got != "" {
 		t.Fatalf("activeColor on corrupt state = %q, want \"\"", got)
 	}
 }
@@ -127,14 +129,14 @@ func TestApplyBlueGreenSwapsColors(t *testing.T) {
 	if err := d.Apply(ctx, spec, &log); err != nil {
 		t.Fatalf("first apply: %v\n%s", err, log.String())
 	}
-	if got := d.activeColor(spec.AppID); got != "blue" {
+	if got := d.activeColor(ctx, spec.AppID); got != "blue" {
 		t.Fatalf("first deploy color = %q, want blue\n%s", got, log.String())
 	}
 
 	if err := d.Apply(ctx, spec, &log); err != nil {
 		t.Fatalf("second apply: %v\n%s", err, log.String())
 	}
-	if got := d.activeColor(spec.AppID); got != "green" {
+	if got := d.activeColor(ctx, spec.AppID); got != "green" {
 		t.Fatalf("second deploy color = %q, want green\n%s", got, log.String())
 	}
 	// Only one color may survive the hand-off, or the app pays for two
@@ -177,7 +179,7 @@ func TestApplyBlueGreenFailureKeepsOldColorLive(t *testing.T) {
 	if err := d.Apply(ctx, bad, &badLog); err == nil {
 		t.Fatalf("apply of a broken image succeeded\n%s", badLog.String())
 	}
-	if got := d.activeColor(spec.AppID); got != "blue" {
+	if got := d.activeColor(ctx, spec.AppID); got != "blue" {
 		t.Fatalf("active color = %q after a failed deploy, want blue\n%s", got, badLog.String())
 	}
 	if _, err := os.Stat(d.composePath(spec.AppID, "blue")); err != nil {
@@ -322,7 +324,7 @@ func TestApplyBlueGreenMigratesLegacyProject(t *testing.T) {
 	if err := d.Apply(ctx, spec, &bgLog); err != nil {
 		t.Fatalf("blue/green apply: %v\n%s", err, bgLog.String())
 	}
-	if got := d.activeColor(spec.AppID); got != "blue" {
+	if got := d.activeColor(ctx, spec.AppID); got != "blue" {
 		t.Fatalf("active color = %q, want blue\n%s", got, bgLog.String())
 	}
 	// The legacy project must be gone, not left racing the new color.
@@ -337,7 +339,7 @@ func TestApplyBlueGreenMigratesLegacyProject(t *testing.T) {
 	if err := d.Apply(ctx, spec, &next); err != nil {
 		t.Fatalf("follow-up apply: %v\n%s", err, next.String())
 	}
-	if got := d.activeColor(spec.AppID); got != "green" {
+	if got := d.activeColor(ctx, spec.AppID); got != "green" {
 		t.Fatalf("follow-up color = %q, want green", got)
 	}
 	if strings.Contains(next.String(), "one-time restart") {
@@ -373,7 +375,7 @@ func TestApplyRecreateRetiresColorProject(t *testing.T) {
 	if err := d.Apply(ctx, spec, &log); err != nil {
 		t.Fatalf("recreate apply: %v\n%s", err, log.String())
 	}
-	if got := d.activeColor(spec.AppID); got != "" {
+	if got := d.activeColor(ctx, spec.AppID); got != "" {
 		t.Fatalf("active color = %q after switching to recreate, want \"\"", got)
 	}
 	if _, err := os.Stat(d.composePath(spec.AppID, "blue")); !os.IsNotExist(err) {
@@ -423,7 +425,7 @@ func TestApplyComposeSource(t *testing.T) {
 		t.Fatalf("apply: %v\n%s", err, log.String())
 	}
 
-	args, service, err := d.activeProject(spec.AppID)
+	args, service, err := d.activeProject(ctx, spec.AppID)
 	if err != nil {
 		t.Fatalf("activeProject: %v", err)
 	}
