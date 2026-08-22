@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/bograh/cargo/internal/reconciler"
 )
 
 // appLogStreamer is the runtime-log capability the deploy provider exposes.
@@ -39,6 +41,21 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	appIDVal, _ := app.ID.Value()
 	appIDStr, _ := appIDVal.(string)
+
+	// Route log streaming through the app's worker host when it has one
+	// (Phase 12a). The target-bound provider reaches the right daemon.
+	if resolver, ok := s.hostsAdmin.(interface {
+		Resolve(ctx context.Context, appID string) (*reconciler.Target, string, error)
+	}); ok && app.HostID.Valid {
+		target, _, rerr := resolver.Resolve(r.Context(), appIDStr)
+		if rerr == nil && target != nil {
+			if fh, ok := streamer.(interface {
+				ForHost(reconciler.Target) *reconciler.Docker
+			}); ok {
+				streamer = fh.ForHost(*target)
+			}
+		}
+	}
 	rc, err := streamer.AppLogs(r.Context(), appIDStr, 200)
 	if err != nil {
 		Error(w, http.StatusConflict, "app_not_running", "no running container for this app yet")

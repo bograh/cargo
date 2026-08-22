@@ -84,6 +84,14 @@ Cargo runs several background safeguards, all configurable via env vars in `depl
 - **Master-key rotation** — if `CARGO_MASTER_KEY` leaks, `cargod rotate-key` re-seals every stored secret (env vars, registry credentials, database passwords, SMTP/GitHub/OIDC/webhook settings) under a new key in one transaction; `cargod gen-key` produces one. Stop the control plane, rotate, update `.env`, start. See [Operations](https://usecargo.vercel.app/docs/operations/).
 - **Audit log** — every state-changing action is recorded (who/what/when), viewable under **Admin → Audit log** and per-org; retained `CARGO_AUDIT_RETENTION_DAYS` (180) days.
 
+## Worker hosts (multi-server, early access)
+
+Apps are not limited to the control-plane machine. Under **Admin → Worker hosts**, an instance admin can register any machine reachable over SSH that runs Docker Engine with the compose plugin: paste the host's address (`user@host`), SSH port, and a private key. Cargo seals the key with the master key, pins the host's fingerprint on first contact (a later mismatch aborts every operation to that host), and never touches its own `~/.ssh` or `~/.docker` — each host gets an isolated docker context under `<dataDir>/hosts/<id>/`.
+
+When creating an app, pick a worker host in the form; its domains must resolve to that host's IP (each worker runs its own Traefik/proxy stack — see [the multi-server design](docs/superpowers/specs/2026-08-22-cargo-multi-server-design.md)). Blue/green deploys work identically on workers; if a worker goes unreachable mid-deploy the deployment fails cleanly and other hosts are unaffected.
+
+Notes for this release: managed databases remain single-host; per-host metrics collection arrives with slice 12b; log streaming already follows the app's host. If Docker or the compose plugin is missing on the worker, verification reports `degraded` with a copy-paste install command — Cargo never installs software on your hosts by itself.
+
 ## Documentation
 
 - [PRD](PRD.md) — product requirements

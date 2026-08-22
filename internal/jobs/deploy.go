@@ -212,7 +212,9 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		if err := p.Deployments.SetHost(ctx, dep.ID, app.HostID); err != nil {
 			return fmt.Errorf("record deployment host: %w", err)
 		}
-		if fh, ok := provider.(interface{ ForHost(reconciler.Target) *reconciler.Docker }); ok {
+		if fh, ok := provider.(interface {
+			ForHost(reconciler.Target) *reconciler.Docker
+		}); ok {
 			_, _ = fmt.Fprintf(logw, "==> deploying to worker host %s\n", hostLabel(target))
 			provider = fh.ForHost(*target)
 		} else {
