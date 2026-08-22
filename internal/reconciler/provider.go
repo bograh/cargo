@@ -43,6 +43,11 @@ func (d *Docker) ForHost(t Target) *Docker {
 	return &Docker{dataDir: d.dataDir, target: &tt, HealthTimeout: d.HealthTimeout}
 }
 
+// ForTarget is the seam-friendly form of ForHost: consumers (the deploy
+// pipeline, log streaming) hold DeployProvider values and fakes can
+// implement this without constructing a real Docker.
+func (d *Docker) ForTarget(t Target) DeployProvider { return d.ForHost(t) }
+
 // buildCmd is the single point where target routing happens: every docker
 // exec in this package flows through it. Local invocations inherit the
 // process env exactly as they always did; host invocations carry the
@@ -241,23 +246,9 @@ func (d *Docker) downColor(ctx context.Context, appID, color string, log io.Writ
 	_ = os.Remove(filepath.Join(d.colorDir(appID, ""), ".env"))
 }
 
-func run(ctx context.Context, log io.Writer, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout, cmd.Stderr = log, log
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
-	}
-	return nil
-}
-
-// runCompose / outputCompose invoke `docker compose` with a project's `-f`
-// arguments followed by the subcommand. A compose-source app carries two files,
-// so the file set can no longer be a single fixed flag pair.
-func runCompose(ctx context.Context, log io.Writer, files []string, args ...string) error {
-	full := append([]string{"compose"}, files...)
-	return run(ctx, log, "docker", append(full, args...)...)
-}
-
+// outputCompose invokes `docker compose` with a project's `-f` arguments
+// followed by the subcommand. A compose-source app carries two files, so the
+// file set can no longer be a single fixed flag pair.
 func outputCompose(ctx context.Context, files []string, args ...string) (string, error) {
 	full := append([]string{"compose"}, files...)
 	return output(ctx, "docker", append(full, args...)...)

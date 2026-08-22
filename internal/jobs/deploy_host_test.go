@@ -20,9 +20,9 @@ type fakeHostProvider struct {
 	targets []reconciler.Target
 }
 
-func (f *fakeHostProvider) ForHost(t reconciler.Target) *reconciler.Docker {
+func (f *fakeHostProvider) ForTarget(t reconciler.Target) reconciler.DeployProvider {
 	f.targets = append(f.targets, t)
-	return nil // never used as a real provider in tests
+	return f
 }
 
 // stubRouter is a canned HostRouter.

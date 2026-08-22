@@ -93,7 +93,7 @@ func TestMultiServerMigrationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open for goose: %v", err)
 	}
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 	goose.SetBaseFS(migrations)
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("dialect: %v", err)

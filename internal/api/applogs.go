@@ -49,10 +49,12 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 	}); ok && app.HostID.Valid {
 		target, _, rerr := resolver.Resolve(r.Context(), appIDStr)
 		if rerr == nil && target != nil {
-			if fh, ok := streamer.(interface {
-				ForHost(reconciler.Target) *reconciler.Docker
+			if fb, ok := streamer.(interface {
+				ForTarget(reconciler.Target) reconciler.DeployProvider
 			}); ok {
-				streamer = fh.ForHost(*target)
+				if bound, isStreamer := fb.ForTarget(*target).(appLogStreamer); isStreamer {
+					streamer = bound
+				}
 			}
 		}
 	}
