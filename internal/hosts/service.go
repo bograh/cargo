@@ -119,17 +119,67 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 }
 
 // ReplaceKey re-seals and stores a new private key for the host (the
-// recovery path when a stored key is unreadable).
-func (s *Service) ReplaceKey(ctx context.Context, id pgtype.UUID, keyPEM []byte) error {
-	if _, err := parseKeyPEM(keyPEM); err != nil {
+// recovery path when a stored key is unreadable or was rotated on the
+// worker).
+func (s *Service) ReplaceKey(ctx context.Context, id, keyPEM string) error {
+	if _, err := parseKeyPEM([]byte(keyPEM)); err != nil {
 		return fmt.Errorf("%w: %v", ErrValidation, err)
 	}
-	sealed, err := s.box.Seal(keyPEM)
+	sealed, err := s.box.Seal([]byte(keyPEM))
 	if err != nil {
 		return fmt.Errorf("seal key: %w", err)
 	}
-	err = s.q.SetHostKey(ctx, sqlc.SetHostKeyParams{ID: id, PrivateKeyEnc: sealed})
+	_, err = s.pool.Exec(ctx,
+		`UPDATE hosts SET private_key_enc = $2 WHERE id = $1::uuid`, id, sealed)
 	return err
+}
+
+// GetByID loads one host by textual UUID.
+func (s *Service) GetByID(ctx context.Context, id string) (sqlc.Host, error) {
+	var h sqlc.Host
+	err := s.pool.QueryRow(ctx, `SELECT * FROM hosts WHERE id = $1::uuid`, id).Scan(
+		&h.ID, &h.Name, &h.Address, &h.Port, &h.PrivateKeyEnc, &h.KeyVersion,
+		&h.HostKeyFingerprint, &h.Status, &h.EngineVersion, &h.CpuCount,
+		&h.MemTotalMb, &h.AppsDomainSuffix, &h.LetsencryptEmail, &h.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sqlc.Host{}, ErrNotFound
+	}
+	return h, err
+}
+
+// PinFingerprint persists the TOFU-pinned host key fingerprint.
+func (s *Service) PinFingerprint(ctx context.Context, id, fingerprint string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE hosts SET host_key_fingerprint = $2 WHERE id = $1::uuid`, id, fingerprint)
+	return err
+}
+
+// SetStatus records liveness without capacity detail.
+func (s *Service) SetStatus(ctx context.Context, id, status string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE hosts SET status = $2 WHERE id = $1::uuid`, id, status)
+	return err
+}
+
+// SetStatusVersioned records liveness plus the observed Engine version.
+func (s *Service) SetStatusVersioned(ctx context.Context, id, status, engineVersion string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE hosts SET status = $2, engine_version = $3 WHERE id = $1::uuid`,
+		id, status, pgText(engineVersion))
+	return err
+}
+
+// UpdateCapacity records a full verification result.
+func (s *Service) UpdateCapacity(ctx context.Context, id, status, engineVersion string, cpu int32, memTotalMB int64) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE hosts SET status = $2, engine_version = $3, cpu_count = $4,
+		                  mem_total_mb = $5
+		WHERE id = $1::uuid`, id, status, pgText(engineVersion), cpu, memTotalMB)
+	return err
+}
+
+func pgText(s string) pgtype.Text {
+	return pgtype.Text{String: s, Valid: s != ""}
 }
 
 // parseKeyPEM accepts any private key shape ssh can use (OpenSSH, PEM RSA /

@@ -13,9 +13,9 @@ import (
 
 const createHost = `-- name: CreateHost :one
 INSERT INTO hosts (
-    name, address, port, private_key_enc, key_version,
+    name, address, port, private_key_enc,
     apps_domain_suffix, letsencrypt_email
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, name, address, port, private_key_enc, key_version, host_key_fingerprint, status, engine_version, cpu_count, mem_total_mb, apps_domain_suffix, letsencrypt_email, created_at
 `
 
@@ -24,7 +24,6 @@ type CreateHostParams struct {
 	Address          string
 	Port             int32
 	PrivateKeyEnc    []byte
-	KeyVersion       int32
 	AppsDomainSuffix string
 	LetsencryptEmail string
 }
@@ -35,7 +34,6 @@ func (q *Queries) CreateHost(ctx context.Context, arg CreateHostParams) (Host, e
 		arg.Address,
 		arg.Port,
 		arg.PrivateKeyEnc,
-		arg.KeyVersion,
 		arg.AppsDomainSuffix,
 		arg.LetsencryptEmail,
 	)

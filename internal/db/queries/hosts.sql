@@ -1,8 +1,8 @@
 -- name: CreateHost :one
 INSERT INTO hosts (
-    name, address, port, private_key_enc, key_version,
+    name, address, port, private_key_enc,
     apps_domain_suffix, letsencrypt_email
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: ListHosts :many

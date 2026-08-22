@@ -23,6 +23,8 @@ import (
 	"github.com/bograh/cargo/internal/deployments"
 	"github.com/bograh/cargo/internal/events"
 	"github.com/bograh/cargo/internal/github"
+	"github.com/bograh/cargo/internal/hostmgr"
+	"github.com/bograh/cargo/internal/hosts"
 	"github.com/bograh/cargo/internal/jobs"
 	"github.com/bograh/cargo/internal/mailer"
 	"github.com/bograh/cargo/internal/metrics"
@@ -171,6 +173,8 @@ func main() {
 	srv.WireDatabases(dbSvc)
 	srv.WireNotify(notifySvc)
 	srv.WireAudit(audit.NewService(pool))
+	hostSvc := hosts.NewService(pool, box)
+	srv.WireHosts(hostmgr.NewManager(cfg.DataDir, hostSvc), hostSvc)
 
 	// Control-plane self-metrics on a separate internal-only listener (never
 	// routed by Traefik / never on the public API port).

@@ -55,6 +55,7 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Use(s.auditMiddleware)
 			r.Route("/orgs", func(r chi.Router) {
 				r.Get("/{orgID}/audit", s.handleOrgAudit)
+				r.Get("/{orgID}/hosts", s.handleListOrgHosts)
 				r.Post("/", s.handleCreateOrg)
 				r.Get("/", s.handleListOrgs)
 				r.Route("/{orgID}", func(r chi.Router) {
@@ -118,6 +119,14 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Get("/audit", s.handleAdminAudit)
 			r.Get("/users", s.handleAdminListUsers)
 			r.Get("/orgs", s.handleAdminListOrgs)
+			r.Route("/hosts", func(r chi.Router) {
+				r.Post("/", s.handleCreateHost)
+				r.Get("/", s.handleListHosts)
+				r.Route("/{hostID}", func(r chi.Router) {
+					r.Delete("/", s.handleDeleteHost)
+					r.Put("/key", s.handleReplaceHostKey)
+				})
+			})
 			r.Get("/settings/github-app", s.handleGetGithubApp)
 			r.Put("/settings/github-app", s.handlePutGithubApp)
 			r.Get("/settings/github-app/manifest", s.handleGithubManifestStart)

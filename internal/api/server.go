@@ -109,6 +109,8 @@ type Server struct {
 	metrics          MetricStore
 	notify           NotifyService
 	audit            AuditService
+	hostsAdmin       HostsAdmin
+	hostSvc          HostReader
 }
 
 // AuditService is satisfied by *audit.Service.
@@ -132,6 +134,12 @@ type NotifyService interface {
 
 // WireNotify attaches the notification service used by the admin webhook API.
 func (s *Server) WireNotify(n NotifyService) { s.notify = n }
+
+// WireHosts wires the worker-host admin collaborator (nil = feature off).
+func (s *Server) WireHosts(h HostsAdmin, reader HostReader) {
+	s.hostsAdmin = h
+	s.hostSvc = reader
+}
 
 // MetricStore is satisfied by *metrics.Store.
 type MetricStore interface {
