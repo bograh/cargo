@@ -40,6 +40,7 @@ type Result struct {
 	DBInstances   int
 	DBAttachments int
 	Settings      int
+	HostKeys      int
 	// AlreadyRotated is true when every secret was already readable with the
 	// new key and none with the old — a rerun of a rotation that succeeded.
 	AlreadyRotated bool
@@ -50,7 +51,7 @@ type Result struct {
 }
 
 func (r Result) Total() int {
-	return r.RegistryCreds + r.EnvVars + r.DBInstances + r.DBAttachments + r.Settings
+	return r.RegistryCreds + r.EnvVars + r.DBInstances + r.DBAttachments + r.Settings + r.HostKeys
 }
 
 // ErrKeyMismatch means at least one secret could not be decrypted with either
@@ -191,6 +192,10 @@ func Run(ctx context.Context, pool *pgxpool.Pool, oldKey, newKey []byte) (Result
 	if _, err := tx.Exec(ctx, `UPDATE env_vars SET key_version = key_version + 1`); err != nil {
 		return Result{}, err
 	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE hosts SET key_version = key_version + 1 WHERE private_key_enc IS NOT NULL`); err != nil {
+		return Result{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Result{}, err
@@ -230,6 +235,42 @@ func collect(ctx context.Context, tx pgx.Tx, res *Result) ([]secret, error) {
 			table: "applications.registry_creds_enc", sealed: r.sealed, slot: &res.RegistryCreds,
 			update: func(ctx context.Context, tx pgx.Tx, b []byte) error {
 				_, err := tx.Exec(ctx, `UPDATE applications SET registry_creds_enc = $2 WHERE id::text = $1`, r.id, b)
+				return err
+			},
+		})
+	}
+
+	// hosts.private_key_enc — raw BYTEA, nullable. Worker SSH keys rotate
+	// like any other secret; a host whose key cannot be re-sealed aborts the
+	// rotation (it is recoverable by re-entering the key, but rotation should
+	// not silently strand it).
+	hostRowsRows, err := tx.Query(ctx,
+		`SELECT id::text, private_key_enc FROM hosts WHERE private_key_enc IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	type hostRow struct {
+		id     string
+		sealed []byte
+	}
+	var hostRows []hostRow
+	for hostRowsRows.Next() {
+		var r hostRow
+		if err := hostRowsRows.Scan(&r.id, &r.sealed); err != nil {
+			hostRowsRows.Close()
+			return nil, err
+		}
+		hostRows = append(hostRows, r)
+	}
+	hostRowsRows.Close()
+	if err := hostRowsRows.Err(); err != nil {
+		return nil, err
+	}
+	for _, r := range hostRows {
+		out = append(out, secret{
+			table: "hosts.private_key_enc", sealed: r.sealed, slot: &res.HostKeys,
+			update: func(ctx context.Context, tx pgx.Tx, b []byte) error {
+				_, err := tx.Exec(ctx, `UPDATE hosts SET private_key_enc = $2 WHERE id::text = $1`, r.id, b)
 				return err
 			},
 		})
