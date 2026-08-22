@@ -26,6 +26,8 @@ type Docker struct {
 	dataDir string
 	target  *Target
 	colors  ColorStore // nil = legacy state.json on disk
+	// containerStatusFn overrides daemon polling in tests; nil in production.
+	containerStatusFn func(ctx context.Context, args []string, service string) (cid, status, restarts string)
 	// HealthTimeout bounds the post-apply health gate (default 2 min).
 	HealthTimeout time.Duration
 }
@@ -409,20 +411,40 @@ func (d *Docker) applyBlueGreen(ctx context.Context, spec Spec, log io.Writer) e
 // the container-status gate when no HTTP healthcheck is configured.
 const stableFor = 10 * time.Second
 
+// containerStatus asks the daemon (local or, via the target env, remote)
+// for one container's identity and liveness. Split out from waitHealthy so
+// tests can drive the gate without a daemon.
+func (d *Docker) containerStatus(ctx context.Context, args []string, service string) (cid, status string, restarts string) {
+	if d.containerStatusFn != nil {
+		return d.containerStatusFn(ctx, args, service)
+	}
+	cid, err := d.outputCompose(ctx, args, "ps", "-q", service)
+	if err != nil || cid == "" {
+		return "", "", ""
+	}
+	status, _ = d.output(ctx, "docker", "inspect", "-f", "{{.State.Status}}", cid)
+	restarts, _ = d.output(ctx, "docker", "inspect", "-f", "{{.RestartCount}}", cid)
+	return cid, status, restarts
+}
+
 // waitHealthy gates the deploy. The container must start and stay running
 // (not exit or crash-loop). An HTTP readiness probe is opt-in: when the app
-// sets a HealthcheckPath, the deploy additionally waits for that path to
-// answer <500. With no path set, a container that stays up for a short
-// window is considered live — an HTTP 200 isn't required for every app.
+// sets a HealthcheckPath AND the control plane can reach container bridge
+// IPs (local targets only — a worker host's bridge network is unreachable
+// over SSH), the deploy additionally waits for that path to answer <500.
+// Remote targets rely on the daemon-side state plus Traefik's own load-
+// balancer healthcheck, which consumes the same compose-declared healthcheck.
+// With no path set, a container that stays up for a short window is
+// considered live — an HTTP 200 isn't required for every app.
 //
-// When the probe network is unreachable (dev hosts where container IPs are
-// not routable, e.g. Docker Desktop/WSL), the HTTP gate degrades to
-// "container stays running": in production the controlplane shares the
-// cargo-proxy network, so the HTTP gate is real there.
+// When the probe network is unreachable on a local target too (dev hosts,
+// e.g. Docker Desktop/WSL), the HTTP gate degrades the same way:
+// "container stays running". In production the controlplane shares the
+// cargo-proxy network, so the local HTTP gate is real there.
 func (d *Docker) waitHealthy(ctx context.Context, args []string, service string, spec Spec, log io.Writer) error {
 	deadline := time.Now().Add(d.HealthTimeout)
 	client := &http.Client{Timeout: 3 * time.Second}
-	httpCheck := spec.HealthcheckPath != ""
+	httpCheck := spec.HealthcheckPath != "" && d.target == nil
 	var runningSince time.Time
 	unreachableOnly := true
 	refused := false   // reachable host, nothing listening on spec.Port
@@ -431,12 +453,11 @@ func (d *Docker) waitHealthy(ctx context.Context, args []string, service string,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		cid, err := d.outputCompose(ctx, args, "ps", "-q", service)
-		if err != nil || cid == "" {
+		cid, state, restarts := d.containerStatus(ctx, args, service)
+		if cid == "" {
 			time.Sleep(2 * time.Second)
 			continue
 		}
-		state, _ := d.output(ctx, "docker", "inspect", "-f", "{{.State.Status}}", cid)
 		if state == "exited" || state == "dead" {
 			return fmt.Errorf("container exited during startup — check the app's logs")
 		}
@@ -445,7 +466,7 @@ func (d *Docker) waitHealthy(ctx context.Context, args []string, service string,
 			continue
 		}
 		// A restart during startup means the app crashed on boot.
-		if rc, _ := d.output(ctx, "docker", "inspect", "-f", "{{.RestartCount}}", cid); rc != "0" && rc != "" {
+		if restarts != "0" && restarts != "" {
 			return fmt.Errorf("container keeps restarting (crash loop) — check the app's logs")
 		}
 		if runningSince.IsZero() {
