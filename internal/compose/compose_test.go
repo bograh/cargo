@@ -308,3 +308,64 @@ func TestValidateRejectsUnreadableLabels(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
 }
+
+// The platform's own networks are reachable by name from any compose file that
+// declares them external — cargo-system carries the control-plane database,
+// and another app's project network carries that tenant's containers.
+func TestValidateRejectsExternalNetworks(t *testing.T) {
+	for _, tc := range []struct{ name, yaml, wantSubstr string }{
+		{"external true",
+			"services:\n  web:\n    image: x\n    networks: [sys]\nnetworks:\n  sys:\n    external: true\n",
+			"external"},
+		{"external long form",
+			"services:\n  web:\n    image: x\n    networks: [sys]\n" +
+				"networks:\n  sys:\n    external:\n      name: cargo_cargo-system\n",
+			"external"},
+		{"name override",
+			"services:\n  web:\n    image: x\n    networks: [sys]\n" +
+				"networks:\n  sys:\n    name: cargo_cargo-system\n",
+			"cargo_cargo-system"},
+		{"reserved top-level name",
+			"services:\n  web:\n    image: x\nnetworks:\n  cargo-proxy:\n    external: true\n",
+			"cargo-proxy"},
+		{"service joins reserved network",
+			"services:\n  web:\n    image: x\n    networks: [cargo-system]\n",
+			"cargo-system"},
+		{"service joins reserved network, map syntax",
+			"services:\n  web:\n    image: x\n    networks:\n      cargo-data:\n        aliases: [db]\n",
+			"cargo-data"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate([]byte(tc.yaml), root(t))
+			if !errors.Is(err, ErrUnsafe) {
+				t.Fatalf("err = %v, want ErrUnsafe", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Fatalf("error %q should name %q", err, tc.wantSubstr)
+			}
+		})
+	}
+}
+
+// A tenant splitting their own services onto a private network is ordinary
+// compose, and the overlay's cargo-proxy attachment does not replace it.
+func TestValidateAllowsPrivateNetworks(t *testing.T) {
+	y := `
+services:
+  web:
+    image: x
+    networks: [frontend, backend]
+  db:
+    image: postgres:16
+    networks:
+      backend:
+        aliases: [database]
+networks:
+  frontend:
+  backend:
+    driver: bridge
+`
+	if err := Validate([]byte(y), root(t)); err != nil {
+		t.Fatalf("private networks rejected: %v", err)
+	}
+}
