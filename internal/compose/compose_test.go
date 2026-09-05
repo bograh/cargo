@@ -265,3 +265,46 @@ func TestValidateRejectsHostEnvFile(t *testing.T) {
 		t.Fatalf("rejected a repo-relative env_file: %v", err)
 	}
 }
+
+// Traefik routes on labels, and its Docker provider watches every container on
+// cargo-proxy — so a router declared by a tenant claims a hostname across the
+// whole instance, not just their own app. Both label syntaxes have to be read,
+// because a file reaching Validate by either path is equally dangerous.
+func TestValidateRejectsTraefikLabels(t *testing.T) {
+	for _, tc := range []struct{ name, yaml string }{
+		{"list syntax", "services:\n  web:\n    image: x\n    labels:\n      - traefik.enable=true\n"},
+		{"map syntax", "services:\n  web:\n    image: x\n    labels:\n      traefik.enable: \"true\"\n"},
+		{"router rule", "services:\n  web:\n    image: x\n    labels:\n" +
+			"      traefik.http.routers.evil.rule: Host(`cargo.example.com`)\n"},
+		{"mixed case", "services:\n  web:\n    image: x\n    labels:\n      - Traefik.Enable=true\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate([]byte(tc.yaml), root(t))
+			if !errors.Is(err, ErrUnsafe) {
+				t.Fatalf("err = %v, want ErrUnsafe", err)
+			}
+			if !strings.Contains(err.Error(), `"web"`) {
+				t.Fatalf("error %q should name the offending service", err)
+			}
+		})
+	}
+}
+
+// A tenant's own labels are ordinary metadata; only the Traefik namespace is
+// reserved. Rejecting the rest would break every app that labels its images.
+func TestValidateAllowsOrdinaryLabels(t *testing.T) {
+	y := "services:\n  web:\n    image: x\n    labels:\n" +
+		"      com.example.team: platform\n      description: the web tier\n"
+	if err := Validate([]byte(y), root(t)); err != nil {
+		t.Fatalf("ordinary labels rejected: %v", err)
+	}
+}
+
+// A label block Validate cannot parse is one it cannot vouch for, so it fails
+// closed rather than treating the service as unlabelled.
+func TestValidateRejectsUnreadableLabels(t *testing.T) {
+	err := Validate([]byte("services:\n  web:\n    image: x\n    labels: 12\n"), root(t))
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}

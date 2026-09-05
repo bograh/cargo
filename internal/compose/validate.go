@@ -33,6 +33,15 @@ var ErrInvalid = errors.New("invalid compose file")
 // so the overlay cannot override them.
 const allowedSecurityOpt = "no-new-privileges:true"
 
+// reservedLabelPrefix is the label namespace Traefik routes on. Cargo emits
+// these itself in the overlay, one router per app bound to the domains the app
+// actually owns. A tenant that sets them too is not configuring their own app:
+// Traefik's Docker provider watches every container on cargo-proxy, so a
+// router declared here claims a hostname instance-wide — including the
+// platform's own — and an explicit `priority` wins the tie deterministically.
+// Whoever holds the hostname receives the session cookies sent to it.
+const reservedLabelPrefix = "traefik."
+
 type composeFile struct {
 	Services map[string]composeService `yaml:"services"`
 	Volumes  map[string]composeVolume  `yaml:"volumes"`
@@ -57,6 +66,7 @@ type composeService struct {
 	Build             yaml.Node   `yaml:"build"`
 	EnvFile           yaml.Node   `yaml:"env_file"`
 	LabelFile         yaml.Node   `yaml:"label_file"`
+	Labels            yaml.Node   `yaml:"labels"`
 }
 
 // composeVolume is a top-level volume definition. A "named" volume with
@@ -209,6 +219,18 @@ func validateServices(f composeFile, absRoot string) error {
 				"%w: service %q publishes ports; Cargo routes traffic through Traefik instead — "+
 					"remove the `ports:` block and set the app's exposed port", ErrUnsafe, name)
 		}
+		keys, err := labelKeys(svc.Labels)
+		if err != nil {
+			return fmt.Errorf("%w: service %q: could not read labels: %v", ErrInvalid, name, err)
+		}
+		for _, key := range keys {
+			if strings.HasPrefix(strings.ToLower(key), reservedLabelPrefix) {
+				return fmt.Errorf(
+					"%w: service %q sets the label %q; Cargo generates its own Traefik routing and a "+
+						"second router would claim a hostname instance-wide — remove the `traefik.*` labels "+
+						"and add the domain to the app instead", ErrUnsafe, name, key)
+			}
+		}
 		for _, node := range svc.Volumes {
 			source, err := volumeSource(node)
 			if err != nil {
@@ -340,6 +362,46 @@ func filePaths(node yaml.Node) []string {
 		return out
 	default:
 		return nil
+	}
+}
+
+// labelKeys reads a service's label keys. Compose accepts both a mapping of
+// key to value and a sequence of "key=value" strings; rendered configuration
+// uses the mapping form, but Validate is reachable with either. An
+// unrecognisable node is an error rather than an empty result — a label block
+// this cannot read is one it cannot vouch for.
+func labelKeys(node yaml.Node) ([]string, error) {
+	switch node.Kind {
+	case 0:
+		return nil, nil
+	case yaml.MappingNode:
+		var m map[string]yaml.Node
+		if err := node.Decode(&m); err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return keys, nil
+	case yaml.SequenceNode:
+		var items []yaml.Node
+		if err := node.Decode(&items); err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(items))
+		for _, item := range items {
+			var entry string
+			if err := item.Decode(&entry); err != nil {
+				return nil, err
+			}
+			key, _, _ := strings.Cut(entry, "=")
+			keys = append(keys, strings.TrimSpace(key))
+		}
+		return keys, nil
+	default:
+		return nil, fmt.Errorf("labels must be a mapping or a list")
 	}
 }
 
