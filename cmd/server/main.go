@@ -123,6 +123,7 @@ func main() {
 		DefaultCPULimit:  cfg.DefaultCPULimit,
 		DefaultPidsLimit: cfg.DefaultPidsLimit,
 		Notify:           notifySvc,
+		ImageLabels:      provider.ImageLabels,
 
 		DefaultDeployStrategy: cfg.DefaultDeployStrategy,
 		Hosts:                 hostMgr,

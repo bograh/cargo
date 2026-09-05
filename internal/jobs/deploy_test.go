@@ -498,3 +498,51 @@ func TestPipelineComposeMissingFile(t *testing.T) {
 		t.Fatalf("error should name the missing file, got %q", got.Error)
 	}
 }
+
+// Docker merges an image's own LABEL instructions into every container started
+// from it, and Traefik reads the merged set — so an image can carry the router
+// a compose file is no longer allowed to declare.
+func TestGuardImageLabels(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		labels     map[string]string
+		wantReject string
+	}{
+		{"no labels", map[string]string{}, ""},
+		{"ordinary labels", map[string]string{"org.opencontainers.image.source": "https://example.com"}, ""},
+		{"traefik enable", map[string]string{"traefik.enable": "true"}, "traefik.enable"},
+		{"router rule", map[string]string{
+			"traefik.http.routers.evil.rule": "Host(`cargo.example.com`)",
+		}, "traefik.http.routers.evil.rule"},
+		{"mixed case", map[string]string{"Traefik.Enable": "true"}, "Traefik.Enable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &Pipeline{ImageLabels: func(context.Context, string) (map[string]string, error) {
+				return tc.labels, nil
+			}}
+			err := p.guardImageLabels(context.Background(), p.ImageLabels, "app:v1")
+			if tc.wantReject == "" {
+				if err != nil {
+					t.Fatalf("image rejected: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("image accepted, want rejected")
+			}
+			if !strings.Contains(err.Error(), tc.wantReject) {
+				t.Fatalf("error %q should name the offending label %q", err, tc.wantReject)
+			}
+		})
+	}
+}
+
+// A gate that cannot read the image must not wave it through.
+func TestGuardImageLabelsFailsClosed(t *testing.T) {
+	p := &Pipeline{ImageLabels: func(context.Context, string) (map[string]string, error) {
+		return nil, io.ErrUnexpectedEOF
+	}}
+	if err := p.guardImageLabels(context.Background(), p.ImageLabels, "app:v1"); err == nil {
+		t.Fatal("unreadable image accepted, want error")
+	}
+}

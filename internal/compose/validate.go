@@ -42,6 +42,15 @@ const allowedSecurityOpt = "no-new-privileges:true"
 // Whoever holds the hostname receives the session cookies sent to it.
 const reservedLabelPrefix = "traefik."
 
+// ReservedLabel reports whether a label key belongs to the namespace Cargo
+// controls. It is exported because compose files are not the only way a label
+// reaches a container: Docker merges an image's own LABEL instructions into
+// every container started from it, so the deploy pipeline applies the same
+// rule to the images it is about to run.
+func ReservedLabel(key string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), reservedLabelPrefix)
+}
+
 type composeFile struct {
 	Services map[string]composeService `yaml:"services"`
 	Volumes  map[string]composeVolume  `yaml:"volumes"`
@@ -224,7 +233,7 @@ func validateServices(f composeFile, absRoot string) error {
 			return fmt.Errorf("%w: service %q: could not read labels: %v", ErrInvalid, name, err)
 		}
 		for _, key := range keys {
-			if strings.HasPrefix(strings.ToLower(key), reservedLabelPrefix) {
+			if ReservedLabel(key) {
 				return fmt.Errorf(
 					"%w: service %q sets the label %q; Cargo generates its own Traefik routing and a "+
 						"second router would claim a hostname instance-wide — remove the `traefik.*` labels "+

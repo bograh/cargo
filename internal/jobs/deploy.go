@@ -82,6 +82,12 @@ type Pipeline struct {
 	// nil (single-host installs): every app then deploys locally regardless
 	// of its host assignment.
 	Hosts HostRouter
+	// ImageLabels reads the labels baked into an image, gating the routing
+	// labels an image can smuggle past the compose validator. It is the
+	// fallback seam for fakes: a real provider answers for itself, because
+	// the daemon that will run the image is the one that must be asked —
+	// see imageLabelsVia.
+	ImageLabels imageLabelReader
 }
 
 // HostRouter is satisfied by *hostmgr.Manager.
@@ -89,6 +95,22 @@ type HostRouter interface {
 	// Resolve returns a nil target for a control-plane app. For a hosted app
 	// it returns the materialized target plus the host's recorded health.
 	Resolve(ctx context.Context, appID string) (target *reconciler.Target, hostStatus string, err error)
+}
+
+// imageLabelReader reads the labels baked into an image reference.
+type imageLabelReader func(ctx context.Context, ref string) (map[string]string, error)
+
+// imageLabelsVia picks the reader for a deploy. The image has to be inspected
+// on the daemon that is about to run it, so a deploy routed to a worker host
+// must ask that host — the control plane may not even hold the image. Every
+// real provider can answer; p.ImageLabels remains for fakes that cannot.
+func (p *Pipeline) imageLabelsVia(provider reconciler.DeployProvider) imageLabelReader {
+	if r, ok := provider.(interface {
+		ImageLabels(ctx context.Context, ref string) (map[string]string, error)
+	}); ok {
+		return r.ImageLabels
+	}
+	return p.ImageLabels
 }
 
 // Notifier is the deploy-notification seam, implemented by *notify.Service.
@@ -187,6 +209,33 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 	return nil
 }
 
+// guardImageLabels refuses an image that would declare its own Traefik
+// routing. Rejecting rather than stripping is deliberate: a label cannot be
+// unset once it is in an image, and an image built to claim someone else's
+// hostname has no benign reading.
+func (p *Pipeline) guardImageLabels(ctx context.Context, read imageLabelReader, ref string) error {
+	if read == nil {
+		return nil
+	}
+	labels, err := read(ctx, ref)
+	if err != nil {
+		return err
+	}
+	var reserved []string
+	for k := range labels {
+		if compose.ReservedLabel(k) {
+			reserved = append(reserved, k)
+		}
+	}
+	if len(reserved) == 0 {
+		return nil
+	}
+	slices.Sort(reserved)
+	return fmt.Errorf("image %s carries Traefik routing labels (%s); Docker merges an image's labels "+
+		"into the container it starts, so these would claim a hostname across the whole instance — "+
+		"rebuild the image without them", ref, strings.Join(reserved, ", "))
+}
+
 func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer) error {
 	app, err := p.Apps.GetRaw(ctx, dep.AppID)
 	if err != nil {
@@ -257,6 +306,17 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 			}
 		default:
 			return fmt.Errorf("unknown source type %q", app.SourceType)
+		}
+	}
+
+	// Docker merges an image's own LABEL instructions into every container
+	// started from it, and Traefik reads the merged set — so an image can
+	// carry the router a compose file is no longer allowed to declare. The
+	// compose source is exempt: its services' images are compose's to resolve,
+	// and only the overlay's designated service reaches cargo-proxy.
+	if imageTag != "" && app.SourceType != "compose" {
+		if err := p.guardImageLabels(ctx, p.imageLabelsVia(provider), imageTag); err != nil {
+			return err
 		}
 	}
 

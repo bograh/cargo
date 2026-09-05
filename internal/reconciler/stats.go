@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 )
@@ -117,4 +118,37 @@ func (d *Docker) AppStats(ctx context.Context, appID string) (ContainerStats, bo
 		return ContainerStats{}, false, err
 	}
 	return s, true, nil
+}
+
+// ImageLabels reports the labels baked into an image. Docker merges these into
+// every container started from the image, and Traefik's provider reads the
+// merged set — so an image is as much a source of routing labels as a compose
+// file is. A reference that is not present locally is pulled once before the
+// second attempt, so both registry images and locally-built tags resolve.
+//
+// Like every other docker invocation in this package it goes through the
+// receiver, so a provider bound to a worker host inspects the image on that
+// host — which is the one that will run it.
+func (d *Docker) ImageLabels(ctx context.Context, ref string) (map[string]string, error) {
+	inspect := func() (string, error) {
+		return d.output(ctx, "docker", "image", "inspect", "--format", "{{json .Config.Labels}}", ref)
+	}
+	out, err := inspect()
+	if err != nil {
+		if perr := d.run(ctx, io.Discard, "docker", "pull", ref); perr != nil {
+			return nil, fmt.Errorf("inspect image %s: %w", ref, err)
+		}
+		if out, err = inspect(); err != nil {
+			return nil, fmt.Errorf("inspect image %s: %w", ref, err)
+		}
+	}
+	// An image with no labels inspects as the JSON literal null, not as {}.
+	if strings.TrimSpace(out) == "null" {
+		return map[string]string{}, nil
+	}
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(out), &labels); err != nil {
+		return nil, fmt.Errorf("read labels of image %s: %w", ref, err)
+	}
+	return labels, nil
 }
