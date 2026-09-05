@@ -369,3 +369,23 @@ networks:
 		t.Fatalf("private networks rejected: %v", err)
 	}
 }
+
+// An app with a managed database attachment needs cargo-data as well as
+// cargo-proxy. The overlay is the only thing that can attach it: a tenant
+// naming a Cargo network themselves is now refused, so if the overlay does not
+// carry it the app gets a DATABASE_URL it cannot reach.
+func TestGenerateOverlayAttachesRequestedNetworks(t *testing.T) {
+	got := GenerateOverlay(OverlaySpec{
+		Slug: "shop", Service: "web", Port: 3000,
+		Domains:  []string{"shop.apps.example.com"},
+		Networks: []string{"cargo-proxy", "cargo-data"},
+	})
+	if !strings.Contains(got, "    networks:\n      - default\n      - cargo-proxy\n      - cargo-data\n") {
+		t.Fatalf("service should join both Cargo networks and the project default:\n%s", got)
+	}
+	for _, n := range []string{"cargo-proxy", "cargo-data"} {
+		if !strings.Contains(got, "  "+n+":\n    external: true\n") {
+			t.Fatalf("network %q should be declared external:\n%s", n, got)
+		}
+	}
+}

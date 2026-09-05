@@ -11,6 +11,10 @@ type OverlaySpec struct {
 	Service string   // the service that receives traffic
 	Port    int32    // the port that service listens on
 	Domains []string // [0] is the auto subdomain; the rest are custom
+	// Networks are the Cargo-managed networks the traffic-serving service
+	// joins, alongside the project's own default. Empty means cargo-proxy
+	// alone; an app with a managed database attachment also needs cargo-data.
+	Networks []string
 	// Resource caps applied to the web service. The user's other services keep
 	// whatever they declared — capping a database the user configured would be
 	// a surprising thing for a deploy to do.
@@ -41,6 +45,11 @@ func GenerateOverlay(spec OverlaySpec) string {
 		return strings.Join(hosts, " || ")
 	}
 
+	networks := spec.Networks
+	if len(networks) == 0 {
+		networks = []string{"cargo-proxy"}
+	}
+
 	fmt.Fprintf(&b, "name: cargo-app-%s\n", spec.Slug)
 	b.WriteString("services:\n")
 	fmt.Fprintf(&b, "  %s:\n", spec.Service)
@@ -61,7 +70,10 @@ func GenerateOverlay(spec OverlaySpec) string {
 	b.WriteString("    security_opt:\n      - no-new-privileges:true\n")
 	b.WriteString("    logging:\n      driver: json-file\n      options:\n")
 	b.WriteString("        max-size: \"10m\"\n        max-file: \"3\"\n")
-	b.WriteString("    networks:\n      - default\n      - cargo-proxy\n")
+	b.WriteString("    networks:\n      - default\n")
+	for _, n := range networks {
+		fmt.Fprintf(&b, "      - %s\n", n)
+	}
 	b.WriteString("    labels:\n")
 	b.WriteString("      - traefik.enable=true\n")
 	fmt.Fprintf(&b, "      - traefik.http.routers.%s.rule=%s\n", router, hostRule(spec.Domains[:1]))
@@ -76,6 +88,9 @@ func GenerateOverlay(spec OverlaySpec) string {
 		fmt.Fprintf(&b, "      - traefik.http.routers.%s.service=%s\n", custom, router)
 	}
 	fmt.Fprintf(&b, "      - traefik.http.services.%s.loadbalancer.server.port=%d\n", router, spec.Port)
-	b.WriteString("networks:\n  cargo-proxy:\n    external: true\n")
+	b.WriteString("networks:\n")
+	for _, n := range networks {
+		fmt.Fprintf(&b, "  %s:\n    external: true\n", n)
+	}
 	return b.String()
 }

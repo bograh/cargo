@@ -166,7 +166,7 @@ func (d *Docker) writeProject(spec Spec) (string, error) {
 		}
 		overlay := compose.GenerateOverlay(compose.OverlaySpec{
 			Slug: spec.Slug, Service: spec.ComposeService, Port: spec.Port,
-			Domains:     spec.Domains,
+			Domains: spec.Domains, Networks: spec.Networks,
 			MemoryLimit: spec.MemoryLimit, CPULimit: spec.CPULimit, PidsLimit: spec.PidsLimit,
 		})
 		if err := os.WriteFile(composePath, []byte(overlay), 0o644); err != nil {
