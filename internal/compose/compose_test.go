@@ -389,3 +389,56 @@ func TestGenerateOverlayAttachesRequestedNetworks(t *testing.T) {
 		}
 	}
 }
+
+// Compose merges by service name, so a service the overlay does not mention
+// keeps whatever the tenant declared: no memory or pids ceiling, no
+// no-new-privileges, and unrotated logs that fill the host disk. Capping only
+// the web tier bounds nothing — the work moves to a sidecar.
+func TestGenerateOverlayHardensEveryService(t *testing.T) {
+	got := GenerateOverlay(OverlaySpec{
+		Slug: "shop", Service: "web", Port: 3000,
+		Services:    []string{"web", "worker", "cache"},
+		Domains:     []string{"shop.apps.example.com"},
+		MemoryLimit: "512m", CPULimit: "1", PidsLimit: 512,
+	})
+	for _, svc := range []string{"web", "worker", "cache"} {
+		if !strings.Contains(got, "\n  "+svc+":\n") {
+			t.Fatalf("service %q missing from overlay:\n%s", svc, got)
+		}
+	}
+	for _, want := range []string{"mem_limit: 512m", "cpus: 1", "pids_limit: 512",
+		"no-new-privileges:true", "max-size: \"10m\""} {
+		if n := strings.Count(got, want); n != 3 {
+			t.Fatalf("%q written %d times, want once per service (3):\n%s", want, n, got)
+		}
+	}
+}
+
+// Routing, the app's environment and the proxy network belong to the traffic
+// service alone: a worker has no business holding the app's credentials, and a
+// second routed container would split the app's traffic.
+func TestGenerateOverlayRoutesOnlyTheTrafficService(t *testing.T) {
+	got := GenerateOverlay(OverlaySpec{
+		Slug: "shop", Service: "web", Port: 3000,
+		Services: []string{"web", "worker"},
+		Domains:  []string{"shop.apps.example.com"},
+	})
+	for _, once := range []string{"traefik.enable=true", "env_file: .env", "restart: unless-stopped",
+		"- cargo-proxy\n"} {
+		if n := strings.Count(got, once); n != 1 {
+			t.Fatalf("%q written %d times, want exactly once:\n%s", once, n, got)
+		}
+	}
+}
+
+// A caller that does not enumerate services still gets a working overlay for
+// the traffic service.
+func TestGenerateOverlayDefaultsToTheTrafficService(t *testing.T) {
+	got := GenerateOverlay(OverlaySpec{
+		Slug: "shop", Service: "web", Port: 3000,
+		Domains: []string{"shop.apps.example.com"},
+	})
+	if !strings.Contains(got, "\n  web:\n") || !strings.Contains(got, "traefik.enable=true") {
+		t.Fatalf("overlay should still describe the traffic service:\n%s", got)
+	}
+}

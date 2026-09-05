@@ -89,7 +89,7 @@ func TestValidateComposeSourceClosesRenderBypasses(t *testing.T) {
 				AppID: "v-1", Slug: "v-test", Port: 80,
 				ComposeFile: "docker-compose.yml", ComposeService: "web", SourceDir: src,
 			}
-			err := d.validateComposeSource(context.Background(), spec)
+			_, err := d.validateComposeSource(context.Background(), spec)
 			if err == nil {
 				t.Fatalf("bypass NOT closed: compose config for %q validated clean", tc.name)
 			}
@@ -140,8 +140,14 @@ volumes:
 		AppID: "v-2", Slug: "v-ok", Port: 80,
 		ComposeFile: "docker-compose.yml", ComposeService: "web", SourceDir: src,
 	}
-	if err := d.validateComposeSource(context.Background(), spec); err != nil {
+	services, err := d.validateComposeSource(context.Background(), spec)
+	if err != nil {
 		t.Fatalf("realistic multi-service app rejected: %v", err)
+	}
+	// The overlay writes Cargo's hardening per service, so the gate has to
+	// report every service the rendered config defines, not just the web one.
+	if len(services) < 2 {
+		t.Fatalf("services = %v, want every service in the rendered config", services)
 	}
 }
 
@@ -157,7 +163,7 @@ func TestValidateComposeSourceSurfacesComposeError(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := NewDocker(t.TempDir())
-	err := d.validateComposeSource(context.Background(), Spec{
+	_, err := d.validateComposeSource(context.Background(), Spec{
 		AppID: "v-3", Slug: "v-err", ComposeFile: "docker-compose.yml",
 		ComposeService: "web", SourceDir: src,
 	})
