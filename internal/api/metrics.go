@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,22 +71,28 @@ func (s *Server) handleAppMetricsStream(w http.ResponseWriter, r *http.Request) 
 		appError(w, err)
 		return
 	}
-	flusher, ok := w.(http.Flusher)
+	ctx, flusher, cleanup, ok := s.beginStream(w, r, func(ctx context.Context) error {
+		u, err := s.revalidate(ctx, r)
+		if err != nil {
+			return err
+		}
+		_, err = s.apps.Get(ctx, id, u.ID)
+		return err
+	})
 	if !ok {
-		Error(w, http.StatusInternalServerError, "internal", "streaming unsupported")
 		return
 	}
+	defer cleanup()
+
 	appIDStr := uuidString(id)
 	ch, cancel := s.hub.Subscribe(appmetrics.MetricsTopic(appIDStr))
 	defer cancel()
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
+	startSSE(w)
 	send := func(b []byte) { _, _ = fmt.Fprintf(w, "data: %s\n\n", b); flusher.Flush() }
 
 	// Replay the latest stored sample so the chart shows data immediately.
-	if m, err := s.metrics.Latest(r.Context(), id); err == nil {
+	if m, err := s.metrics.Latest(ctx, id); err == nil {
 		if b, err := json.Marshal(metricJSON(m)); err == nil {
 			send(b)
 		}
@@ -96,7 +103,7 @@ func (s *Server) handleAppMetricsStream(w http.ResponseWriter, r *http.Request) 
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case msg := <-ch:
 			send(msg)

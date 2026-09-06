@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,20 +152,26 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		deploymentError(w, err)
 		return
 	}
-	flusher, ok := w.(http.Flusher)
+	ctx, flusher, cleanup, ok := s.beginStream(w, r, func(ctx context.Context) error {
+		u, err := s.revalidate(ctx, r)
+		if err != nil {
+			return err
+		}
+		_, err = s.deps.Get(ctx, id, u.ID)
+		return err
+	})
 	if !ok {
-		Error(w, http.StatusInternalServerError, "internal", "streaming unsupported")
 		return
 	}
+	defer cleanup()
+
 	idStr := chi.URLParam(r, "deploymentID")
 
 	// Subscribe before replay so no live line is missed.
 	ch, cancel := s.hub.Subscribe("deploy:" + idStr)
 	defer cancel()
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
+	startSSE(w)
 
 	send := func(line string) {
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", line)
@@ -184,7 +191,7 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case msg := <-ch:
 			for _, line := range splitLines(msg) {

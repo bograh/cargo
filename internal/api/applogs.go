@@ -34,11 +34,19 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "internal", "log streaming unsupported")
 		return
 	}
-	flusher, ok := w.(http.Flusher)
+	ctx, flusher, cleanup, ok := s.beginStream(w, r, func(ctx context.Context) error {
+		u, err := s.revalidate(ctx, r)
+		if err != nil {
+			return err
+		}
+		_, err = s.apps.Get(ctx, id, u.ID)
+		return err
+	})
 	if !ok {
-		Error(w, http.StatusInternalServerError, "internal", "streaming unsupported")
 		return
 	}
+	defer cleanup()
+
 	appIDVal, _ := app.ID.Value()
 	appIDStr, _ := appIDVal.(string)
 
@@ -47,7 +55,7 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 	if resolver, ok := s.hostsAdmin.(interface {
 		Resolve(ctx context.Context, appID string) (*reconciler.Target, string, error)
 	}); ok && app.HostID.Valid {
-		target, _, rerr := resolver.Resolve(r.Context(), appIDStr)
+		target, _, rerr := resolver.Resolve(ctx, appIDStr)
 		if rerr == nil && target != nil {
 			if fb, ok := streamer.(interface {
 				ForTarget(reconciler.Target) reconciler.DeployProvider
@@ -58,22 +66,23 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	rc, err := streamer.AppLogs(r.Context(), appIDStr, 200)
+	// The reader is bound to the stream context, so a lapsed session kills the
+	// underlying `docker compose logs -f` process rather than leaving it
+	// running for a viewer who is no longer allowed to read it. That holds for
+	// a worker host too: the bound streamer runs the same command over SSH.
+	rc, err := streamer.AppLogs(ctx, appIDStr, 200)
 	if err != nil {
 		Error(w, http.StatusConflict, "app_not_running", "no running container for this app yet")
 		return
 	}
 	defer func() { _ = rc.Close() }()
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-
+	startSSE(w)
 	scanner := bufio.NewScanner(rc)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		default:
 		}

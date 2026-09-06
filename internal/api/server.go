@@ -114,6 +114,9 @@ type Server struct {
 	audit            AuditService
 	hostsAdmin       HostsAdmin
 	hostSvc          HostReader
+	// streams bounds concurrent Server-Sent Events connections. Zero value is
+	// usable, so a partially-wired Server (tests) still enforces the caps.
+	streams streamLimiter
 }
 
 // AuditService is satisfied by *audit.Service.
