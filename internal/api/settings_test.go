@@ -12,9 +12,10 @@ import (
 )
 
 type stubInstanceSettings struct {
-	suffix string
-	smtp   *settings.SMTPConfig
-	err    error
+	suffix       string
+	smtp         *settings.SMTPConfig
+	registration string
+	err          error
 }
 
 func (s *stubInstanceSettings) Suffix(context.Context) (string, error) { return s.suffix, s.err }
@@ -31,6 +32,19 @@ func (s *stubInstanceSettings) SetSMTP(_ context.Context, cfg settings.SMTPConfi
 }
 func (s *stubInstanceSettings) ClearSMTP(context.Context) error {
 	s.smtp = nil
+	return s.err
+}
+func (s *stubInstanceSettings) Registration(context.Context) (string, error) {
+	if s.registration == "" {
+		return settings.DefaultRegistration, nil
+	}
+	return s.registration, s.err
+}
+func (s *stubInstanceSettings) SetRegistration(_ context.Context, mode string) error {
+	if !settings.ValidRegistrationMode(mode) {
+		return settings.ErrValidation
+	}
+	s.registration = mode
 	return s.err
 }
 

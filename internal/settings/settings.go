@@ -18,11 +18,38 @@ import (
 )
 
 const (
-	keySuffix = "apps_domain_suffix"
-	keySMTP   = "smtp"
+	keySuffix       = "apps_domain_suffix"
+	keySMTP         = "smtp"
+	keyRegistration = "registration_mode"
 	// DefaultSuffix is used when the admin has not set one.
 	DefaultSuffix = "apps.localhost"
 )
+
+// Registration modes decide who may create an account on the instance.
+//
+// A Cargo instance hands whoever holds an account the ability to run
+// containers on the host, so an unset mode has to mean "not everyone". The
+// default is RegistrationInvite rather than RegistrationOpen for that reason —
+// including on upgrade, where no row exists yet.
+const (
+	// RegistrationOpen lets anyone who can reach the instance sign up.
+	RegistrationOpen = "open"
+	// RegistrationInvite requires a valid organisation invite token.
+	RegistrationInvite = "invite"
+	// RegistrationClosed refuses every registration.
+	RegistrationClosed = "closed"
+	// DefaultRegistration applies when no mode has been set.
+	DefaultRegistration = RegistrationInvite
+)
+
+// ValidRegistrationMode reports whether mode is one Cargo understands.
+func ValidRegistrationMode(mode string) bool {
+	switch mode {
+	case RegistrationOpen, RegistrationInvite, RegistrationClosed:
+		return true
+	}
+	return false
+}
 
 var ErrValidation = errors.New("validation failed")
 
@@ -69,6 +96,37 @@ func (s *Service) SetSuffix(ctx context.Context, suffix string) error {
 		return err
 	}
 	_, err = s.q.UpsertInstanceSetting(ctx, sqlc.UpsertInstanceSettingParams{Key: keySuffix, Value: value})
+	return err
+}
+
+// Registration returns the instance's registration mode, defaulting closed
+// enough to be safe when the setting is missing or unreadable: an instance
+// that cannot tell you its policy is not one to open the door on.
+func (s *Service) Registration(ctx context.Context) (string, error) {
+	row, err := s.q.GetInstanceSetting(ctx, keyRegistration)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DefaultRegistration, nil
+	}
+	if err != nil {
+		return DefaultRegistration, err
+	}
+	var v string
+	if err := json.Unmarshal(row.Value, &v); err != nil || !ValidRegistrationMode(v) {
+		return DefaultRegistration, nil
+	}
+	return v, nil
+}
+
+// SetRegistration stores the registration mode.
+func (s *Service) SetRegistration(ctx context.Context, mode string) error {
+	if !ValidRegistrationMode(mode) {
+		return fmt.Errorf("%w: registration must be open, invite, or closed", ErrValidation)
+	}
+	value, err := json.Marshal(mode)
+	if err != nil {
+		return err
+	}
+	_, err = s.q.UpsertInstanceSetting(ctx, sqlc.UpsertInstanceSettingParams{Key: keyRegistration, Value: value})
 	return err
 }
 

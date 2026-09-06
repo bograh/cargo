@@ -68,6 +68,9 @@ type OrgService interface {
 type AdminStore interface {
 	ListUsers(ctx context.Context) ([]sqlc.User, error)
 	ListAllOrganizations(ctx context.Context) ([]sqlc.Organization, error)
+	// AnyUserExists gates the bootstrap registration: the very first account
+	// has no invite to present and no admin to have set a policy.
+	AnyUserExists(ctx context.Context) (bool, error)
 }
 
 // AppService is satisfied by *apps.Service.
@@ -174,6 +177,8 @@ type InstanceSettings interface {
 	SMTP(ctx context.Context) (*settings.SMTPConfig, error)
 	SetSMTP(ctx context.Context, cfg settings.SMTPConfig) error
 	ClearSMTP(ctx context.Context) error
+	Registration(ctx context.Context) (string, error)
+	SetRegistration(ctx context.Context, mode string) error
 }
 
 // GitHubService is satisfied by *github.Service.

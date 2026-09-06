@@ -133,6 +133,7 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Get("/settings/github-app/manifest/callback", s.handleGithubManifestCallback)
 			r.Get("/settings", s.handleGetSettings)
 			r.Put("/settings/apps-domain-suffix", s.handlePutSuffix)
+			r.Put("/settings/registration", s.handlePutRegistration)
 			r.Put("/settings/smtp", s.handlePutSMTP)
 			r.Delete("/settings/smtp", s.handleDeleteSMTP)
 			r.Post("/settings/smtp/test", s.handleTestSMTP)

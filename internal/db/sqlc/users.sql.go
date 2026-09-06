@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const anyUserExists = `-- name: AnyUserExists :one
+SELECT EXISTS (SELECT 1 FROM users)
+`
+
+func (q *Queries) AnyUserExists(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, anyUserExists)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, password_hash, is_instance_admin)
 VALUES ($1, $2, NOT EXISTS (SELECT 1 FROM users))

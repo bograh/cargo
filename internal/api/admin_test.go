@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type stubAdmin struct{}
+type stubAdmin struct{ hasUsers bool }
 
 func (stubAdmin) ListUsers(_ context.Context) ([]sqlc.User, error) {
 	return []sqlc.User{{Email: "a@b.co", PasswordHash: pgtype.Text{String: "SECRET-HASH", Valid: true}}}, nil
@@ -19,6 +19,7 @@ func (stubAdmin) ListUsers(_ context.Context) ([]sqlc.User, error) {
 func (stubAdmin) ListAllOrganizations(_ context.Context) ([]sqlc.Organization, error) {
 	return []sqlc.Organization{{Name: "Acme", Slug: "acme"}}, nil
 }
+func (a stubAdmin) AnyUserExists(_ context.Context) (bool, error) { return a.hasUsers, nil }
 
 func adminRequest(t *testing.T, isAdmin bool, path string) *httptest.ResponseRecorder {
 	t.Helper()

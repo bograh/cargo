@@ -8,7 +8,7 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<User>;
-  register: (email: string, password: string) => Promise<User>;
+  register: (email: string, password: string, inviteToken?: string) => Promise<User>;
   logout: () => Promise<void>;
 }
 
@@ -31,11 +31,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return u;
   }, []);
 
-  const register = useCallback(async (email: string, password: string) => {
-    const u = await post<User>("/auth/register", { email, password });
-    setUser(u);
-    return u;
-  }, []);
+  const register = useCallback(
+    async (email: string, password: string, inviteToken?: string) => {
+      // An invite-only instance needs the token at sign-up, not just at accept.
+      const u = await post<User>("/auth/register", {
+        email,
+        password,
+        ...(inviteToken ? { invite_token: inviteToken } : {}),
+      });
+      setUser(u);
+      return u;
+    },
+    [],
+  );
 
   const logout = useCallback(async () => {
     await post("/auth/logout");

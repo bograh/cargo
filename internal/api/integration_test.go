@@ -113,10 +113,19 @@ func TestFullAuthOrgInviteFlow(t *testing.T) {
 		t.Fatal("invite token missing")
 	}
 
-	// Second user registers (not admin), sees no orgs, accepts the invite.
+	// The instance is invite-only by default, so a stranger with no token gets
+	// no account — the door is shut behind the first user.
+	stranger := &client{h: h}
+	if rec, _ := stranger.do(t, http.MethodPost, "/api/v1/auth/register",
+		`{"email":"mallory@x.co","password":"password-123"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("uninvited register: %d, want 403", rec.Code)
+	}
+
+	// Second user registers with the invite (not admin), sees no orgs until
+	// they accept it.
 	bob := &client{h: h}
 	rec, body = bob.do(t, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"bob@x.co","password":"password-123"}`)
+		`{"email":"bob@x.co","password":"password-123","invite_token":"`+token+`"}`)
 	if rec.Code != http.StatusCreated || body["is_instance_admin"] != false {
 		t.Fatalf("bob register: %d %v", rec.Code, body)
 	}

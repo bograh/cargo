@@ -62,7 +62,7 @@ export default function AcceptInvite() {
     setBusy(true);
     setError("");
     try {
-      if (mode === "register") await register(email, password);
+      if (mode === "register") await register(email, password, token);
       else await login(email, password);
       await accept();
     } catch (err) {

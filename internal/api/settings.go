@@ -35,10 +35,32 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 			// password intentionally omitted (write-only)
 		}
 	}
+	registration, err := s.instanceSettings.Registration(r.Context())
+	if err != nil {
+		settingsError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"apps_domain_suffix": suffix,
 		"smtp":               smtpOut,
+		"registration_mode":  registration,
 	})
+}
+
+// handlePutRegistration sets who may create an account (instance admin).
+func (s *Server) handlePutRegistration(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		Error(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	if err := s.instanceSettings.SetRegistration(r.Context(), body.Mode); err != nil {
+		settingsError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"registration_mode": body.Mode})
 }
 
 func (s *Server) handlePutSuffix(w http.ResponseWriter, r *http.Request) {

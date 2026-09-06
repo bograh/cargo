@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { api, del, post, put } from "../lib/api";
 import { useAuth } from "../auth";
-import type { User } from "../lib/types";
-import { Badge, Button, Card, FieldError, Icon, Input, Label, PageHeader, Spinner, Textarea, useToast } from "../components/ui";
+import type { RegistrationMode, User } from "../lib/types";
+import { Badge, Button, Card, FieldError, Icon, Input, Label, PageHeader, Select, Spinner, Textarea, useToast } from "../components/ui";
 import { AllAppsMonitor, HostMonitor } from "../components/HostMonitor";
 
 function SectionHeading({ eyebrow, title, aside }: { eyebrow: string; title: string; aside?: ReactNode }) {
@@ -22,7 +22,14 @@ function SectionHeading({ eyebrow, title, aside }: { eyebrow: string; title: str
 interface InstanceSettings {
   apps_domain_suffix: string;
   smtp: { configured: boolean; host?: string; port?: number; username?: string; from?: string };
+  registration_mode: RegistrationMode;
 }
+
+const REGISTRATION_HELP: Record<RegistrationMode, string> = {
+  open: "Anyone who can reach this instance can create an account — and an account can deploy containers on this server.",
+  invite: "New accounts need an invite link from an organization admin.",
+  closed: "Nobody new can sign up, invite link or not.",
+};
 
 function InstanceSettingsCard() {
   const qc = useQueryClient();
@@ -48,6 +55,16 @@ function InstanceSettingsCard() {
     setError(message);
     toast(message, "error");
   };
+
+  const saveRegistration = useMutation({
+    mutationFn: (mode: RegistrationMode) => put("/admin/settings/registration", { mode }),
+    onSuccess: () => {
+      setError("");
+      invalidate();
+      toast("Saved");
+    },
+    onError,
+  });
 
   const saveSuffix = useMutation({
     mutationFn: () => put("/admin/settings/apps-domain-suffix", { suffix }),
@@ -113,6 +130,23 @@ function InstanceSettingsCard() {
           </Button>
         </form>
         <p className="-mt-4 text-xs text-muted">Applies to new deployments; existing app URLs are unchanged.</p>
+
+        <div>
+          <Label htmlFor="registration">Who can sign up</Label>
+          <Select
+            id="registration"
+            value={data?.registration_mode ?? "invite"}
+            disabled={!data || saveRegistration.isPending}
+            onChange={(e) => saveRegistration.mutate(e.target.value as RegistrationMode)}
+          >
+            <option value="open">Anyone</option>
+            <option value="invite">Invited people only</option>
+            <option value="closed">Nobody</option>
+          </Select>
+          <p className="mt-1.5 text-xs text-muted">
+            {REGISTRATION_HELP[data?.registration_mode ?? "invite"]}
+          </p>
+        </div>
 
         <form
           className="space-y-3"
