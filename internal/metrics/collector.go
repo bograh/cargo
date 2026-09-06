@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"math"
 	"net/http"
 	"sync"
@@ -15,9 +16,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// StatSource yields a resource sample for one app (satisfied by *reconciler.Docker).
+// StatSource samples every app in one pass, keyed by app id (satisfied by
+// *reconciler.Docker). Apps with no running container are absent from the
+// result rather than reported as an error.
+//
+// Batched rather than per-app because `docker stats` costs a sampling interval
+// per *call*: asking one app at a time multiplied the tick by the number of
+// apps, and past roughly ten apps the tick no longer fit inside its own period.
 type StatSource interface {
-	AppStats(ctx context.Context, appID string) (reconciler.ContainerStats, bool, error)
+	AppStatsBatch(ctx context.Context, appIDs []string) (map[string]reconciler.ContainerStats, error)
 }
 
 // Sample is a single app's combined resource+traffic reading, published live.
@@ -132,12 +139,23 @@ func (c *Collector) CollectOnce(ctx context.Context) error {
 	c.last = now
 	c.mu.Unlock()
 
+	appIDs := make([]string, 0, len(apps))
+	for _, a := range apps {
+		appIDs = append(appIDs, uuidString(a.ID))
+	}
+	// A docker failure here loses one tick's app samples; the host sample below
+	// is independent and still worth recording.
+	stats, statsErr := c.stats.AppStatsBatch(ctx, appIDs)
+	if statsErr != nil {
+		slog.Warn("app stats sample failed", "err", statsErr)
+	}
+
 	runningApps := 0
 	for _, a := range apps {
 		appID := uuidString(a.ID)
-		rs, running, err := c.stats.AppStats(ctx, appID)
-		if err != nil || !running {
-			continue // not running or transient docker error — skip this tick
+		rs, running := stats[appID]
+		if !running {
+			continue // no container for this app right now
 		}
 		runningApps++
 		svc := "app-" + a.Slug + "@docker"

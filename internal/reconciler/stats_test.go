@@ -39,3 +39,43 @@ func TestParseDockerStats(t *testing.T) {
 		t.Errorf("net = %d/%d, want 1500/2000", s.NetRxBytes, s.NetTxBytes)
 	}
 }
+
+// docker stats identifies a container by its short id; compose ps returns the
+// full one. A batched sample is worthless if it cannot be matched back.
+func TestParseStatsLineReturnsContainerID(t *testing.T) {
+	line := `{"Container":"a1b2c3d4e5f6","CPUPerc":"1.50%","MemUsage":"12MiB / 512MiB","NetIO":"1kB / 2kB"}`
+	s, id, err := parseStatsLine(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "a1b2c3d4e5f6" {
+		t.Fatalf("id = %q, want the short container id", id)
+	}
+	if s.CPUPercent != 1.5 {
+		t.Fatalf("cpu = %v, want 1.5", s.CPUPercent)
+	}
+}
+
+func TestAttributeStats(t *testing.T) {
+	const (
+		fullA = "a1b2c3d4e5f6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		fullB = "b9b8b7b6b5b4bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+	byApp := map[string]string{"app-a": fullA, "app-b": fullB, "app-gone": "cccccccccccc"}
+	samples := map[string]ContainerStats{
+		"a1b2c3d4e5f6": {CPUPercent: 1},
+		"b9b8b7b6b5b4": {CPUPercent: 2},
+	}
+	got := attributeStats(byApp, samples)
+	if len(got) != 2 {
+		t.Fatalf("attributed %d apps, want 2", len(got))
+	}
+	if got["app-a"].CPUPercent != 1 || got["app-b"].CPUPercent != 2 {
+		t.Fatalf("samples attributed to the wrong apps: %+v", got)
+	}
+	// A container that vanished between resolution and sampling is absent, not
+	// attributed to somebody else.
+	if _, ok := got["app-gone"]; ok {
+		t.Fatal("an app with no sample was given one")
+	}
+}
