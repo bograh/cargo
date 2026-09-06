@@ -68,6 +68,8 @@ Each organization can provision managed Postgres (16/17) and Redis (7) instances
 
 Instance volumes live under `<dataDir>/databases/<id>`; manual snapshots (`pg_dumpall --clean` for Postgres, `BGSAVE` + `LASTSAVE` copy of `dump.rdb` for Redis) are written to `<dataDir>/db-backups/<id>/` and downloadable from the UI; provisioning logs land in `<dataDir>/db-logs/`.
 
+Redis instances choose between two modes at creation. Both give each attached app its own ACL user and its own logical database index, so no app can read another's keys or flush the instance. They differ only in pub/sub: `acl` denies channels entirely (redis channels are global, not scoped to an index), while `shared` grants them, so apps on that instance can publish and subscribe to each other's channels. Pick `shared` only if an app needs pub/sub.
+
 > Instances can optionally expose a host port for external clients (e.g. a local `psql`/`redis-cli`). Only enable this if you understand the instance will be reachable from outside the docker network.
 
 ## Operations & hardening

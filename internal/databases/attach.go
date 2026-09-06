@@ -69,10 +69,7 @@ func (s *Service) Attach(ctx context.Context, instanceID, appID, actor pgtype.UU
 	case "mongodb":
 		return s.attachMongo(ctx, inst, appID, app.Slug)
 	default: // redis
-		if inst.RedisMode.String == "acl" {
-			return s.attachRedisACL(ctx, inst, appID, app.Slug)
-		}
-		return s.attachRedisShared(ctx, inst, appID)
+		return s.attachRedis(ctx, inst, appID, app.Slug)
 	}
 }
 
@@ -213,7 +210,26 @@ func (s *Service) attachMongo(ctx context.Context, inst sqlc.DatabaseInstance, a
 	return url, att, dupAttachErr(err)
 }
 
-func (s *Service) attachRedisACL(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID, slug string) (string, sqlc.DatabaseAttachment, error) {
+// attachRedis provisions a per-app ACL user on the instance. Both redis modes
+// take this path: the difference between them is pub/sub, not credentials.
+//
+// It used to be more than that. "shared" mode handed every attached app the
+// instance's own admin password, separated from its neighbours by nothing but
+// a logical db index — so any app could SELECT another tenant's index and read
+// its keyspace, or FLUSHALL the instance. Nothing about supporting pub/sub
+// required that; an ACL user with channel access does the same job.
+//
+// Key isolation is identical in both modes: -select drops SELECT on every
+// index and +select|<idx> re-grants only this attachment's, so the user cannot
+// AUTH as, or read the keyspace of, anyone else. -@dangerous keeps FLUSHALL,
+// SWAPDB and friends away (SET/GET are not in @dangerous).
+//
+// Channels are where the modes differ, because redis pub/sub channels are
+// global — not scoped to a db index. "acl" denies them all (resetchannels), so
+// it is key-isolated with no pub/sub. "shared" grants them (allchannels),
+// which does mean apps on the instance can see each other's channels; that is
+// the whole reason to choose it, and it is now the only thing being shared.
+func (s *Service) attachRedis(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID, slug string) (string, sqlc.DatabaseAttachment, error) {
 	name := dbIdent(slug)
 	pass, err := genPassword()
 	if err != nil {
@@ -234,40 +250,19 @@ func (s *Service) attachRedisACL(ctx context.Context, inst sqlc.DatabaseInstance
 	if err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
-	// Restrict the user to a single logical db: -select drops SELECT on all
-	// indexes, +select|<idx> re-grants only its own. It cannot AUTH as, or
-	// read the keyspace of, any other user's index. -@dangerous keeps
-	// FLUSHALL/SWAPDB/etc. away (SET/GET are not in @dangerous). The password
-	// is fed via stdin, never on argv.
-	//
-	// resetchannels denies ALL pub/sub channel access: redis pub/sub channels
-	// are global (not scoped to the logical db index), so granting channels
-	// here would let acl-mode tenants PUBLISH/SUBSCRIBE across each other's
-	// channels. acl mode is therefore intentionally key-isolated with NO
-	// pub/sub; use shared mode if an app needs pub/sub.
-	cmd := fmt.Sprintf("ACL SETUSER %s on >%s allkeys resetchannels +@all -@admin -@dangerous -acl -select +select|%d\n",
-		name, pass, idx)
+	channels := "resetchannels"
+	if inst.RedisMode.String == "shared" {
+		channels = "allchannels"
+	}
+	// The password is fed via stdin, never on argv.
+	cmd := fmt.Sprintf("ACL SETUSER %s on >%s allkeys %s +@all -@admin -@dangerous -acl -select +select|%d\n",
+		name, pass, channels, idx)
 	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "redis", cmd,
 		"redis-cli", "--no-auth-warning"); err != nil {
 		_ = s.q.DeleteDatabaseAttachment(ctx, att.ID)
 		return "", sqlc.DatabaseAttachment{}, err
 	}
 	url := fmt.Sprintf("redis://%s:%s@%s:6379/%d", name, pass, dbHost(inst), idx)
-	return url, att, nil
-}
-
-func (s *Service) attachRedisShared(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID) (string, sqlc.DatabaseAttachment, error) {
-	adminPass, err := s.openSecret(inst.AdminSecret)
-	if err != nil {
-		return "", sqlc.DatabaseAttachment{}, err
-	}
-	att, idx, err := s.reserveIndex(ctx, inst.ID, sqlc.CreateDatabaseAttachmentParams{
-		InstanceID: inst.ID, AppID: appID,
-	})
-	if err != nil {
-		return "", sqlc.DatabaseAttachment{}, err
-	}
-	url := fmt.Sprintf("redis://:%s@%s:6379/%d", adminPass, dbHost(inst), idx)
 	return url, att, nil
 }
 
@@ -385,7 +380,9 @@ REVOKE CONNECT ON DATABASE %[1]s FROM %[1]s;
 			"sh", "-c", reconciler.MongoshAdmin); err != nil {
 			return err
 		}
-	case inst.RedisMode.String == "acl":
+	case att.AclUser.Valid:
+		// Gated on the attachment, not the instance mode: shared attachments
+		// now carry an ACL user too, and ones made before that do not.
 		if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "redis", "",
 			"redis-cli", "--no-auth-warning", "ACL", "DELUSER", att.AclUser.String); err != nil {
 			return err
@@ -472,13 +469,16 @@ func (s *Service) attachmentURL(inst sqlc.DatabaseInstance, att sqlc.DatabaseAtt
 			return "", err
 		}
 		return fmt.Sprintf("mongodb://%s:%s@%s:27017/%s?authSource=%s", att.RoleName.String, pass, host, att.DbName.String, att.DbName.String), nil
-	case att.AclUser.Valid && len(att.Secret) > 0: // redis acl
+	case att.AclUser.Valid && len(att.Secret) > 0: // redis, per-app ACL user
 		pass, err := s.openSecret(att.Secret)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("redis://%s:%s@%s:6379/%d", att.AclUser.String, pass, host, att.DbIndex.Int32), nil
-	default: // redis shared
+	default:
+		// A shared-mode attachment made before per-app ACL users existed. It
+		// carries no credential of its own, so its URL is still the instance
+		// admin password; re-attaching the app replaces it with an ACL user.
 		adminPass, err := s.openSecret(inst.AdminSecret)
 		if err != nil {
 			return "", err
