@@ -79,6 +79,13 @@ services:
       # CARGO_DEFAULT_MEM_LIMIT: "512m"
       # CARGO_DEFAULT_CPU_LIMIT: "1"
       # CARGO_DEFAULT_PIDS_LIMIT: "512"
+      # Ceiling on what an app may raise its own caps to. Unset means no
+      # ceiling, which is right for a single-operator install; set these on a
+      # shared instance, or the defaults above bound only the tenants who
+      # leave them alone.
+      # CARGO_MAX_MEM_LIMIT: "4g"
+      # CARGO_MAX_CPU_LIMIT: "2"
+      # CARGO_MAX_PIDS_LIMIT: "2048"
       # Default deploy strategy: "bluegreen" starts the new version alongside
       # the running one and switches only once it is healthy; "recreate"
       # replaces the container in place (brief downtime). Per-app overridable.

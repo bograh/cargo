@@ -4,8 +4,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 )
+
+// memLimitRe matches a docker memory value, e.g. "512m", "1g", "268435456".
+var memLimitRe = regexp.MustCompile(`^[1-9][0-9]*[bkmgBKMG]?$`)
 
 type Config struct {
 	HTTPAddr    string
@@ -18,6 +22,15 @@ type Config struct {
 	DefaultMemLimit  string
 	DefaultCPULimit  string
 	DefaultPidsLimit int
+	// Instance-wide ceiling on the resource caps an app may set for itself.
+	// Empty/zero means no ceiling. Without one the per-app caps are advisory:
+	// an org admin can raise their own app's memory to whatever they like, so
+	// the defaults above bound only the tenants who leave them alone. A
+	// single-operator install has nobody to bound, which is why this is off
+	// unless set.
+	MaxMemLimit  string
+	MaxCPULimit  float64
+	MaxPidsLimit int
 	// Instance-wide default deployment strategy ("bluegreen" or "recreate")
 	// applied to any app that does not override it.
 	DefaultDeployStrategy string
@@ -73,6 +86,26 @@ func Load(getenv func(string) string) (Config, error) {
 			cfg.DefaultPidsLimit = n
 		} else {
 			return Config{}, fmt.Errorf("CARGO_DEFAULT_PIDS_LIMIT must be a positive integer, got %q", v)
+		}
+	}
+	if v := getenv("CARGO_MAX_MEM_LIMIT"); v != "" {
+		if !memLimitRe.MatchString(v) {
+			return Config{}, fmt.Errorf("CARGO_MAX_MEM_LIMIT must be a positive integer with an optional b/k/m/g suffix, got %q", v)
+		}
+		cfg.MaxMemLimit = v
+	}
+	if v := getenv("CARGO_MAX_CPU_LIMIT"); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
+			cfg.MaxCPULimit = n
+		} else {
+			return Config{}, fmt.Errorf("CARGO_MAX_CPU_LIMIT must be a positive number, got %q", v)
+		}
+	}
+	if v := getenv("CARGO_MAX_PIDS_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.MaxPidsLimit = n
+		} else {
+			return Config{}, fmt.Errorf("CARGO_MAX_PIDS_LIMIT must be a positive integer, got %q", v)
 		}
 	}
 	if v := getenv("CARGO_DEPLOY_STRATEGY"); v != "" {

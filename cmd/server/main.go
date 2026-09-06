@@ -88,6 +88,17 @@ func main() {
 
 	hub := events.NewHub()
 	appSvc := apps.NewService(pool, box)
+	maxMem, err := apps.ParseMemLimit(cfg.MaxMemLimit)
+	if err != nil {
+		slog.Error("invalid configuration", "err", err)
+		os.Exit(1)
+	}
+	appSvc.SetMaxLimits(apps.MaxLimits{
+		MemBytes: maxMem,
+		CPU:      cfg.MaxCPULimit,
+		//nolint:gosec // bounded by config validation to a positive int
+		Pids: int32(cfg.MaxPidsLimit),
+	})
 	depSvc := deployments.NewService(pool, hub, cfg.DataDir)
 	provider := reconciler.NewDocker(cfg.DataDir)
 	hostSvc := hosts.NewService(pool, box)

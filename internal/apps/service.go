@@ -93,6 +93,9 @@ type Service struct {
 	q       *sqlc.Queries
 	box     *crypto.Box
 	cleaner AttachmentCleaner
+	// maxLimits is the instance ceiling on per-app resource caps. The zero
+	// value means no ceiling, which is what a single-operator install wants.
+	maxLimits MaxLimits
 }
 
 func NewService(pool *pgxpool.Pool, box *crypto.Box) *Service {
@@ -102,6 +105,9 @@ func NewService(pool *pgxpool.Pool, box *crypto.Box) *Service {
 // SetAttachmentCleaner wires the managed-database cleanup collaborator used by
 // Delete to drop engine credentials before an app row is removed.
 func (s *Service) SetAttachmentCleaner(c AttachmentCleaner) { s.cleaner = c }
+
+// SetMaxLimits installs the instance ceiling on per-app resource caps.
+func (s *Service) SetMaxLimits(m MaxLimits) { s.maxLimits = m }
 
 // roleIn returns the actor's role in org or ErrNotFound (scoping, FR-2.4).
 func (s *Service) roleIn(ctx context.Context, orgID, actor pgtype.UUID) (string, error) {
@@ -131,7 +137,7 @@ func (s *Service) appFor(ctx context.Context, appID, actor pgtype.UUID, minRole 
 	return app, nil
 }
 
-func validateCreate(in CreateInput) error {
+func validateCreate(in CreateInput, max MaxLimits) error {
 	if in.Name == "" {
 		return fmt.Errorf("%w: name is required", ErrValidation)
 	}
@@ -165,7 +171,7 @@ func validateCreate(in CreateInput) error {
 	if err := validateDeployStrategy(in.DeployStrategy); err != nil {
 		return err
 	}
-	return validateLimits(in.MemLimit, in.CPULimit, in.PidsLimit)
+	return validateLimits(in.MemLimit, in.CPULimit, in.PidsLimit, max)
 }
 
 func (s *Service) sealCreds(c *RegistryCreds) ([]byte, error) {
@@ -187,7 +193,7 @@ func (s *Service) Create(ctx context.Context, orgID, actor pgtype.UUID, in Creat
 	if roleRank[role] < roleRank["member"] {
 		return sqlc.Application{}, ErrForbidden
 	}
-	if err := validateCreate(in); err != nil {
+	if err := validateCreate(in, s.maxLimits); err != nil {
 		return sqlc.Application{}, err
 	}
 	if in.Builder == "" {
@@ -316,7 +322,7 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 	if app.CpuLimit.Valid {
 		cpuLimit = app.CpuLimit.String
 	}
-	if err := validateLimits(memLimit, cpuLimit, app.PidsLimit.Int32); err != nil {
+	if err := validateLimits(memLimit, cpuLimit, app.PidsLimit.Int32, s.maxLimits); err != nil {
 		return sqlc.Application{}, err
 	}
 	return s.q.UpdateApplication(ctx, sqlc.UpdateApplicationParams{
