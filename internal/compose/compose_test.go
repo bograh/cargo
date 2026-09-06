@@ -321,10 +321,14 @@ func TestValidateRejectsExternalNetworks(t *testing.T) {
 			"services:\n  web:\n    image: x\n    networks: [sys]\n" +
 				"networks:\n  sys:\n    external:\n      name: cargo_cargo-system\n",
 			"external"},
-		{"name override",
+		{"name override at the platform network",
 			"services:\n  web:\n    image: x\n    networks: [sys]\n" +
 				"networks:\n  sys:\n    name: cargo_cargo-system\n",
 			"cargo_cargo-system"},
+		{"name override at another app's project network",
+			"services:\n  web:\n    image: x\n    networks: [sys]\n" +
+				"networks:\n  sys:\n    name: cargo-app-victim_default\n",
+			"cargo-app-victim_default"},
 		{"reserved top-level name",
 			"services:\n  web:\n    image: x\nnetworks:\n  cargo-proxy:\n    external: true\n",
 			"cargo-proxy"},
@@ -344,6 +348,27 @@ func TestValidateRejectsExternalNetworks(t *testing.T) {
 				t.Fatalf("error %q should name %q", err, tc.wantSubstr)
 			}
 		})
+	}
+}
+
+// Validate runs against rendered configuration, and `docker compose config`
+// writes a resolved name onto every network it emits — a private network comes
+// back as `name: <project>_frontend`. Rejecting the field itself would refuse
+// every compose file that declares a network at all.
+func TestValidateAllowsComposeResolvedNetworkNames(t *testing.T) {
+	y := `
+services:
+  web:
+    image: x
+    networks: [default, frontend]
+networks:
+  default:
+    name: src_default
+  frontend:
+    name: src_frontend
+`
+	if err := Validate([]byte(y), root(t)); err != nil {
+		t.Fatalf("rendered network names rejected: %v", err)
 	}
 }
 

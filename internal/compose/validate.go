@@ -54,6 +54,23 @@ var reservedNetworks = map[string]bool{
 	"cargo-data":   true,
 }
 
+// cargoManagedNetwork reports whether a resolved Docker network name is one
+// Cargo owns: its own three networks, another app's compose project, or a
+// managed database's.
+//
+// This is deliberately about *which* name, not about a `name:` field being
+// present. Validate runs against rendered configuration, and `docker compose
+// config` writes a resolved name onto every network it emits — an ordinary
+// private network comes back as `name: <project>_frontend`. Rejecting the
+// field itself would refuse every compose file that declares a network.
+func cargoManagedNetwork(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" {
+		return false
+	}
+	return reservedNetworks[n] || strings.HasPrefix(n, "cargo-") || strings.HasPrefix(n, "cargo_")
+}
+
 // ReservedLabel reports whether a label key belongs to the namespace Cargo
 // controls. It is exported because compose files are not the only way a label
 // reaches a container: Docker merges an image's own LABEL instructions into
@@ -379,9 +396,9 @@ func validateNetworks(f composeFile) error {
 					"host — including the platform's own; declare an ordinary network instead",
 				ErrUnsafe, name)
 		}
-		if override := strings.TrimSpace(n.Name); override != "" {
+		if override := strings.TrimSpace(n.Name); cargoManagedNetwork(override) {
 			return fmt.Errorf(
-				"%w: network %q sets name: %q, which points it at an existing host network; "+
+				"%w: network %q sets name: %q, which points it at a network Cargo manages; "+
 					"remove the name override and let compose scope the network to your project",
 				ErrUnsafe, name, override)
 		}
