@@ -208,3 +208,22 @@ func TestRegisterRejectsUnusableInvite(t *testing.T) {
 		t.Fatalf("status = %d, want 403 (body %s)", rec.Code, rec.Body)
 	}
 }
+
+// An addressed invite is only honoured for its address. Refusing at
+// registration rather than at accept means a mismatch does not leave an orphan
+// account behind.
+func TestRegisterRejectsInviteAddressedToSomeoneElse(t *testing.T) {
+	s := registerServer(true, settings.RegistrationInvite)
+	s.orgs = stubOrgs{preview: orgs.InvitePreview{OrgName: "Acme", Role: "member", Email: "bob@x.co"}}
+
+	rec := registerRequest(s, `{"email":"mallory@x.co","password":"password-123","invite_token":"tok"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a mismatched address (body %s)", rec.Code, rec.Body)
+	}
+
+	// The addressee themselves still gets in, case and padding notwithstanding.
+	rec = registerRequest(s, `{"email":" Bob@X.co ","password":"password-123","invite_token":"tok"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want the invited address to be accepted (body %s)", rec.Code, rec.Body)
+	}
+}

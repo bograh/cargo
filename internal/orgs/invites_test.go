@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/bograh/cargo/internal/auth"
+	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestInviteLifecycle(t *testing.T) {
@@ -98,5 +100,51 @@ func TestInviteRequiresAdmin(t *testing.T) {
 	}
 	if _, _, err := svc.CreateInvite(ctx, org.ID, viewer, "member", "", time.Hour); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer invite err = %v", err)
+	}
+}
+
+// A link invite carries no address and is shareable by design. One addressed
+// to a person is not: before this, a forwarded link let anyone join, and let
+// them do it repeatedly until it expired.
+func TestUsableInvite(t *testing.T) {
+	future := pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}
+	past := pgtype.Timestamptz{Time: time.Now().Add(-time.Hour), Valid: true}
+	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+
+	for _, tc := range []struct {
+		name string
+		inv  sqlc.Invite
+		want bool
+	}{
+		{"open", sqlc.Invite{ExpiresAt: future}, true},
+		{"expired", sqlc.Invite{ExpiresAt: past}, false},
+		{"revoked", sqlc.Invite{ExpiresAt: future, RevokedAt: now}, false},
+		{"already accepted", sqlc.Invite{ExpiresAt: future, AcceptedAt: now}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := usable(tc.inv); got != tc.want {
+				t.Fatalf("usable = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Registration lowercases and trims the address it stores, so the comparison
+// that binds an invite to its recipient has to do the same or it would reject
+// the very person it was sent to.
+func TestSameEmail(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{
+		{"bob@x.co", "bob@x.co", true},
+		{"Bob@X.co", "bob@x.co", true},
+		{" bob@x.co ", "bob@x.co", true},
+		{"bob@x.co", "mallory@x.co", false},
+		{"", "bob@x.co", false},
+	} {
+		if got := sameEmail(tc.a, tc.b); got != tc.want {
+			t.Fatalf("sameEmail(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
 	}
 }

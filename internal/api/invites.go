@@ -173,7 +173,7 @@ func (s *Server) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePreviewInvite(w http.ResponseWriter, r *http.Request) {
 	p, err := s.orgs.PreviewInvite(r.Context(), chi.URLParam(r, "token"))
 	if errors.Is(err, orgs.ErrInviteInvalid) {
-		Error(w, http.StatusNotFound, "invite_invalid", "invite is invalid, revoked, or expired")
+		Error(w, http.StatusNotFound, "invite_invalid", "invite is invalid, revoked, expired, or already used")
 		return
 	}
 	if err != nil {
@@ -193,7 +193,12 @@ func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	org, err := s.orgs.AcceptInvite(r.Context(), body.Token, userFrom(r.Context()).ID)
 	if errors.Is(err, orgs.ErrInviteInvalid) {
-		Error(w, http.StatusBadRequest, "invite_invalid", "invite is invalid, revoked, or expired")
+		Error(w, http.StatusBadRequest, "invite_invalid", "invite is invalid, revoked, expired, or already used")
+		return
+	}
+	if errors.Is(err, orgs.ErrInviteWrongEmail) {
+		Error(w, http.StatusForbidden, "invite_wrong_email",
+			"this invite was sent to a different email address — sign in as that account to accept it")
 		return
 	}
 	if err != nil {

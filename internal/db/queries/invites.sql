@@ -7,7 +7,9 @@ RETURNING *;
 SELECT * FROM invites WHERE token_hash = $1;
 
 -- name: ListInvitesForOrg :many
-SELECT * FROM invites WHERE org_id = $1 AND revoked_at IS NULL ORDER BY created_at;
+SELECT * FROM invites
+WHERE org_id = $1 AND revoked_at IS NULL AND accepted_at IS NULL
+ORDER BY created_at;
 
 -- name: RevokeInvite :exec
 UPDATE invites SET revoked_at = now() WHERE id = $1 AND org_id = $2;
@@ -16,3 +18,6 @@ UPDATE invites SET revoked_at = now() WHERE id = $1 AND org_id = $2;
 DELETE FROM invites
 WHERE expires_at < now() - interval '7 days'
    OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '7 days');
+
+-- name: MarkInviteAccepted :execrows
+UPDATE invites SET accepted_at = now() WHERE id = $1 AND accepted_at IS NULL;

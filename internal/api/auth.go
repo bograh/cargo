@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/bograh/cargo/internal/auth"
 	"github.com/bograh/cargo/internal/db/sqlc"
@@ -63,7 +64,7 @@ func decodeCredentials(w http.ResponseWriter, r *http.Request) (credentialsBody,
 // door is a stranger's shell. The first account is exempt — it has no invite
 // to present and no admin has set a policy yet — and becomes the instance
 // admin, which is the documented bootstrap.
-func (s *Server) registrationAllowed(w http.ResponseWriter, r *http.Request, inviteToken string) bool {
+func (s *Server) registrationAllowed(w http.ResponseWriter, r *http.Request, email, inviteToken string) bool {
 	exists, err := s.admin.AnyUserExists(r.Context())
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "internal", "registration failed")
@@ -88,8 +89,18 @@ func (s *Server) registrationAllowed(w http.ResponseWriter, r *http.Request, inv
 		}
 		// Validating here rather than trusting the client keeps an unusable
 		// token from minting an account that can never join anything.
-		if _, err := s.orgs.PreviewInvite(r.Context(), inviteToken); err != nil {
-			Error(w, http.StatusForbidden, "invite_required", "that invite is invalid, revoked, or expired")
+		preview, err := s.orgs.PreviewInvite(r.Context(), inviteToken)
+		if err != nil {
+			Error(w, http.StatusForbidden, "invite_required",
+				"that invite is invalid, revoked, expired, or already used")
+			return false
+		}
+		// An addressed invite is only honoured for its address. Checking it
+		// here too means a mismatch is refused before the account exists,
+		// rather than after — accepting would fail and leave an orphan.
+		if preview.Email != "" && !strings.EqualFold(strings.TrimSpace(preview.Email), strings.TrimSpace(email)) {
+			Error(w, http.StatusForbidden, "invite_wrong_email",
+				"that invite was sent to a different email address")
 			return false
 		}
 		return true
@@ -104,7 +115,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.registrationAllowed(w, r, body.InviteToken) {
+	if !s.registrationAllowed(w, r, body.Email, body.InviteToken) {
 		return
 	}
 	u, tok, err := s.auth.Register(r.Context(), body.Email, body.Password)

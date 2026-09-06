@@ -14,7 +14,7 @@ import (
 const createInvite = `-- name: CreateInvite :one
 INSERT INTO invites (org_id, token_hash, role, expires_at, created_by, email)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at, email
+RETURNING id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at, email, accepted_at
 `
 
 type CreateInviteParams struct {
@@ -46,12 +46,13 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.Email,
+		&i.AcceptedAt,
 	)
 	return i, err
 }
 
 const getInviteByTokenHash = `-- name: GetInviteByTokenHash :one
-SELECT id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at, email FROM invites WHERE token_hash = $1
+SELECT id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at, email, accepted_at FROM invites WHERE token_hash = $1
 `
 
 func (q *Queries) GetInviteByTokenHash(ctx context.Context, tokenHash []byte) (Invite, error) {
@@ -67,12 +68,15 @@ func (q *Queries) GetInviteByTokenHash(ctx context.Context, tokenHash []byte) (I
 		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.Email,
+		&i.AcceptedAt,
 	)
 	return i, err
 }
 
 const listInvitesForOrg = `-- name: ListInvitesForOrg :many
-SELECT id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at, email FROM invites WHERE org_id = $1 AND revoked_at IS NULL ORDER BY created_at
+SELECT id, org_id, token_hash, role, expires_at, created_by, revoked_at, created_at, email, accepted_at FROM invites
+WHERE org_id = $1 AND revoked_at IS NULL AND accepted_at IS NULL
+ORDER BY created_at
 `
 
 func (q *Queries) ListInvitesForOrg(ctx context.Context, orgID pgtype.UUID) ([]Invite, error) {
@@ -94,6 +98,7 @@ func (q *Queries) ListInvitesForOrg(ctx context.Context, orgID pgtype.UUID) ([]I
 			&i.RevokedAt,
 			&i.CreatedAt,
 			&i.Email,
+			&i.AcceptedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -103,6 +108,18 @@ func (q *Queries) ListInvitesForOrg(ctx context.Context, orgID pgtype.UUID) ([]I
 		return nil, err
 	}
 	return items, nil
+}
+
+const markInviteAccepted = `-- name: MarkInviteAccepted :execrows
+UPDATE invites SET accepted_at = now() WHERE id = $1 AND accepted_at IS NULL
+`
+
+func (q *Queries) MarkInviteAccepted(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markInviteAccepted, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const purgeInvites = `-- name: PurgeInvites :execrows

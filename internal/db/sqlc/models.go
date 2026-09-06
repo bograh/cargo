@@ -173,15 +173,16 @@ type InstanceSetting struct {
 }
 
 type Invite struct {
-	ID        pgtype.UUID
-	OrgID     pgtype.UUID
-	TokenHash []byte
-	Role      string
-	ExpiresAt pgtype.Timestamptz
-	CreatedBy pgtype.UUID
-	RevokedAt pgtype.Timestamptz
-	CreatedAt pgtype.Timestamptz
-	Email     pgtype.Text
+	ID         pgtype.UUID
+	OrgID      pgtype.UUID
+	TokenHash  []byte
+	Role       string
+	ExpiresAt  pgtype.Timestamptz
+	CreatedBy  pgtype.UUID
+	RevokedAt  pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+	Email      pgtype.Text
+	AcceptedAt pgtype.Timestamptz
 }
 
 type Membership struct {
