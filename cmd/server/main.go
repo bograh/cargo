@@ -185,14 +185,14 @@ func main() {
 	obs.RegisterDB(pool)
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", obs.Handler())
-	metricsServer := &http.Server{Addr: cfg.MetricsAddr, Handler: metricsMux}
+	metricsServer := newHTTPServer(cfg.MetricsAddr, metricsMux)
 	go func() {
 		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Warn("metrics server exited", "err", err)
 		}
 	}()
 
-	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: srv.Handler()}
+	httpServer := newHTTPServer(cfg.HTTPAddr, srv.Handler())
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -204,6 +204,30 @@ func main() {
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
+	}
+}
+
+// Timeouts for both listeners. Without them a client that opens a connection
+// and dribbles header bytes holds a goroutine indefinitely, which costs the
+// attacker nothing — the Slowloris shape.
+//
+// WriteTimeout is deliberately left at zero. The log and metric endpoints
+// stream Server-Sent Events for as long as the browser stays on the page, and
+// a write deadline would cut them off mid-stream. Reads and idle connections
+// carry no such requirement: a request body arrives promptly or not at all.
+const (
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 30 * time.Second
+	idleTimeout       = 120 * time.Second
+)
+
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 }
 
