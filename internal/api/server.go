@@ -255,7 +255,9 @@ func NewServer(cfg config.Config, pool *pgxpool.Pool, box *crypto.Box) *Server {
 		s.admin = sqlc.New(pool)
 		s.webhookApps = sqlc.New(pool)
 		if box != nil {
-			s.apps = apps.NewService(pool, box)
+			appSvc := apps.NewService(pool, box)
+			appSvc.SetPolicy(apps.PolicyFrom(cfg))
+			s.apps = appSvc
 			s.gh = github.NewService(pool, box)
 			s.instanceSettings = settings.NewService(pool, box)
 			s.oidc = oidc.NewService(pool, settings.NewService(pool, box))

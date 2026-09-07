@@ -113,13 +113,24 @@ func NewService(pool *pgxpool.Pool, box *crypto.Box) *Service {
 // Delete to drop engine credentials before an app row is removed.
 func (s *Service) SetAttachmentCleaner(c AttachmentCleaner) { s.cleaner = c }
 
-// SetMaxLimits installs the instance ceiling on per-app resource caps.
-func (s *Service) SetMaxLimits(m MaxLimits) { s.maxLimits = m }
+// Policy is the instance-wide configuration an app service enforces on what a
+// tenant may ask for. It is applied through SetPolicy rather than passed to
+// NewService because there are two construction sites — the API server and the
+// deploy pipeline — and a setter per knob made it easy for one of them to be
+// forgotten. It was: the resource ceiling reached the pipeline's service and
+// never the API's, which is the one that validates Create and Update.
+type Policy struct {
+	Max MaxLimits
+	// AllowPrivateGitHosts lets a repository URL name a host inside the
+	// deployment (CARGO_ALLOW_PRIVATE_GIT_HOSTS).
+	AllowPrivateGitHosts bool
+}
 
-// SetAllowPrivateGitHosts opens repository URLs to hosts inside the
-// deployment, for an install whose git server shares the control plane's
-// private network.
-func (s *Service) SetAllowPrivateGitHosts(v bool) { s.allowPrivateGitHosts = v }
+// SetPolicy installs the instance-wide limits and permissions.
+func (s *Service) SetPolicy(p Policy) {
+	s.maxLimits = p.Max
+	s.allowPrivateGitHosts = p.AllowPrivateGitHosts
+}
 
 // roleIn returns the actor's role in org or ErrNotFound (scoping, FR-2.4).
 func (s *Service) roleIn(ctx context.Context, orgID, actor pgtype.UUID) (string, error) {

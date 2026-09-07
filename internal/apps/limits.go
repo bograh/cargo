@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/bograh/cargo/internal/config"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -33,10 +34,6 @@ var memUnits = map[byte]int64{
 	'm': 1 << 20,
 	'g': 1 << 30,
 }
-
-// ParseMemLimit converts a docker memory value ("512m", "1g", "268435456") to
-// bytes, so a configured ceiling can be compared against what an app asks for.
-func ParseMemLimit(s string) (int64, error) { return parseMemLimit(s) }
 
 // parseMemLimit converts a docker memory value ("512m", "1g", "268435456") to
 // bytes. The input must already have matched memLimitRe.
@@ -130,4 +127,19 @@ func int4OrNull(n int32) pgtype.Int4 {
 		return pgtype.Int4{}
 	}
 	return pgtype.Int4{Int32: n, Valid: true}
+}
+
+// PolicyFrom reads the instance policy out of the loaded configuration, so
+// both construction sites derive it the same way and neither has to re-parse
+// a value config already validated.
+func PolicyFrom(c config.Config) Policy {
+	return Policy{
+		Max: MaxLimits{
+			MemBytes: c.MaxMemBytes,
+			CPU:      c.MaxCPULimit,
+			//nolint:gosec // bounded by config validation to a positive int
+			Pids: int32(c.MaxPidsLimit),
+		},
+		AllowPrivateGitHosts: c.AllowPrivateGitHosts,
+	}
 }

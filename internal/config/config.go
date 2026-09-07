@@ -28,7 +28,10 @@ type Config struct {
 	// the defaults above bound only the tenants who leave them alone. A
 	// single-operator install has nobody to bound, which is why this is off
 	// unless set.
-	MaxMemLimit  string
+	MaxMemLimit string
+	// MaxMemBytes is MaxMemLimit resolved to bytes, so no consumer has to
+	// re-parse a value this package already validated.
+	MaxMemBytes  int64
 	MaxCPULimit  float64
 	MaxPidsLimit int
 	// Instance-wide default deployment strategy ("bluegreen" or "recreate")
@@ -100,6 +103,7 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("CARGO_MAX_MEM_LIMIT must be a positive integer with an optional b/k/m/g suffix, got %q", v)
 		}
 		cfg.MaxMemLimit = v
+		cfg.MaxMemBytes = memBytes(v)
 	}
 	if v := getenv("CARGO_MAX_CPU_LIMIT"); v != "" {
 		if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
@@ -182,4 +186,21 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("CARGO_ENV must be development or production, got %q", cfg.Env)
 	}
 	return cfg, nil
+}
+
+// memUnits maps docker's memory suffixes to their multiplier.
+var memUnits = map[byte]int64{'b': 1, 'k': 1 << 10, 'm': 1 << 20, 'g': 1 << 30}
+
+// memBytes converts a docker memory value to bytes. The input must already
+// have matched memLimitRe, so it cannot fail.
+func memBytes(s string) int64 {
+	digits, mult := s, int64(1)
+	if m, ok := memUnits[s[len(s)-1]|0x20]; ok { // |0x20 lowercases an ASCII letter
+		digits, mult = s[:len(s)-1], m
+	}
+	n, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n * mult
 }
