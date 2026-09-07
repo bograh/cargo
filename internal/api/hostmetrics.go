@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,10 @@ import (
 	appmetrics "github.com/bograh/cargo/internal/metrics"
 	"github.com/jackc/pgx/v5"
 )
+
+// errNotAdmin ends an instance-wide stream whose viewer has lost the role that
+// opened it.
+var errNotAdmin = errors.New("instance admin required")
 
 func hostMetricJSON(m sqlc.HostMetric) map[string]any {
 	return map[string]any{
@@ -41,22 +46,32 @@ func (s *Server) handleHostMetrics(w http.ResponseWriter, r *http.Request) {
 
 // handleHostMetricsStream streams live whole-server samples over SSE.
 func (s *Server) handleHostMetricsStream(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
+	ctx, flusher, cleanup, ok := s.beginStream(w, r, func(ctx context.Context) error {
+		u, err := s.revalidate(ctx, r)
+		if err != nil {
+			return err
+		}
+		// This stream crosses every org boundary, so losing instance-admin has
+		// to end it just as surely as losing the session does.
+		if !u.IsInstanceAdmin {
+			return errNotAdmin
+		}
+		return nil
+	})
 	if !ok {
-		Error(w, http.StatusInternalServerError, "internal", "streaming unsupported")
 		return
 	}
+	defer cleanup()
+
 	ch, cancel := s.hub.Subscribe(appmetrics.HostTopic)
 	defer cancel()
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
+	startSSE(w)
 	send := func(b []byte) { _, _ = fmt.Fprintf(w, "data: %s\n\n", b); flusher.Flush() }
 
 	// Replay the latest stored sample so the charts render immediately rather
 	// than staying blank until the next 15s tick.
-	if m, err := s.metrics.LatestHost(r.Context()); err == nil {
+	if m, err := s.metrics.LatestHost(ctx); err == nil {
 		if b, err := json.Marshal(hostMetricJSON(m)); err == nil {
 			send(b)
 		}
@@ -66,7 +81,7 @@ func (s *Server) handleHostMetricsStream(w http.ResponseWriter, r *http.Request)
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case msg := <-ch:
 			send(msg)

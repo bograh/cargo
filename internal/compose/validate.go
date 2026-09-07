@@ -33,11 +33,70 @@ var ErrInvalid = errors.New("invalid compose file")
 // so the overlay cannot override them.
 const allowedSecurityOpt = "no-new-privileges:true"
 
+// reservedLabelPrefix is the label namespace Traefik routes on. Cargo emits
+// these itself in the overlay, one router per app bound to the domains the app
+// actually owns. A tenant that sets them too is not configuring their own app:
+// Traefik's Docker provider watches every container on cargo-proxy, so a
+// router declared here claims a hostname instance-wide — including the
+// platform's own — and an explicit `priority` wins the tie deterministically.
+// Whoever holds the hostname receives the session cookies sent to it.
+const reservedLabelPrefix = "traefik."
+
+// reservedNetworks are the networks Cargo manages, named as a service would
+// reference them. cargo-proxy carries every app's traffic to Traefik,
+// cargo-system is the private control-plane/database link, and cargo-data
+// carries every organisation's managed database instances. Cargo attaches an
+// app to the ones it needs; a tenant that names one itself is reaching for
+// containers that are not theirs.
+var reservedNetworks = map[string]bool{
+	"cargo-proxy":  true,
+	"cargo-system": true,
+	"cargo-data":   true,
+}
+
+// cargoManagedNetwork reports whether a resolved Docker network name is one
+// Cargo owns: its own three networks, another app's compose project, or a
+// managed database's.
+//
+// This is deliberately about *which* name, not about a `name:` field being
+// present. Validate runs against rendered configuration, and `docker compose
+// config` writes a resolved name onto every network it emits — an ordinary
+// private network comes back as `name: <project>_frontend`. Rejecting the
+// field itself would refuse every compose file that declares a network.
+func cargoManagedNetwork(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" {
+		return false
+	}
+	return reservedNetworks[n] || strings.HasPrefix(n, "cargo-") || strings.HasPrefix(n, "cargo_")
+}
+
+// ReservedLabel reports whether a label key belongs to the namespace Cargo
+// controls. It is exported because compose files are not the only way a label
+// reaches a container: Docker merges an image's own LABEL instructions into
+// every container started from it, so the deploy pipeline applies the same
+// rule to the images it is about to run.
+func ReservedLabel(key string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), reservedLabelPrefix)
+}
+
 type composeFile struct {
 	Services map[string]composeService `yaml:"services"`
 	Volumes  map[string]composeVolume  `yaml:"volumes"`
 	Secrets  map[string]composeMount   `yaml:"secrets"`
 	Configs  map[string]composeMount   `yaml:"configs"`
+	Networks map[string]composeNetwork `yaml:"networks"`
+}
+
+// composeNetwork is a top-level network definition. Both of its fields can
+// attach a container to a network Cargo did not create for this app:
+// `external: true` joins one that already exists, and a `name:` override
+// points a locally-declared network at an existing one by its real Docker
+// name. Private networks between a tenant's own services stay allowed — those
+// declare neither.
+type composeNetwork struct {
+	External yaml.Node `yaml:"external"`
+	Name     string    `yaml:"name"`
 }
 
 type composeService struct {
@@ -57,6 +116,8 @@ type composeService struct {
 	Build             yaml.Node   `yaml:"build"`
 	EnvFile           yaml.Node   `yaml:"env_file"`
 	LabelFile         yaml.Node   `yaml:"label_file"`
+	Labels            yaml.Node   `yaml:"labels"`
+	Networks          yaml.Node   `yaml:"networks"`
 }
 
 // composeVolume is a top-level volume definition. A "named" volume with
@@ -209,6 +270,30 @@ func validateServices(f composeFile, absRoot string) error {
 				"%w: service %q publishes ports; Cargo routes traffic through Traefik instead — "+
 					"remove the `ports:` block and set the app's exposed port", ErrUnsafe, name)
 		}
+		nets, err := networkNames(svc.Networks)
+		if err != nil {
+			return fmt.Errorf("%w: service %q: could not read networks: %v", ErrInvalid, name, err)
+		}
+		for _, net := range nets {
+			if reservedNetworks[strings.TrimSpace(net)] {
+				return fmt.Errorf(
+					"%w: service %q joins the %s network, which Cargo manages and shares with other "+
+						"tenants — Cargo attaches your app to the networks it needs",
+					ErrUnsafe, name, net)
+			}
+		}
+		keys, err := labelKeys(svc.Labels)
+		if err != nil {
+			return fmt.Errorf("%w: service %q: could not read labels: %v", ErrInvalid, name, err)
+		}
+		for _, key := range keys {
+			if ReservedLabel(key) {
+				return fmt.Errorf(
+					"%w: service %q sets the label %q; Cargo generates its own Traefik routing and a "+
+						"second router would claim a hostname instance-wide — remove the `traefik.*` labels "+
+						"and add the domain to the app instead", ErrUnsafe, name, key)
+			}
+		}
 		for _, node := range svc.Volumes {
 			source, err := volumeSource(node)
 			if err != nil {
@@ -244,6 +329,10 @@ func validateServices(f composeFile, absRoot string) error {
 // or secret is where a host path can hide behind an innocuous-looking
 // reference in the service itself.
 func validateTopLevel(f composeFile, absRoot string) error {
+	if err := validateNetworks(f); err != nil {
+		return err
+	}
+
 	names := make([]string, 0, len(f.Volumes))
 	for name := range f.Volumes {
 		names = append(names, name)
@@ -284,6 +373,83 @@ func validateTopLevel(f composeFile, absRoot string) error {
 		return err
 	}
 	return checkMounts("config", f.Configs)
+}
+
+// validateNetworks rejects the two ways a top-level network definition can
+// name a network that already exists on the host. Either one lets a service
+// that reads as ordinary — `networks: [db]` — land on the platform's private
+// link to the control-plane database, or inside another tenant's project.
+func validateNetworks(f composeFile) error {
+	names := make([]string, 0, len(f.Networks))
+	for name := range f.Networks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		n := f.Networks[name]
+		if reservedNetworks[strings.TrimSpace(name)] {
+			return fmt.Errorf("%w: network %q is managed by Cargo and cannot be declared here", ErrUnsafe, name)
+		}
+		if isExternal(n.External) {
+			return fmt.Errorf(
+				"%w: network %q is declared external, which joins a network that already exists on the "+
+					"host — including the platform's own; declare an ordinary network instead",
+				ErrUnsafe, name)
+		}
+		if override := strings.TrimSpace(n.Name); cargoManagedNetwork(override) {
+			return fmt.Errorf(
+				"%w: network %q sets name: %q, which points it at a network Cargo manages; "+
+					"remove the name override and let compose scope the network to your project",
+				ErrUnsafe, name, override)
+		}
+	}
+	return nil
+}
+
+// isExternal reads the `external` field in either syntax. An unreadable value
+// counts as external: a network this cannot classify is not one to wave past.
+func isExternal(node yaml.Node) bool {
+	switch node.Kind {
+	case 0:
+		return false
+	case yaml.ScalarNode:
+		var external bool
+		if err := node.Decode(&external); err != nil {
+			return true
+		}
+		return external
+	default:
+		// The deprecated long form, `external: {name: …}`, is always external.
+		return true
+	}
+}
+
+// networkNames reads the networks a service joins. Compose accepts a list of
+// names or a mapping of name to per-network options (aliases, addresses).
+func networkNames(node yaml.Node) ([]string, error) {
+	switch node.Kind {
+	case 0:
+		return nil, nil
+	case yaml.SequenceNode:
+		var names []string
+		if err := node.Decode(&names); err != nil {
+			return nil, err
+		}
+		return names, nil
+	case yaml.MappingNode:
+		var m map[string]yaml.Node
+		if err := node.Decode(&m); err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(m))
+		for name := range m {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return names, nil
+	default:
+		return nil, fmt.Errorf("networks must be a mapping or a list")
+	}
 }
 
 // buildContext extracts the context path from either build syntax.
@@ -340,6 +506,46 @@ func filePaths(node yaml.Node) []string {
 		return out
 	default:
 		return nil
+	}
+}
+
+// labelKeys reads a service's label keys. Compose accepts both a mapping of
+// key to value and a sequence of "key=value" strings; rendered configuration
+// uses the mapping form, but Validate is reachable with either. An
+// unrecognisable node is an error rather than an empty result — a label block
+// this cannot read is one it cannot vouch for.
+func labelKeys(node yaml.Node) ([]string, error) {
+	switch node.Kind {
+	case 0:
+		return nil, nil
+	case yaml.MappingNode:
+		var m map[string]yaml.Node
+		if err := node.Decode(&m); err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return keys, nil
+	case yaml.SequenceNode:
+		var items []yaml.Node
+		if err := node.Decode(&items); err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(items))
+		for _, item := range items {
+			var entry string
+			if err := item.Decode(&entry); err != nil {
+				return nil, err
+			}
+			key, _, _ := strings.Cut(entry, "=")
+			keys = append(keys, strings.TrimSpace(key))
+		}
+		return keys, nil
+	default:
+		return nil, fmt.Errorf("labels must be a mapping or a list")
 	}
 }
 

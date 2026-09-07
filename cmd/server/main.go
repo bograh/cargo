@@ -88,6 +88,7 @@ func main() {
 
 	hub := events.NewHub()
 	appSvc := apps.NewService(pool, box)
+	appSvc.SetPolicy(apps.PolicyFrom(cfg))
 	depSvc := deployments.NewService(pool, hub, cfg.DataDir)
 	provider := reconciler.NewDocker(cfg.DataDir)
 	hostSvc := hosts.NewService(pool, box)
@@ -114,7 +115,7 @@ func main() {
 		Deployments:      depSvc,
 		Provider:         provider,
 		NewBuilder:       builder.ForName,
-		Clone:            builder.CloneAtBranch,
+		Clone:            builder.CloneFunc(cfg.AllowPrivateGitHosts),
 		CloneAuth:        ghSvc.CloneAuth,
 		DataDir:          cfg.DataDir,
 		AppsDomainSuffix: appsDomainSuffix(pool),
@@ -123,6 +124,7 @@ func main() {
 		DefaultCPULimit:  cfg.DefaultCPULimit,
 		DefaultPidsLimit: cfg.DefaultPidsLimit,
 		Notify:           notifySvc,
+		ImageLabels:      provider.ImageLabels,
 
 		DefaultDeployStrategy: cfg.DefaultDeployStrategy,
 		Hosts:                 hostMgr,
@@ -184,14 +186,14 @@ func main() {
 	obs.RegisterDB(pool)
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", obs.Handler())
-	metricsServer := &http.Server{Addr: cfg.MetricsAddr, Handler: metricsMux}
+	metricsServer := newHTTPServer(cfg.MetricsAddr, metricsMux)
 	go func() {
 		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Warn("metrics server exited", "err", err)
 		}
 	}()
 
-	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: srv.Handler()}
+	httpServer := newHTTPServer(cfg.HTTPAddr, srv.Handler())
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -203,6 +205,30 @@ func main() {
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
+	}
+}
+
+// Timeouts for both listeners. Without them a client that opens a connection
+// and dribbles header bytes holds a goroutine indefinitely, which costs the
+// attacker nothing — the Slowloris shape.
+//
+// WriteTimeout is deliberately left at zero. The log and metric endpoints
+// stream Server-Sent Events for as long as the browser stays on the page, and
+// a write deadline would cut them off mid-stream. Reads and idle connections
+// carry no such requirement: a request body arrives promptly or not at all.
+const (
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 30 * time.Second
+	idleTimeout       = 120 * time.Second
+)
+
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 }
 

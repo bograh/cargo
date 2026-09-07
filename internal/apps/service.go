@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/bograh/cargo/internal/crypto"
 	"github.com/bograh/cargo/internal/db/sqlc"
@@ -90,18 +91,46 @@ type AttachmentCleaner interface {
 }
 
 type Service struct {
-	q       *sqlc.Queries
+	q *sqlc.Queries
+	// pool is kept alongside q so a multi-statement write can run in one
+	// transaction (SetEnvVars).
+	pool    *pgxpool.Pool
 	box     *crypto.Box
 	cleaner AttachmentCleaner
+	// maxLimits is the instance ceiling on per-app resource caps. The zero
+	// value means no ceiling, which is what a single-operator install wants.
+	maxLimits MaxLimits
+	// allowPrivateGitHosts lets a repo URL name a host inside the deployment.
+	// Off by default (CARGO_ALLOW_PRIVATE_GIT_HOSTS).
+	allowPrivateGitHosts bool
 }
 
 func NewService(pool *pgxpool.Pool, box *crypto.Box) *Service {
-	return &Service{q: sqlc.New(pool), box: box}
+	return &Service{q: sqlc.New(pool), pool: pool, box: box}
 }
 
 // SetAttachmentCleaner wires the managed-database cleanup collaborator used by
 // Delete to drop engine credentials before an app row is removed.
 func (s *Service) SetAttachmentCleaner(c AttachmentCleaner) { s.cleaner = c }
+
+// Policy is the instance-wide configuration an app service enforces on what a
+// tenant may ask for. It is applied through SetPolicy rather than passed to
+// NewService because there are two construction sites — the API server and the
+// deploy pipeline — and a setter per knob made it easy for one of them to be
+// forgotten. It was: the resource ceiling reached the pipeline's service and
+// never the API's, which is the one that validates Create and Update.
+type Policy struct {
+	Max MaxLimits
+	// AllowPrivateGitHosts lets a repository URL name a host inside the
+	// deployment (CARGO_ALLOW_PRIVATE_GIT_HOSTS).
+	AllowPrivateGitHosts bool
+}
+
+// SetPolicy installs the instance-wide limits and permissions.
+func (s *Service) SetPolicy(p Policy) {
+	s.maxLimits = p.Max
+	s.allowPrivateGitHosts = p.AllowPrivateGitHosts
+}
 
 // roleIn returns the actor's role in org or ErrNotFound (scoping, FR-2.4).
 func (s *Service) roleIn(ctx context.Context, orgID, actor pgtype.UUID) (string, error) {
@@ -131,17 +160,20 @@ func (s *Service) appFor(ctx context.Context, appID, actor pgtype.UUID, minRole 
 	return app, nil
 }
 
-func validateCreate(in CreateInput) error {
+func validateCreate(in CreateInput, max MaxLimits, allowPrivateGit bool) error {
 	if in.Name == "" {
 		return fmt.Errorf("%w: name is required", ErrValidation)
 	}
-	if in.ExposedPort < 1 {
-		return fmt.Errorf("%w: exposed_port must be 1-65535", ErrValidation)
+	if err := validatePort(in.ExposedPort); err != nil {
+		return err
 	}
 	switch in.SourceType {
 	case "git":
 		if in.GitRepoURL == "" || in.GitBranch == "" {
 			return fmt.Errorf("%w: git source requires git_repo_url and git_branch", ErrValidation)
+		}
+		if err := validateGitURL(in.GitRepoURL, allowPrivateGit); err != nil {
+			return err
 		}
 	case "image":
 		if in.ImageRef == "" {
@@ -150,6 +182,9 @@ func validateCreate(in CreateInput) error {
 	case "compose":
 		if in.GitRepoURL == "" || in.GitBranch == "" {
 			return fmt.Errorf("%w: compose source requires git_repo_url and git_branch", ErrValidation)
+		}
+		if err := validateGitURL(in.GitRepoURL, allowPrivateGit); err != nil {
+			return err
 		}
 		if in.ComposeService == "" {
 			return fmt.Errorf("%w: compose source requires compose_service (the service that serves HTTP)", ErrValidation)
@@ -165,7 +200,16 @@ func validateCreate(in CreateInput) error {
 	if err := validateDeployStrategy(in.DeployStrategy); err != nil {
 		return err
 	}
-	return validateLimits(in.MemLimit, in.CPULimit, in.PidsLimit)
+	for _, f := range []struct{ field, path string }{
+		{"dockerfile_path", in.DockerfilePath},
+		{"build_context", in.BuildContext},
+		{"compose_path", in.ComposePath},
+	} {
+		if err := validateRepoPath(f.field, f.path); err != nil {
+			return err
+		}
+	}
+	return validateLimits(in.MemLimit, in.CPULimit, in.PidsLimit, max)
 }
 
 func (s *Service) sealCreds(c *RegistryCreds) ([]byte, error) {
@@ -187,7 +231,7 @@ func (s *Service) Create(ctx context.Context, orgID, actor pgtype.UUID, in Creat
 	if roleRank[role] < roleRank["member"] {
 		return sqlc.Application{}, ErrForbidden
 	}
-	if err := validateCreate(in); err != nil {
+	if err := validateCreate(in, s.maxLimits, s.allowPrivateGitHosts); err != nil {
 		return sqlc.Application{}, err
 	}
 	if in.Builder == "" {
@@ -271,7 +315,19 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 	set(&app.DockerfilePath, in.DockerfilePath)
 	set(&app.ComposePath, in.ComposePath)
 	set(&app.ComposeService, in.ComposeService)
+	for _, f := range []struct{ field, path string }{
+		{"dockerfile_path", app.DockerfilePath},
+		{"build_context", app.BuildContext},
+		{"compose_path", app.ComposePath},
+	} {
+		if err := validateRepoPath(f.field, f.path); err != nil {
+			return sqlc.Application{}, err
+		}
+	}
 	if in.ExposedPort != nil {
+		if err := validatePort(*in.ExposedPort); err != nil {
+			return sqlc.Application{}, err
+		}
 		app.ExposedPort = *in.ExposedPort
 	}
 	if in.AutoDeploy != nil {
@@ -316,7 +372,7 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 	if app.CpuLimit.Valid {
 		cpuLimit = app.CpuLimit.String
 	}
-	if err := validateLimits(memLimit, cpuLimit, app.PidsLimit.Int32); err != nil {
+	if err := validateLimits(memLimit, cpuLimit, app.PidsLimit.Int32, s.maxLimits); err != nil {
 		return sqlc.Application{}, err
 	}
 	return s.q.UpdateApplication(ctx, sqlc.UpdateApplicationParams{
@@ -377,19 +433,33 @@ func (s *Service) SetEnvVars(ctx context.Context, appID, actor pgtype.UUID, vars
 	if err != nil {
 		return err
 	}
-	for k, v := range vars {
-		if k == "" {
-			return fmt.Errorf("%w: env var key must not be empty", ErrValidation)
+	// Validate the whole batch before writing any of it, so a rejected key
+	// does not leave half the variables applied.
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		if err := validateEnvKey(k); err != nil {
+			return err
 		}
-		enc, err := s.box.Seal([]byte(v))
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+	for _, k := range keys {
+		enc, err := s.box.Seal([]byte(vars[k]))
 		if err != nil {
 			return err
 		}
-		if err := s.q.UpsertEnvVar(ctx, sqlc.UpsertEnvVarParams{AppID: app.ID, Key: k, ValueEnc: enc}); err != nil {
+		if err := q.UpsertEnvVar(ctx, sqlc.UpsertEnvVarParams{AppID: app.ID, Key: k, ValueEnc: enc}); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Service) ListEnvKeys(ctx context.Context, appID, actor pgtype.UUID) ([]string, error) {

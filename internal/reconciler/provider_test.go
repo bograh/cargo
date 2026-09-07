@@ -458,11 +458,20 @@ func TestApplyComposeSource(t *testing.T) {
 		t.Fatalf("cargo env not injected: %s", env)
 	}
 
-	// The overlay must not have capped or relabelled the user's other service.
+	// Every service in the user's file is capped, not just the one Cargo
+	// routes to: an uncapped sidecar is an uncapped sidecar, and the host does
+	// not care which service in the compose file exhausted its memory.
 	cacheID, _ := outputCompose(ctx, args, "ps", "-q", "cache")
 	cacheMem, _ := output(ctx, "docker", "inspect", "-f", "{{.HostConfig.Memory}}", cacheID)
-	if cacheMem != "0" {
-		t.Fatalf("overlay capped a service it should not have touched: %s", cacheMem)
+	if cacheMem != "268435456" {
+		t.Fatalf("cache mem_limit = %s, want 268435456 — every service gets the cap", cacheMem)
+	}
+	// Routing, though, stays on the one service Cargo was told about: a
+	// sidecar must not end up with a Traefik router of its own.
+	cacheLabels, _ := output(ctx, "docker", "inspect", "-f",
+		"{{index .Config.Labels \"traefik.enable\"}}", cacheID)
+	if strings.TrimSpace(cacheLabels) == "true" {
+		t.Fatalf("overlay enabled Traefik on a service it does not route to")
 	}
 
 	// Teardown removes every service, not just the one Cargo routes to.

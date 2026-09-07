@@ -4,14 +4,19 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/bograh/cargo/internal/auth"
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/bograh/cargo/internal/settings"
 )
 
 type credentialsBody struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	// InviteToken carries an organisation invite so registration can be
+	// allowed on an invite-only instance. Ignored when registration is open.
+	InviteToken string `json:"invite_token"`
 }
 
 func userJSON(u sqlc.User) map[string]any {
@@ -52,9 +57,65 @@ func decodeCredentials(w http.ResponseWriter, r *http.Request) (credentialsBody,
 	return body, true
 }
 
+// registrationAllowed decides whether this request may create an account.
+//
+// A Cargo account carries the ability to run containers on the host, so this
+// is not a formality: on an instance reachable from the internet, an open
+// door is a stranger's shell. The first account is exempt — it has no invite
+// to present and no admin has set a policy yet — and becomes the instance
+// admin, which is the documented bootstrap.
+func (s *Server) registrationAllowed(w http.ResponseWriter, r *http.Request, email, inviteToken string) bool {
+	exists, err := s.admin.AnyUserExists(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "internal", "registration failed")
+		return false
+	}
+	if !exists {
+		return true // bootstrap: the first account becomes the instance admin
+	}
+	mode, err := s.instanceSettings.Registration(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "internal", "registration failed")
+		return false
+	}
+	switch mode {
+	case settings.RegistrationOpen:
+		return true
+	case settings.RegistrationInvite:
+		if inviteToken == "" {
+			Error(w, http.StatusForbidden, "invite_required",
+				"this instance is invite-only — ask an organization admin for an invite link")
+			return false
+		}
+		// Validating here rather than trusting the client keeps an unusable
+		// token from minting an account that can never join anything.
+		preview, err := s.orgs.PreviewInvite(r.Context(), inviteToken)
+		if err != nil {
+			Error(w, http.StatusForbidden, "invite_required",
+				"that invite is invalid, revoked, expired, or already used")
+			return false
+		}
+		// An addressed invite is only honoured for its address. Checking it
+		// here too means a mismatch is refused before the account exists,
+		// rather than after — accepting would fail and leave an orphan.
+		if preview.Email != "" && !strings.EqualFold(strings.TrimSpace(preview.Email), strings.TrimSpace(email)) {
+			Error(w, http.StatusForbidden, "invite_wrong_email",
+				"that invite was sent to a different email address")
+			return false
+		}
+		return true
+	default: // settings.RegistrationClosed
+		Error(w, http.StatusForbidden, "registration_closed", "registration is closed on this instance")
+		return false
+	}
+}
+
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	body, ok := decodeCredentials(w, r)
 	if !ok {
+		return
+	}
+	if !s.registrationAllowed(w, r, body.Email, body.InviteToken) {
 		return
 	}
 	u, tok, err := s.auth.Register(r.Context(), body.Email, body.Password)

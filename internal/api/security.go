@@ -1,11 +1,9 @@
 package api
 
 import (
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 
 	"golang.org/x/time/rate"
 )
@@ -66,6 +64,18 @@ func bodyLimit(max int64) func(http.Handler) http.Handler {
 // server-to-server webhooks) are allowed — CSRF requires a browser that
 // auto-attaches the session cookie, and browsers always send Origin on such
 // cross-site writes. Complements the SameSite=Lax cookie attribute.
+//
+// The residual, stated plainly rather than left implicit: for any browser or
+// embedded context that sends neither header on a cross-site write, the whole
+// defence here is the SameSite=Lax attribute on the session cookie. That is
+// the right trade today, because every caller is either that browser or a
+// non-browser client with no cookie to abuse.
+//
+// It stops being the right trade the moment an API-token auth path is added.
+// Then the two cases separate and should be treated differently: a
+// cookie-authenticated mutation must carry an Origin, and only a
+// token-authenticated one is exempt. Anyone adding that path should change
+// this function in the same commit.
 func originCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -101,8 +111,7 @@ func sameHost(rawURL, host string) bool {
 }
 
 // apiRateLimiter throttles authed API traffic per user (per client IP as a
-// fallback), on top of the stricter auth-endpoint limiter. Buckets are created
-// lazily; at internal-tool scale the map stays small.
+// fallback), on top of the stricter auth-endpoint limiter.
 func apiRateLimiter(rps float64) func(http.Handler) http.Handler {
 	if rps <= 0 {
 		rps = 20
@@ -111,19 +120,10 @@ func apiRateLimiter(rps float64) func(http.Handler) http.Handler {
 	if burst < 1 {
 		burst = 1
 	}
-	var mu sync.Mutex
-	limiters := map[string]*rate.Limiter{}
+	store := newLimiterStore(rate.Limit(rps), burst)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := rateKey(r)
-			mu.Lock()
-			lim, ok := limiters[key]
-			if !ok {
-				lim = rate.NewLimiter(rate.Limit(rps), burst)
-				limiters[key] = lim
-			}
-			mu.Unlock()
-			if !lim.Allow() {
+			if !store.allow(rateKey(r)) {
 				Error(w, http.StatusTooManyRequests, "rate_limited", "too many requests, slow down")
 				return
 			}
@@ -138,16 +138,5 @@ func rateKey(r *http.Request) string {
 	if u := userFrom(r.Context()); u.ID.Valid {
 		return "u:" + uuidString(u.ID)
 	}
-	ip := r.Header.Get("X-Forwarded-For")
-	if ip != "" {
-		if i := strings.IndexByte(ip, ','); i >= 0 {
-			ip = ip[:i]
-		}
-		return "ip:" + strings.TrimSpace(ip)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	return "ip:" + host
+	return "ip:" + clientIP(r)
 }

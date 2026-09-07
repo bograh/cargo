@@ -265,3 +265,205 @@ func TestValidateRejectsHostEnvFile(t *testing.T) {
 		t.Fatalf("rejected a repo-relative env_file: %v", err)
 	}
 }
+
+// Traefik routes on labels, and its Docker provider watches every container on
+// cargo-proxy — so a router declared by a tenant claims a hostname across the
+// whole instance, not just their own app. Both label syntaxes have to be read,
+// because a file reaching Validate by either path is equally dangerous.
+func TestValidateRejectsTraefikLabels(t *testing.T) {
+	for _, tc := range []struct{ name, yaml string }{
+		{"list syntax", "services:\n  web:\n    image: x\n    labels:\n      - traefik.enable=true\n"},
+		{"map syntax", "services:\n  web:\n    image: x\n    labels:\n      traefik.enable: \"true\"\n"},
+		{"router rule", "services:\n  web:\n    image: x\n    labels:\n" +
+			"      traefik.http.routers.evil.rule: Host(`cargo.example.com`)\n"},
+		{"mixed case", "services:\n  web:\n    image: x\n    labels:\n      - Traefik.Enable=true\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate([]byte(tc.yaml), root(t))
+			if !errors.Is(err, ErrUnsafe) {
+				t.Fatalf("err = %v, want ErrUnsafe", err)
+			}
+			if !strings.Contains(err.Error(), `"web"`) {
+				t.Fatalf("error %q should name the offending service", err)
+			}
+		})
+	}
+}
+
+// A tenant's own labels are ordinary metadata; only the Traefik namespace is
+// reserved. Rejecting the rest would break every app that labels its images.
+func TestValidateAllowsOrdinaryLabels(t *testing.T) {
+	y := "services:\n  web:\n    image: x\n    labels:\n" +
+		"      com.example.team: platform\n      description: the web tier\n"
+	if err := Validate([]byte(y), root(t)); err != nil {
+		t.Fatalf("ordinary labels rejected: %v", err)
+	}
+}
+
+// A label block Validate cannot parse is one it cannot vouch for, so it fails
+// closed rather than treating the service as unlabelled.
+func TestValidateRejectsUnreadableLabels(t *testing.T) {
+	err := Validate([]byte("services:\n  web:\n    image: x\n    labels: 12\n"), root(t))
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}
+
+// The platform's own networks are reachable by name from any compose file that
+// declares them external — cargo-system carries the control-plane database,
+// and another app's project network carries that tenant's containers.
+func TestValidateRejectsExternalNetworks(t *testing.T) {
+	for _, tc := range []struct{ name, yaml, wantSubstr string }{
+		{"external true",
+			"services:\n  web:\n    image: x\n    networks: [sys]\nnetworks:\n  sys:\n    external: true\n",
+			"external"},
+		{"external long form",
+			"services:\n  web:\n    image: x\n    networks: [sys]\n" +
+				"networks:\n  sys:\n    external:\n      name: cargo_cargo-system\n",
+			"external"},
+		{"name override at the platform network",
+			"services:\n  web:\n    image: x\n    networks: [sys]\n" +
+				"networks:\n  sys:\n    name: cargo_cargo-system\n",
+			"cargo_cargo-system"},
+		{"name override at another app's project network",
+			"services:\n  web:\n    image: x\n    networks: [sys]\n" +
+				"networks:\n  sys:\n    name: cargo-app-victim_default\n",
+			"cargo-app-victim_default"},
+		{"reserved top-level name",
+			"services:\n  web:\n    image: x\nnetworks:\n  cargo-proxy:\n    external: true\n",
+			"cargo-proxy"},
+		{"service joins reserved network",
+			"services:\n  web:\n    image: x\n    networks: [cargo-system]\n",
+			"cargo-system"},
+		{"service joins reserved network, map syntax",
+			"services:\n  web:\n    image: x\n    networks:\n      cargo-data:\n        aliases: [db]\n",
+			"cargo-data"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate([]byte(tc.yaml), root(t))
+			if !errors.Is(err, ErrUnsafe) {
+				t.Fatalf("err = %v, want ErrUnsafe", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Fatalf("error %q should name %q", err, tc.wantSubstr)
+			}
+		})
+	}
+}
+
+// Validate runs against rendered configuration, and `docker compose config`
+// writes a resolved name onto every network it emits — a private network comes
+// back as `name: <project>_frontend`. Rejecting the field itself would refuse
+// every compose file that declares a network at all.
+func TestValidateAllowsComposeResolvedNetworkNames(t *testing.T) {
+	y := `
+services:
+  web:
+    image: x
+    networks: [default, frontend]
+networks:
+  default:
+    name: src_default
+  frontend:
+    name: src_frontend
+`
+	if err := Validate([]byte(y), root(t)); err != nil {
+		t.Fatalf("rendered network names rejected: %v", err)
+	}
+}
+
+// A tenant splitting their own services onto a private network is ordinary
+// compose, and the overlay's cargo-proxy attachment does not replace it.
+func TestValidateAllowsPrivateNetworks(t *testing.T) {
+	y := `
+services:
+  web:
+    image: x
+    networks: [frontend, backend]
+  db:
+    image: postgres:16
+    networks:
+      backend:
+        aliases: [database]
+networks:
+  frontend:
+  backend:
+    driver: bridge
+`
+	if err := Validate([]byte(y), root(t)); err != nil {
+		t.Fatalf("private networks rejected: %v", err)
+	}
+}
+
+// An app with a managed database attachment needs cargo-data as well as
+// cargo-proxy. The overlay is the only thing that can attach it: a tenant
+// naming a Cargo network themselves is now refused, so if the overlay does not
+// carry it the app gets a DATABASE_URL it cannot reach.
+func TestGenerateOverlayAttachesRequestedNetworks(t *testing.T) {
+	got := GenerateOverlay(OverlaySpec{
+		Slug: "shop", Service: "web", Port: 3000,
+		Domains:  []string{"shop.apps.example.com"},
+		Networks: []string{"cargo-proxy", "cargo-data"},
+	})
+	if !strings.Contains(got, "    networks:\n      - default\n      - cargo-proxy\n      - cargo-data\n") {
+		t.Fatalf("service should join both Cargo networks and the project default:\n%s", got)
+	}
+	for _, n := range []string{"cargo-proxy", "cargo-data"} {
+		if !strings.Contains(got, "  "+n+":\n    external: true\n") {
+			t.Fatalf("network %q should be declared external:\n%s", n, got)
+		}
+	}
+}
+
+// Compose merges by service name, so a service the overlay does not mention
+// keeps whatever the tenant declared: no memory or pids ceiling, no
+// no-new-privileges, and unrotated logs that fill the host disk. Capping only
+// the web tier bounds nothing — the work moves to a sidecar.
+func TestGenerateOverlayHardensEveryService(t *testing.T) {
+	got := GenerateOverlay(OverlaySpec{
+		Slug: "shop", Service: "web", Port: 3000,
+		Services:    []string{"web", "worker", "cache"},
+		Domains:     []string{"shop.apps.example.com"},
+		MemoryLimit: "512m", CPULimit: "1", PidsLimit: 512,
+	})
+	for _, svc := range []string{"web", "worker", "cache"} {
+		if !strings.Contains(got, "\n  "+svc+":\n") {
+			t.Fatalf("service %q missing from overlay:\n%s", svc, got)
+		}
+	}
+	for _, want := range []string{"mem_limit: 512m", "cpus: 1", "pids_limit: 512",
+		"no-new-privileges:true", "max-size: \"10m\""} {
+		if n := strings.Count(got, want); n != 3 {
+			t.Fatalf("%q written %d times, want once per service (3):\n%s", want, n, got)
+		}
+	}
+}
+
+// Routing, the app's environment and the proxy network belong to the traffic
+// service alone: a worker has no business holding the app's credentials, and a
+// second routed container would split the app's traffic.
+func TestGenerateOverlayRoutesOnlyTheTrafficService(t *testing.T) {
+	got := GenerateOverlay(OverlaySpec{
+		Slug: "shop", Service: "web", Port: 3000,
+		Services: []string{"web", "worker"},
+		Domains:  []string{"shop.apps.example.com"},
+	})
+	for _, once := range []string{"traefik.enable=true", "env_file: .env", "restart: unless-stopped",
+		"- cargo-proxy\n"} {
+		if n := strings.Count(got, once); n != 1 {
+			t.Fatalf("%q written %d times, want exactly once:\n%s", once, n, got)
+		}
+	}
+}
+
+// A caller that does not enumerate services still gets a working overlay for
+// the traffic service.
+func TestGenerateOverlayDefaultsToTheTrafficService(t *testing.T) {
+	got := GenerateOverlay(OverlaySpec{
+		Slug: "shop", Service: "web", Port: 3000,
+		Domains: []string{"shop.apps.example.com"},
+	})
+	if !strings.Contains(got, "\n  web:\n") || !strings.Contains(got, "traefik.enable=true") {
+		t.Fatalf("overlay should still describe the traffic service:\n%s", got)
+	}
+}

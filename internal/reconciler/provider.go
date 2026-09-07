@@ -166,7 +166,8 @@ func (d *Docker) writeProject(spec Spec) (string, error) {
 		}
 		overlay := compose.GenerateOverlay(compose.OverlaySpec{
 			Slug: spec.Slug, Service: spec.ComposeService, Port: spec.Port,
-			Domains:     spec.Domains,
+			Domains: spec.Domains, Networks: spec.Networks,
+			Services:    spec.ComposeServices,
 			MemoryLimit: spec.MemoryLimit, CPULimit: spec.CPULimit, PidsLimit: spec.PidsLimit,
 		})
 		if err := os.WriteFile(composePath, []byte(overlay), 0o644); err != nil {
@@ -294,9 +295,11 @@ func (d *Docker) Apply(ctx context.Context, spec Spec, log io.Writer) error {
 		if err := d.writeComposeEnv(spec); err != nil {
 			return err
 		}
-		if err := d.validateComposeSource(ctx, spec); err != nil {
+		services, err := d.validateComposeSource(ctx, spec)
+		if err != nil {
 			return err
 		}
+		spec.ComposeServices = services
 	}
 	if spec.BlueGreen {
 		return d.applyBlueGreen(ctx, spec, log)

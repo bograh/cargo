@@ -4,6 +4,48 @@ linters:
     - errcheck
     - govet
     - staticcheck
+    - gosec
+  settings:
+    gosec:
+      # gosec earns its place here for the file-permission and crypto rules —
+      # it caught two secret-bearing files written 0644. The rules below are
+      # excluded because they are structurally inapplicable to this codebase,
+      # not because they were inconvenient.
+      excludes:
+        # Subprocesses are built as argv slices and handed to exec.Command, so
+        # a variable argument is an argument, never a shell fragment. Cargo is
+        # a deploy tool: shelling out to docker and git is the job.
+        - G204
+        # Integer conversions of syscall statfs fields and container counts.
+        - G109
+        - G115
+        # Fires on any struct field named like a secret being marshalled. Every
+        # hit is the seal path — marshal, then encrypt — which is the point.
+        - G117
+        # Cookie attributes are set, but Secure is conditional on the
+        # environment (never on a plain-HTTP local install), which the rule
+        # cannot follow.
+        - G124
+        # Paths read from /proc and from Cargo's own project directories.
+        - G304
+        # Directory modes. The data dir is 0700 and that is the containment
+        # boundary; files carrying secrets are written 0600 explicitly.
+        - G301
+        - G302
+        - G306
+        # An ephemeral bind to :0 to discover a free port, released
+        # immediately.
+        - G102
+        # Taint analysis reaching an already-validated UUID and a same-origin
+        # relative path.
+        - G703
+        - G710
+  exclusions:
+    rules:
+      # Test fixtures use obvious placeholder credentials.
+      - path: _test\.go
+        linters:
+          - gosec
 formatters:
   enable:
     - gofmt

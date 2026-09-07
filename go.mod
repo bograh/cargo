@@ -1,6 +1,6 @@
 module github.com/bograh/cargo
 
-go 1.25.7
+go 1.25.14
 
 require (
 	github.com/coreos/go-oidc/v3 v3.20.0

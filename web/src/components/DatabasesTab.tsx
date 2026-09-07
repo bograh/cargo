@@ -176,8 +176,8 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
             <div>
               <Label htmlFor="db-redis-mode">Redis mode</Label>
               <Select id="db-redis-mode" className="w-full" value={redisMode} onChange={(e) => setRedisMode(e.target.value)}>
-                <option value="acl">acl (per-app users, isolated)</option>
-                <option value="shared">shared (one password, indexes only)</option>
+                <option value="acl">acl (isolated keys, no pub/sub)</option>
+                <option value="shared">shared (isolated keys, pub/sub shared across apps)</option>
               </Select>
             </div>
           )}

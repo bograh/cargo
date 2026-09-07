@@ -15,6 +15,18 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
       - run: go test ./... -count=1
 
+  # Both halves of the dependency surface. Neither was checked before, and
+  # between them they were carrying 21 called stdlib advisories and a high
+  # react-router one — none of which showed up on a pull request.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   web:
     runs-on: ubuntu-latest
     steps:
@@ -26,9 +38,15 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
+      # oxlint was configured but never run.
+      - run: npm run lint
+        working-directory: web
       - run: npx vitest run
         working-directory: web
       - run: npm run build
+        working-directory: web
+      # Production dependencies only: a dev-tool advisory does not ship.
+      - run: npm audit --omit=dev --audit-level=high
         working-directory: web
 
   docker:

@@ -11,6 +11,8 @@ import (
 
 	"github.com/bograh/cargo/internal/auth"
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/bograh/cargo/internal/orgs"
+	"github.com/bograh/cargo/internal/settings"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -47,8 +49,27 @@ func testTokens() auth.Tokens {
 	}
 }
 
+// registerServer builds the minimal server the register handler needs. An
+// instance with no users yet is the bootstrap case, where policy does not
+// apply — the first account becomes the instance admin.
+func registerServer(hasUsers bool, mode string) *Server {
+	return &Server{
+		auth:             stubAuth{user: sqlc.User{Email: "a@b.co"}, tokens: testTokens()},
+		admin:            stubAdmin{hasUsers: hasUsers},
+		orgs:             stubOrgs{},
+		instanceSettings: &stubInstanceSettings{registration: mode},
+	}
+}
+
+func registerRequest(s *Server, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
+	NewRouter(s).ServeHTTP(rec, req)
+	return rec
+}
+
 func TestRegisterSetsCookies(t *testing.T) {
-	s := &Server{auth: stubAuth{user: sqlc.User{Email: "a@b.co"}, tokens: testTokens()}}
+	s := registerServer(false, settings.RegistrationOpen)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register",
 		strings.NewReader(`{"email":"a@b.co","password":"password-123"}`))
@@ -135,5 +156,74 @@ func TestAuthRateLimited(t *testing.T) {
 	}
 	if last != http.StatusTooManyRequests {
 		t.Fatalf("15th request status = %d, want 429", last)
+	}
+}
+
+// A Cargo account carries the ability to run containers on the host, so an
+// instance that has not chosen a policy must not be an open door.
+func TestRegisterHonoursInstancePolicy(t *testing.T) {
+	const creds = `{"email":"a@b.co","password":"password-123"}`
+	const withInvite = `{"email":"a@b.co","password":"password-123","invite_token":"tok"}`
+
+	for _, tc := range []struct {
+		name     string
+		hasUsers bool
+		mode     string
+		body     string
+		want     int
+	}{
+		{"first account always allowed", false, settings.RegistrationInvite, creds, http.StatusCreated},
+		{"open instance", true, settings.RegistrationOpen, creds, http.StatusCreated},
+		{"invite-only without a token", true, settings.RegistrationInvite, creds, http.StatusForbidden},
+		{"invite-only with a token", true, settings.RegistrationInvite, withInvite, http.StatusCreated},
+		{"closed", true, settings.RegistrationClosed, creds, http.StatusForbidden},
+		{"closed ignores a token", true, settings.RegistrationClosed, withInvite, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := registerRequest(registerServer(tc.hasUsers, tc.mode), tc.body)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body)
+			}
+		})
+	}
+}
+
+// An instance that has never been configured is invite-only, so upgrading does
+// not leave a previously reachable sign-up form open by omission.
+func TestRegisterDefaultsToInviteOnly(t *testing.T) {
+	s := registerServer(true, "")
+	rec := registerRequest(s, `{"email":"a@b.co","password":"password-123"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 on an unconfigured instance (body %s)", rec.Code, rec.Body)
+	}
+}
+
+// A token the orgs service rejects must not mint an account: the holder would
+// have no organisation to join and no way to get one.
+func TestRegisterRejectsUnusableInvite(t *testing.T) {
+	s := registerServer(true, settings.RegistrationInvite)
+	s.orgs = stubOrgs{err: orgs.ErrInviteInvalid}
+	rec := registerRequest(s, `{"email":"a@b.co","password":"password-123","invite_token":"stale"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (body %s)", rec.Code, rec.Body)
+	}
+}
+
+// An addressed invite is only honoured for its address. Refusing at
+// registration rather than at accept means a mismatch does not leave an orphan
+// account behind.
+func TestRegisterRejectsInviteAddressedToSomeoneElse(t *testing.T) {
+	s := registerServer(true, settings.RegistrationInvite)
+	s.orgs = stubOrgs{preview: orgs.InvitePreview{OrgName: "Acme", Role: "member", Email: "bob@x.co"}}
+
+	rec := registerRequest(s, `{"email":"mallory@x.co","password":"password-123","invite_token":"tok"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a mismatched address (body %s)", rec.Code, rec.Body)
+	}
+
+	// The addressee themselves still gets in, case and padding notwithstanding.
+	rec = registerRequest(s, `{"email":" Bob@X.co ","password":"password-123","invite_token":"tok"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want the invited address to be accepted (body %s)", rec.Code, rec.Body)
 	}
 }

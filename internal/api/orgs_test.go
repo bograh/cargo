@@ -15,9 +15,10 @@ import (
 )
 
 type stubOrgs struct {
-	org  sqlc.Organization
-	role string
-	err  error
+	org     sqlc.Organization
+	role    string
+	preview orgs.InvitePreview
+	err     error
 }
 
 func (s stubOrgs) Create(_ context.Context, _ string, _ pgtype.UUID) (sqlc.Organization, error) {
@@ -51,6 +52,9 @@ func (s stubOrgs) AcceptInvite(_ context.Context, _ string, _ pgtype.UUID) (sqlc
 	return s.org, s.err
 }
 func (s stubOrgs) PreviewInvite(_ context.Context, _ string) (orgs.InvitePreview, error) {
+	if s.preview.OrgName != "" {
+		return s.preview, s.err
+	}
 	return orgs.InvitePreview{OrgName: s.org.Name, Role: "member"}, s.err
 }
 

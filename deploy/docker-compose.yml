@@ -79,6 +79,13 @@ services:
       # CARGO_DEFAULT_MEM_LIMIT: "512m"
       # CARGO_DEFAULT_CPU_LIMIT: "1"
       # CARGO_DEFAULT_PIDS_LIMIT: "512"
+      # Ceiling on what an app may raise its own caps to. Unset means no
+      # ceiling, which is right for a single-operator install; set these on a
+      # shared instance, or the defaults above bound only the tenants who
+      # leave them alone.
+      # CARGO_MAX_MEM_LIMIT: "4g"
+      # CARGO_MAX_CPU_LIMIT: "2"
+      # CARGO_MAX_PIDS_LIMIT: "2048"
       # Default deploy strategy: "bluegreen" starts the new version alongside
       # the running one and switches only once it is healthy; "recreate"
       # replaces the container in place (brief downtime). Per-app overridable.
@@ -96,7 +103,18 @@ services:
       # CARGO_METRICS_ADDR: ":9090"
       # Audit-log retention in days.
       # CARGO_AUDIT_RETENTION_DAYS: "180"
+      # Allow apps to clone from a git host inside your network (loopback,
+      # RFC1918, link-local). Off by default: a repo URL is tenant-controlled
+      # and reaches git running on the control plane's network, so leaving it
+      # open lets a tenant aim requests at the cloud metadata endpoint and any
+      # internal service. Turn it on if your git server is self-hosted on the
+      # same private network.
+      # CARGO_ALLOW_PRIVATE_GIT_HOSTS: "false"
     volumes:
+      # Read-write, and that is inherent: deploying containers needs the
+      # daemon, and write access to this socket is root on the host. Any RCE in
+      # the control plane is therefore host compromise — see the threat model
+      # in the README. Traefik above gets the same socket read-only.
       - /var/run/docker.sock:/var/run/docker.sock
       - cargo-data:/var/lib/cargo
     networks:

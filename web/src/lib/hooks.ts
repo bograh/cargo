@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useMatch } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
-import type { App, Org } from "./types";
+import type { App, Org, RegistrationMode } from "./types";
 
 const ACTIVE_ORG_KEY = "cargo.activeOrgId";
 
@@ -52,7 +52,8 @@ export function useApp(appId: string | undefined) {
 export function useInstanceInfo() {
   return useQuery({
     queryKey: ["instance-info"],
-    queryFn: () => api<{ apps_domain_suffix: string }>("/instance/info"),
+    queryFn: () =>
+      api<{ apps_domain_suffix: string; registration_mode: RegistrationMode }>("/instance/info"),
   });
 }
 

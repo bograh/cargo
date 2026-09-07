@@ -11,3 +11,6 @@ SELECT * FROM users WHERE id = $1;
 
 -- name: ListUsers :many
 SELECT * FROM users ORDER BY created_at;
+
+-- name: AnyUserExists :one
+SELECT EXISTS (SELECT 1 FROM users);

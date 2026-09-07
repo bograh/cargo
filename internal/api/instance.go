@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/bograh/cargo/internal/settings"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -13,9 +14,16 @@ const version = "1.5.0"
 
 func (s *Server) getInstanceInfo(w http.ResponseWriter, r *http.Request) {
 	suffix := s.settingOrDefault(r, "apps_domain_suffix", "apps.localhost")
+	// The sign-up form is hidden unless the instance is open, so the mode has
+	// to be readable before anyone has an account. It reveals policy, not data.
+	registration := s.settingOrDefault(r, "registration_mode", settings.DefaultRegistration)
+	if !settings.ValidRegistrationMode(registration) {
+		registration = settings.DefaultRegistration
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"version":            version,
 		"apps_domain_suffix": suffix,
+		"registration_mode":  registration,
 	})
 }
 

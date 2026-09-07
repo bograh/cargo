@@ -143,3 +143,7 @@ export const ACTIVE_STATUSES = ["queued", "building", "deploying"] as const;
 export function isActive(status: Deployment["status"]): boolean {
   return (ACTIVE_STATUSES as readonly string[]).includes(status);
 }
+
+// How the instance decides who may create an account. Anything other than
+// "open" hides the sign-up form: an account can run containers on the host.
+export type RegistrationMode = "open" | "invite" | "closed";

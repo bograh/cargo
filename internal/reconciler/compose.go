@@ -150,8 +150,9 @@ func GenerateDBCompose(spec DBSpec) string {
 	return b.String()
 }
 
-// generateEnvFile renders KEY=VALUE lines, keys sorted. Values containing
-// newlines are rejected — the env file format cannot represent them.
+// generateEnvFile renders KEY=VALUE lines, keys sorted. Keys that are not
+// valid names and values containing newlines are rejected — the env file
+// format cannot represent either.
 func generateEnvFile(env map[string]string) (string, error) {
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -161,6 +162,12 @@ func generateEnvFile(env map[string]string) (string, error) {
 	var b strings.Builder
 	for _, k := range keys {
 		v := env[k]
+		// Keys are validated on the way in (apps.validateEnvKey); checked
+		// again here because this is the point where a newline in a key would
+		// become an extra line in the file.
+		if k == "" || strings.ContainsAny(k, "=\n\r\x00") {
+			return "", fmt.Errorf("env var key %q is not a valid name", k)
+		}
 		if strings.ContainsAny(v, "\n\r") {
 			return "", fmt.Errorf("env var %s: value must not contain newlines", k)
 		}

@@ -40,6 +40,10 @@ type Spec struct {
 	// file. ComposeService names the service that receives traffic.
 	ComposeFile    string
 	ComposeService string
+	// ComposeServices is every service the user's file defines, read back from
+	// the rendered configuration by the safety gate. The overlay writes Cargo's
+	// hardening and resource caps for all of them.
+	ComposeServices []string
 	// SourceDir is the checkout the pipeline placed on disk for a compose
 	// source. It becomes the compose project directory, so relative paths in
 	// the user's file resolve against their own repository.

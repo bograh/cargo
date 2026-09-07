@@ -32,9 +32,14 @@ func ValidRole(role string) bool { _, ok := roleRank[role]; return ok }
 
 type Service struct {
 	q *sqlc.Queries
+	// pool is kept alongside q for the one operation that needs a transaction:
+	// redeeming an invite has to mark it used and grant membership together.
+	pool *pgxpool.Pool
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{q: sqlc.New(pool)} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{q: sqlc.New(pool), pool: pool}
+}
 
 // membership returns the caller's membership or ErrNotFound (org is invisible
 // to non-members — FR-2.4).

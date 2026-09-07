@@ -68,6 +68,9 @@ type OrgService interface {
 type AdminStore interface {
 	ListUsers(ctx context.Context) ([]sqlc.User, error)
 	ListAllOrganizations(ctx context.Context) ([]sqlc.Organization, error)
+	// AnyUserExists gates the bootstrap registration: the very first account
+	// has no invite to present and no admin to have set a policy.
+	AnyUserExists(ctx context.Context) (bool, error)
 }
 
 // AppService is satisfied by *apps.Service.
@@ -111,6 +114,9 @@ type Server struct {
 	audit            AuditService
 	hostsAdmin       HostsAdmin
 	hostSvc          HostReader
+	// streams bounds concurrent Server-Sent Events connections. Zero value is
+	// usable, so a partially-wired Server (tests) still enforces the caps.
+	streams streamLimiter
 }
 
 // AuditService is satisfied by *audit.Service.
@@ -174,6 +180,8 @@ type InstanceSettings interface {
 	SMTP(ctx context.Context) (*settings.SMTPConfig, error)
 	SetSMTP(ctx context.Context, cfg settings.SMTPConfig) error
 	ClearSMTP(ctx context.Context) error
+	Registration(ctx context.Context) (string, error)
+	SetRegistration(ctx context.Context, mode string) error
 }
 
 // GitHubService is satisfied by *github.Service.
@@ -247,7 +255,9 @@ func NewServer(cfg config.Config, pool *pgxpool.Pool, box *crypto.Box) *Server {
 		s.admin = sqlc.New(pool)
 		s.webhookApps = sqlc.New(pool)
 		if box != nil {
-			s.apps = apps.NewService(pool, box)
+			appSvc := apps.NewService(pool, box)
+			appSvc.SetPolicy(apps.PolicyFrom(cfg))
+			s.apps = appSvc
 			s.gh = github.NewService(pool, box)
 			s.instanceSettings = settings.NewService(pool, box)
 			s.oidc = oidc.NewService(pool, settings.NewService(pool, box))

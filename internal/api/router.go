@@ -31,7 +31,10 @@ func NewRouter(s *Server) *chi.Mux {
 		r.Use(originCheck)
 		r.Get("/instance/info", s.getInstanceInfo)
 		// Public: lets an invited user preview an invite before signing in.
-		r.Get("/invites/{token}", s.handlePreviewInvite)
+		// Its own limiter instance, so previewing an invite cannot spend the
+		// login budget (or the reverse) — but it is not left unmetered: it is
+		// the one unauthenticated endpoint that runs a database query.
+		r.With(authRateLimiter()).Get("/invites/{token}", s.handlePreviewInvite)
 
 		r.Route("/auth", func(r chi.Router) {
 			r.Group(func(r chi.Router) {
@@ -133,6 +136,7 @@ func NewRouter(s *Server) *chi.Mux {
 			r.Get("/settings/github-app/manifest/callback", s.handleGithubManifestCallback)
 			r.Get("/settings", s.handleGetSettings)
 			r.Put("/settings/apps-domain-suffix", s.handlePutSuffix)
+			r.Put("/settings/registration", s.handlePutRegistration)
 			r.Put("/settings/smtp", s.handlePutSMTP)
 			r.Delete("/settings/smtp", s.handleDeleteSMTP)
 			r.Post("/settings/smtp/test", s.handleTestSMTP)

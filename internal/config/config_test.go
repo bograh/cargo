@@ -57,3 +57,47 @@ func TestLoadRejectsInvalidEnv(t *testing.T) {
 		t.Fatal("expected error for invalid CARGO_ENV")
 	}
 }
+
+func TestMaxMemLimitResolvesToBytes(t *testing.T) {
+	base := map[string]string{
+		"CARGO_DATABASE_URL": "postgres://cargo:cargo@localhost:5432/cargo",
+		"CARGO_MASTER_KEY":   validMasterKey,
+	}
+	cfg, err := Load(envWith(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxMemBytes != 0 {
+		t.Fatalf("unset ceiling should stay 0, got %d", cfg.MaxMemBytes)
+	}
+	base["CARGO_MAX_MEM_LIMIT"] = "4g"
+	cfg, err = Load(envWith(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxMemBytes != 4<<30 {
+		t.Fatalf("MaxMemBytes = %d, want %d", cfg.MaxMemBytes, 4<<30)
+	}
+}
+
+func TestAllowPrivateGitHosts(t *testing.T) {
+	base := map[string]string{
+		"CARGO_DATABASE_URL": "postgres://cargo:cargo@localhost:5432/cargo",
+		"CARGO_MASTER_KEY":   validMasterKey,
+	}
+	cfg, err := Load(envWith(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AllowPrivateGitHosts {
+		t.Fatal("private git hosts should be off unless asked for")
+	}
+	base["CARGO_ALLOW_PRIVATE_GIT_HOSTS"] = "true"
+	if cfg, err = Load(envWith(base)); err != nil || !cfg.AllowPrivateGitHosts {
+		t.Fatalf("cfg.AllowPrivateGitHosts = %v, err = %v", cfg.AllowPrivateGitHosts, err)
+	}
+	base["CARGO_ALLOW_PRIVATE_GIT_HOSTS"] = "yes please"
+	if _, err = Load(envWith(base)); err == nil {
+		t.Fatal("a non-boolean should be rejected")
+	}
+}

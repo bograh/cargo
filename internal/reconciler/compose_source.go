@@ -34,9 +34,13 @@ func (d *Docker) writeComposeEnv(spec Spec) error {
 // environment into the project's .env, so validating pre-interpolation would
 // let a tenant set a variable through the env-var UI and expand it into a bind
 // mount of the host root.
-func (d *Docker) validateComposeSource(ctx context.Context, spec Spec) error {
+//
+// It returns the names of the services the rendered configuration defines, so
+// the overlay can write Cargo's hardening for all of them rather than only the
+// one that serves traffic.
+func (d *Docker) validateComposeSource(ctx context.Context, spec Spec) ([]string, error) {
 	if spec.ComposeFile == "" {
-		return nil
+		return nil, nil
 	}
 	userFile := filepath.Join(spec.SourceDir, spec.ComposeFile)
 	// The user's file alone: the overlay's own additions are Cargo's and need
@@ -47,12 +51,12 @@ func (d *Docker) validateComposeSource(ctx context.Context, spec Spec) error {
 		// target) on stderr; without it the user just sees "exit status 1".
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
-			return fmt.Errorf("%s is not valid: %s", spec.ComposeFile, strings.TrimSpace(string(exitErr.Stderr)))
+			return nil, fmt.Errorf("%s is not valid: %s", spec.ComposeFile, strings.TrimSpace(string(exitErr.Stderr)))
 		}
-		return fmt.Errorf("could not read %s: %w", spec.ComposeFile, err)
+		return nil, fmt.Errorf("could not read %s: %w", spec.ComposeFile, err)
 	}
 	if err := compose.Validate([]byte(rendered), spec.SourceDir); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return compose.Parse([]byte(rendered))
 }
