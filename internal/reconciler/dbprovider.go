@@ -66,8 +66,13 @@ func (d *Docker) ProvisionDB(ctx context.Context, spec DBSpec, log io.Writer) er
 	switch spec.Engine {
 	case "redis":
 		conf := fmt.Sprintf("requirepass %s\n", spec.AdminPass)
-		// 0600: this file is the instance's admin password in plain text.
-		if err := os.WriteFile(filepath.Join(dir, "redis.conf"), []byte(conf), 0o600); err != nil {
+		// 0644, deliberately, per the directory comment above: redis-server
+		// runs as uid 999 inside the container and reads this file through the
+		// bind mount, so 0600 owned by the host's cargo user makes the
+		// container fail to start. The 0700 directory is what keeps other host
+		// users out. gosec flags the mode; the exception is the point.
+		//nolint:gosec // G306: must be readable by the container's non-root uid
+		if err := os.WriteFile(filepath.Join(dir, "redis.conf"), []byte(conf), 0o644); err != nil {
 			return err
 		}
 		envVars = map[string]string{"REDISCLI_AUTH": spec.AdminPass}
