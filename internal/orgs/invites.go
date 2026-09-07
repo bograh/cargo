@@ -177,14 +177,25 @@ func (s *Service) AcceptInvite(ctx context.Context, token string, userID pgtype.
 			return sqlc.Organization{}, ErrInviteInvalid
 		}
 	}
-	if _, err := q.CreateMembership(ctx, sqlc.CreateMembershipParams{
+	// Already a member — accepting twice is a no-op, as it always was. The
+	// insert runs inside a savepoint because in Postgres a failed statement
+	// aborts the entire transaction: without one, swallowing the unique
+	// violation left every following command failing with 25P02, so the
+	// "no-op" path failed the accept anyway.
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return sqlc.Organization{}, err
+	}
+	if _, cerr := s.q.WithTx(sp).CreateMembership(ctx, sqlc.CreateMembershipParams{
 		OrgID: inv.OrgID, UserID: userID, Role: inv.Role,
-	}); err != nil {
+	}); cerr != nil {
+		_ = sp.Rollback(ctx)
 		var pgErr *pgconn.PgError
-		// Already a member — accepting twice is a no-op, as it always was.
-		if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
-			return sqlc.Organization{}, err
+		if !errors.As(cerr, &pgErr) || pgErr.Code != "23505" {
+			return sqlc.Organization{}, cerr
 		}
+	} else if err := sp.Commit(ctx); err != nil {
+		return sqlc.Organization{}, err
 	}
 	org, err := q.GetOrganizationByID(ctx, inv.OrgID)
 	if err != nil {

@@ -43,9 +43,16 @@ func TestInviteLifecycle(t *testing.T) {
 	if err != nil || role != "member" {
 		t.Fatalf("joiner role = %q, %v", role, err)
 	}
-	// Accepting again is a no-op, not an error.
-	if _, err := svc.AcceptInvite(ctx, token, joiner); err != nil {
+	// Accepting again is a no-op, not an error. This is a link invite (no
+	// email), which stays usable by design; the second accept hits the
+	// membership unique constraint, and the savepoint around it is what keeps
+	// the surrounding transaction alive.
+	got2, err := svc.AcceptInvite(ctx, token, joiner)
+	if err != nil {
 		t.Fatalf("re-accept: %v", err)
+	}
+	if got2.ID != org.ID {
+		t.Fatal("re-accept returned the wrong org")
 	}
 }
 
