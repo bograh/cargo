@@ -141,8 +141,8 @@ func validateCreate(in CreateInput, max MaxLimits) error {
 	if in.Name == "" {
 		return fmt.Errorf("%w: name is required", ErrValidation)
 	}
-	if in.ExposedPort < 1 {
-		return fmt.Errorf("%w: exposed_port must be 1-65535", ErrValidation)
+	if err := validatePort(in.ExposedPort); err != nil {
+		return err
 	}
 	switch in.SourceType {
 	case "git":
@@ -278,6 +278,9 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 	set(&app.ComposePath, in.ComposePath)
 	set(&app.ComposeService, in.ComposeService)
 	if in.ExposedPort != nil {
+		if err := validatePort(*in.ExposedPort); err != nil {
+			return sqlc.Application{}, err
+		}
 		app.ExposedPort = *in.ExposedPort
 	}
 	if in.AutoDeploy != nil {

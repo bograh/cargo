@@ -128,3 +128,16 @@ func TestValidateLimitsWithoutCeiling(t *testing.T) {
 		t.Fatalf("unbounded instance rejected a large cap: %v", err)
 	}
 }
+
+func TestValidatePortRange(t *testing.T) {
+	for _, p := range []int32{1, 80, 8080, 65535} {
+		if err := validatePort(p); err != nil {
+			t.Errorf("port %d: want valid, got %v", p, err)
+		}
+	}
+	for _, p := range []int32{0, -1, 65536, 70000} {
+		if err := validatePort(p); err == nil {
+			t.Errorf("port %d: want rejected, got nil", p)
+		}
+	}
+}
