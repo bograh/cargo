@@ -46,6 +46,13 @@ type Config struct {
 	MetricsAddr string
 	// Audit-log retention in days (default 180).
 	AuditRetentionDays int
+	// AllowPrivateGitHosts lets an app clone from a host that resolves inside
+	// the deployment (loopback, RFC1918, link-local). Off by default: a repo
+	// URL is tenant-controlled and reaches git running on the control plane's
+	// network, so leaving it open is a blind SSRF at the metadata endpoint and
+	// anything else in reach. Turn it on for an install whose git server is on
+	// the same private network — an ordinary self-hosted setup.
+	AllowPrivateGitHosts bool
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -140,6 +147,13 @@ func Load(getenv func(string) string) (Config, error) {
 		} else {
 			return Config{}, fmt.Errorf("CARGO_API_RATELIMIT_RPS must be a positive number, got %q", v)
 		}
+	}
+	if v := getenv("CARGO_ALLOW_PRIVATE_GIT_HOSTS"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("CARGO_ALLOW_PRIVATE_GIT_HOSTS must be true or false, got %q", v)
+		}
+		cfg.AllowPrivateGitHosts = b
 	}
 	if v := getenv("CARGO_METRICS_ADDR"); v != "" {
 		cfg.MetricsAddr = v

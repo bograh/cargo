@@ -99,6 +99,7 @@ func main() {
 		//nolint:gosec // bounded by config validation to a positive int
 		Pids: int32(cfg.MaxPidsLimit),
 	})
+	appSvc.SetAllowPrivateGitHosts(cfg.AllowPrivateGitHosts)
 	depSvc := deployments.NewService(pool, hub, cfg.DataDir)
 	provider := reconciler.NewDocker(cfg.DataDir)
 	hostSvc := hosts.NewService(pool, box)
@@ -125,7 +126,7 @@ func main() {
 		Deployments:      depSvc,
 		Provider:         provider,
 		NewBuilder:       builder.ForName,
-		Clone:            builder.CloneAtBranch,
+		Clone:            builder.CloneFunc(cfg.AllowPrivateGitHosts),
 		CloneAuth:        ghSvc.CloneAuth,
 		DataDir:          cfg.DataDir,
 		AppsDomainSuffix: appsDomainSuffix(pool),

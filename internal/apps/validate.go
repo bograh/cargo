@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/bograh/cargo/internal/giturl"
 )
 
 // maxPort is the highest TCP port an app can serve on. The check used to be
@@ -68,6 +70,16 @@ func validateEnvKey(k string) error {
 	if !envKeyRe.MatchString(k) {
 		return fmt.Errorf("%w: env var key %q must start with a letter or underscore "+
 			"and contain only letters, digits and underscores", ErrValidation, k)
+	}
+	return nil
+}
+
+// validateGitURL screens the repository URL a tenant hands the control plane.
+// The URL reaches `git clone` running on the control plane's network, so an
+// unrestricted one is a blind SSRF; see internal/giturl.
+func validateGitURL(raw string, allowPrivate bool) error {
+	if err := giturl.Validate(raw, allowPrivate); err != nil {
+		return fmt.Errorf("%w: git_repo_url %v", ErrValidation, err)
 	}
 	return nil
 }

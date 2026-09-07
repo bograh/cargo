@@ -100,6 +100,9 @@ type Service struct {
 	// maxLimits is the instance ceiling on per-app resource caps. The zero
 	// value means no ceiling, which is what a single-operator install wants.
 	maxLimits MaxLimits
+	// allowPrivateGitHosts lets a repo URL name a host inside the deployment.
+	// Off by default (CARGO_ALLOW_PRIVATE_GIT_HOSTS).
+	allowPrivateGitHosts bool
 }
 
 func NewService(pool *pgxpool.Pool, box *crypto.Box) *Service {
@@ -112,6 +115,11 @@ func (s *Service) SetAttachmentCleaner(c AttachmentCleaner) { s.cleaner = c }
 
 // SetMaxLimits installs the instance ceiling on per-app resource caps.
 func (s *Service) SetMaxLimits(m MaxLimits) { s.maxLimits = m }
+
+// SetAllowPrivateGitHosts opens repository URLs to hosts inside the
+// deployment, for an install whose git server shares the control plane's
+// private network.
+func (s *Service) SetAllowPrivateGitHosts(v bool) { s.allowPrivateGitHosts = v }
 
 // roleIn returns the actor's role in org or ErrNotFound (scoping, FR-2.4).
 func (s *Service) roleIn(ctx context.Context, orgID, actor pgtype.UUID) (string, error) {
@@ -141,7 +149,7 @@ func (s *Service) appFor(ctx context.Context, appID, actor pgtype.UUID, minRole 
 	return app, nil
 }
 
-func validateCreate(in CreateInput, max MaxLimits) error {
+func validateCreate(in CreateInput, max MaxLimits, allowPrivateGit bool) error {
 	if in.Name == "" {
 		return fmt.Errorf("%w: name is required", ErrValidation)
 	}
@@ -153,6 +161,9 @@ func validateCreate(in CreateInput, max MaxLimits) error {
 		if in.GitRepoURL == "" || in.GitBranch == "" {
 			return fmt.Errorf("%w: git source requires git_repo_url and git_branch", ErrValidation)
 		}
+		if err := validateGitURL(in.GitRepoURL, allowPrivateGit); err != nil {
+			return err
+		}
 	case "image":
 		if in.ImageRef == "" {
 			return fmt.Errorf("%w: image source requires image_ref", ErrValidation)
@@ -160,6 +171,9 @@ func validateCreate(in CreateInput, max MaxLimits) error {
 	case "compose":
 		if in.GitRepoURL == "" || in.GitBranch == "" {
 			return fmt.Errorf("%w: compose source requires git_repo_url and git_branch", ErrValidation)
+		}
+		if err := validateGitURL(in.GitRepoURL, allowPrivateGit); err != nil {
+			return err
 		}
 		if in.ComposeService == "" {
 			return fmt.Errorf("%w: compose source requires compose_service (the service that serves HTTP)", ErrValidation)
@@ -206,7 +220,7 @@ func (s *Service) Create(ctx context.Context, orgID, actor pgtype.UUID, in Creat
 	if roleRank[role] < roleRank["member"] {
 		return sqlc.Application{}, ErrForbidden
 	}
-	if err := validateCreate(in, s.maxLimits); err != nil {
+	if err := validateCreate(in, s.maxLimits, s.allowPrivateGitHosts); err != nil {
 		return sqlc.Application{}, err
 	}
 	if in.Builder == "" {

@@ -83,11 +83,11 @@ func setupWithCompose(t *testing.T, sourceType, cloneFile string) *fixture {
 	case "image":
 		in.ImageRef = "nginx:alpine"
 	case "compose":
-		in.GitRepoURL = "file:///tmp/fake-repo"
+		in.GitRepoURL = "https://git.example.com/acme/web.git"
 		in.GitBranch = "main"
 		in.ComposeService = "web"
 	default:
-		in.GitRepoURL = "file:///tmp/fake-repo"
+		in.GitRepoURL = "https://git.example.com/acme/web.git"
 		in.GitBranch = "main"
 	}
 	app, err := appSvc.Create(ctx, org.ID, u.ID, in)

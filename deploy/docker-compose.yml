@@ -103,6 +103,13 @@ services:
       # CARGO_METRICS_ADDR: ":9090"
       # Audit-log retention in days.
       # CARGO_AUDIT_RETENTION_DAYS: "180"
+      # Allow apps to clone from a git host inside your network (loopback,
+      # RFC1918, link-local). Off by default: a repo URL is tenant-controlled
+      # and reaches git running on the control plane's network, so leaving it
+      # open lets a tenant aim requests at the cloud metadata endpoint and any
+      # internal service. Turn it on if your git server is self-hosted on the
+      # same private network.
+      # CARGO_ALLOW_PRIVATE_GIT_HOSTS: "false"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - cargo-data:/var/lib/cargo
