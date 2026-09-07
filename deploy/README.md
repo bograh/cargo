@@ -38,6 +38,12 @@ appropriate TLS overlay for production, see below).
 
 First registered account becomes the instance admin.
 
+> **Invite-only by default.** After the first account, everyone else needs
+> an invite link from an organization admin. Change it under **Admin →
+> Instance settings → Who can sign up** (`Anyone` / `Invited people only` /
+> `Nobody`). Instances upgrading from an earlier version become invite-only
+> on restart — set it back to `Anyone` if you relied on open sign-up.
+
 ### SSL modes (FR-5.3)
 
 - **Local (default, base file only):** no ACME. Traefik serves its
@@ -79,6 +85,30 @@ CARGO_HTTPS_PUBLISH=127.0.0.1:8443
 ```
 
 Custom domains always use HTTP-01 once their DNS points at the server.
+
+### Resource ceilings
+
+Per-app memory/CPU/PID limits are advisory defaults. An instance admin can
+cap how far a tenant raises their own limits via environment variables:
+
+| Variable | Purpose |
+|---|---|
+| `CARGO_MAX_MEM_LIMIT` | Absolute ceiling for per-app `mem_limit` |
+| `CARGO_MAX_CPU_LIMIT` | Absolute ceiling for per-app `cpus` |
+| `CARGO_MAX_PIDS_LIMIT` | Absolute ceiling for per-app `pids_limit` |
+
+### Git-clone host screening
+
+Repository URLs are validated against SSRF. Only `https://`, `ssh://`, and
+`git@host:path` transports are accepted; hosts that resolve to loopback,
+RFC1918, link-local, or cloud-metadata addresses are refused. If your git
+server is self-hosted on a private network, set:
+
+```bash
+CARGO_ALLOW_PRIVATE_GIT_HOSTS=true
+```
+
+This widens *where* clones may go, never *which transports*.
 
 ### Network topology & database isolation
 
@@ -158,6 +188,57 @@ docker compose up -d   # add your TLS overlay's -f flag for production
 ```
 
 `scripts/backup-restore-test.sh` exercises the dump → restore round-trip in CI.
+
+## Worker hosts (multi-server, early access)
+
+Under **Admin → Worker hosts**, register any SSH-reachable machine running
+Docker Engine with the compose plugin. Paste the host's address
+(`user@host`), SSH port, and private key. Cargo seals the key with the
+master key, pins the host's fingerprint on first contact (mismatch aborts
+all operations), and gives each host an isolated docker context under
+`<dataDir>/hosts/<id>/`.
+
+When creating an app, pick a worker host in the form. Blue/green deploys
+work identically on workers. If a worker goes unreachable mid-deploy the
+deployment fails cleanly and other hosts are unaffected.
+
+For the full design see
+[multi-server spec](../docs/superpowers/specs/2026-08-22-cargo-multi-server-design.md).
+
+## Threat model
+
+The control plane mounts the Docker socket **read-write, as root** — it has
+to: a PaaS whose job is to deploy containers needs the daemon. Write access
+to that socket is root on the host, so any remote code execution in the
+control plane is host compromise. See the main
+[README threat model](../README.md#threat-model) for the full discussion and
+operator guidance.
+
+What Cargo defends is the boundary *below* the control plane: tenant inputs
+(compose files, build paths, container labels, repository URLs, resource
+caps) are validated rather than trusted. Deployed apps run on `cargo-proxy`
+with `no-new-privileges` and resource caps, and cannot reach the platform
+database on its separate internal network.
+
+## Key rotation
+
+If `CARGO_MASTER_KEY` is suspected compromised:
+
+```bash
+# 1. Generate a new key (save it before continuing!)
+cargod gen-key
+
+# 2. Stop the control plane, re-seal everything under the new key, update .env
+cargod rotate-key   # prompts for the old key and re-seals in one transaction
+
+# 3. Start the stack with the new key in .env
+docker compose up -d
+```
+
+`rotate-key` covers every persisted secret shape: env vars, registry
+credentials, database passwords, SMTP/GitHub/OIDC/webhook settings, and
+OIDC client secrets. Wrong old key aborts before any write; re-running a
+completed rotation is a no-op.
 
 ## Development
 
