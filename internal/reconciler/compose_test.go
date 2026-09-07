@@ -359,4 +359,7 @@ func TestGenerateEnvFile(t *testing.T) {
 	if _, err := generateEnvFile(map[string]string{"X": "a\nb"}); err == nil {
 		t.Fatal("newline value accepted")
 	}
+	if _, err := generateEnvFile(map[string]string{"OK\nINJECTED": "1"}); err == nil {
+		t.Fatal("expected a newline in a key to be rejected")
+	}
 }

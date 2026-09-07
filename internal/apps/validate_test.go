@@ -31,3 +31,16 @@ func TestValidateRepoPath(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateEnvKey(t *testing.T) {
+	for _, k := range []string{"PORT", "_x", "DB_URL_2", "a"} {
+		if err := validateEnvKey(k); err != nil {
+			t.Errorf("%q: want accepted, got %v", k, err)
+		}
+	}
+	for _, k := range []string{"", "2PORT", "DB-URL", "A=B", "OK\nINJECTED=1", "with space", "e\x00"} {
+		if err := validateEnvKey(k); err == nil {
+			t.Errorf("%q: want rejected, got nil", k)
+		}
+	}
+}

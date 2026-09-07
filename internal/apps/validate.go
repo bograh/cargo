@@ -3,6 +3,7 @@ package apps
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -46,6 +47,27 @@ func validateRepoPath(field, p string) error {
 	clean := filepath.Clean(p)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("%w: %s %q points outside the repository", ErrValidation, field, p)
+	}
+	return nil
+}
+
+// envKeyRe is the POSIX shell-variable name form: a letter or underscore,
+// then letters, digits and underscores.
+var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// validateEnvKey checks an environment-variable name. Only emptiness was
+// rejected before, and generateEnvFile screens newlines in *values* but not in
+// keys — so a key containing "\n" wrote extra lines into the app's .env. The
+// blast radius is the tenant's own container, which they already control, so
+// this was a correctness gap rather than a breach; it was also one character
+// away from mattering.
+func validateEnvKey(k string) error {
+	if k == "" {
+		return fmt.Errorf("%w: env var key must not be empty", ErrValidation)
+	}
+	if !envKeyRe.MatchString(k) {
+		return fmt.Errorf("%w: env var key %q must start with a letter or underscore "+
+			"and contain only letters, digits and underscores", ErrValidation, k)
 	}
 	return nil
 }

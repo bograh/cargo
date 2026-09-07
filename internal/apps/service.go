@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/bograh/cargo/internal/crypto"
 	"github.com/bograh/cargo/internal/db/sqlc"
@@ -90,7 +91,10 @@ type AttachmentCleaner interface {
 }
 
 type Service struct {
-	q       *sqlc.Queries
+	q *sqlc.Queries
+	// pool is kept alongside q so a multi-statement write can run in one
+	// transaction (SetEnvVars).
+	pool    *pgxpool.Pool
 	box     *crypto.Box
 	cleaner AttachmentCleaner
 	// maxLimits is the instance ceiling on per-app resource caps. The zero
@@ -99,7 +103,7 @@ type Service struct {
 }
 
 func NewService(pool *pgxpool.Pool, box *crypto.Box) *Service {
-	return &Service{q: sqlc.New(pool), box: box}
+	return &Service{q: sqlc.New(pool), pool: pool, box: box}
 }
 
 // SetAttachmentCleaner wires the managed-database cleanup collaborator used by
@@ -404,19 +408,33 @@ func (s *Service) SetEnvVars(ctx context.Context, appID, actor pgtype.UUID, vars
 	if err != nil {
 		return err
 	}
-	for k, v := range vars {
-		if k == "" {
-			return fmt.Errorf("%w: env var key must not be empty", ErrValidation)
+	// Validate the whole batch before writing any of it, so a rejected key
+	// does not leave half the variables applied.
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		if err := validateEnvKey(k); err != nil {
+			return err
 		}
-		enc, err := s.box.Seal([]byte(v))
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+	for _, k := range keys {
+		enc, err := s.box.Seal([]byte(vars[k]))
 		if err != nil {
 			return err
 		}
-		if err := s.q.UpsertEnvVar(ctx, sqlc.UpsertEnvVarParams{AppID: app.ID, Key: k, ValueEnc: enc}); err != nil {
+		if err := q.UpsertEnvVar(ctx, sqlc.UpsertEnvVarParams{AppID: app.ID, Key: k, ValueEnc: enc}); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Service) ListEnvKeys(ctx context.Context, appID, actor pgtype.UUID) ([]string, error) {
