@@ -53,7 +53,10 @@ const generatedDockerfileName = "Dockerfile.cargo"
 type generatedBuilder struct{ gen Generator }
 
 func (g generatedBuilder) Build(ctx context.Context, in Input) error {
-	ctxDir := filepath.Join(in.WorkDir, in.ContextPath)
+	ctxDir, err := Within(in.WorkDir, in.ContextPath)
+	if err != nil {
+		return err
+	}
 	df, err := g.gen.Dockerfile(ctxDir)
 	if err != nil {
 		return fmt.Errorf("%s generator: %w", g.gen.Name(), err)

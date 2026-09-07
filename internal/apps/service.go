@@ -171,6 +171,15 @@ func validateCreate(in CreateInput, max MaxLimits) error {
 	if err := validateDeployStrategy(in.DeployStrategy); err != nil {
 		return err
 	}
+	for _, f := range []struct{ field, path string }{
+		{"dockerfile_path", in.DockerfilePath},
+		{"build_context", in.BuildContext},
+		{"compose_path", in.ComposePath},
+	} {
+		if err := validateRepoPath(f.field, f.path); err != nil {
+			return err
+		}
+	}
 	return validateLimits(in.MemLimit, in.CPULimit, in.PidsLimit, max)
 }
 
@@ -277,6 +286,15 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 	set(&app.DockerfilePath, in.DockerfilePath)
 	set(&app.ComposePath, in.ComposePath)
 	set(&app.ComposeService, in.ComposeService)
+	for _, f := range []struct{ field, path string }{
+		{"dockerfile_path", app.DockerfilePath},
+		{"build_context", app.BuildContext},
+		{"compose_path", app.ComposePath},
+	} {
+		if err := validateRepoPath(f.field, f.path); err != nil {
+			return sqlc.Application{}, err
+		}
+	}
 	if in.ExposedPort != nil {
 		if err := validatePort(*in.ExposedPort); err != nil {
 			return sqlc.Application{}, err

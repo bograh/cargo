@@ -440,7 +440,10 @@ func (p *Pipeline) checkoutCompose(ctx context.Context, app sqlc.Application, de
 		return err
 	}
 
-	path := filepath.Join(dir, app.ComposePath)
+	path, err := builder.Within(dir, app.ComposePath)
+	if err != nil {
+		return fmt.Errorf("compose_path %s: %w", app.ComposePath, err)
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("compose file %s not found in the repository", app.ComposePath)
