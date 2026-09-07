@@ -96,6 +96,24 @@ When creating an app, pick a worker host in the form; its domains must resolve t
 
 Notes for this release: managed databases remain single-host; per-host metrics collection arrives with slice 12b; log streaming already follows the app's host. If Docker or the compose plugin is missing on the worker, verification reports `degraded` with a copy-paste install command — Cargo never installs software on your hosts by itself.
 
+## Threat model
+
+Worth stating explicitly, because it is the assumption everything else rests on.
+
+**The control plane mounts the Docker socket read-write, and runs as root.** It has to: a PaaS whose job is to deploy containers needs the daemon, and there is no subset of the Docker API that both allows that and prevents container escape. The consequence follows directly — **write access to that socket is root on the host**, so any remote code execution in the control plane is host compromise, not container compromise. Traefik gets the socket read-only; nothing else on the host should get it at all.
+
+That is why the boundary Cargo actually defends is the one *below* the control plane: what a tenant may put into a compose file, a build path, a container label, a repository URL or a resource cap. Those are the inputs a tenant controls, and every one of them is validated (`internal/compose/validate.go`, `internal/apps/validate.go`, `internal/giturl`) rather than trusted. Deployed apps run on `cargo-proxy` with `no-new-privileges` and resource caps, and cannot reach the platform database, which lives on a separate internal network.
+
+What follows for an operator:
+
+- **Treat an account on the instance as a host-level grant.** Registration is invite-only by default for this reason. Give admin to people you would give SSH to.
+- **Do not publish the control plane's port directly.** Only Traefik publishes host ports; keep it that way.
+- **Back up `CARGO_MASTER_KEY` separately from the database.** An attacker with both has every stored secret; an operator with neither has none of them.
+- **Rotate after any suspected exposure.** `cargod rotate-key` re-seals every stored secret under a new key.
+- **A registered worker host is the same grant again.** Cargo drives it through Docker over SSH, so its stored key is root on that machine too. The key is sealed with the master key and the host fingerprint is pinned on first contact, but only register machines you are willing to hand over entirely.
+
+Known accepted risk: the control-plane process is root inside its own container. With a read-write Docker socket already mounted, dropping it to a non-root user buys nothing an attacker could not undo through the socket in one command, and doing it would need a data-directory ownership migration on every existing install. It is recorded here rather than fixed.
+
 ## Documentation
 
 - [PRD](PRD.md) — product requirements

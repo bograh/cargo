@@ -64,6 +64,18 @@ func bodyLimit(max int64) func(http.Handler) http.Handler {
 // server-to-server webhooks) are allowed — CSRF requires a browser that
 // auto-attaches the session cookie, and browsers always send Origin on such
 // cross-site writes. Complements the SameSite=Lax cookie attribute.
+//
+// The residual, stated plainly rather than left implicit: for any browser or
+// embedded context that sends neither header on a cross-site write, the whole
+// defence here is the SameSite=Lax attribute on the session cookie. That is
+// the right trade today, because every caller is either that browser or a
+// non-browser client with no cookie to abuse.
+//
+// It stops being the right trade the moment an API-token auth path is added.
+// Then the two cases separate and should be treated differently: a
+// cookie-authenticated mutation must carry an Origin, and only a
+// token-authenticated one is exempt. Anyone adding that path should change
+// this function in the same commit.
 func originCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

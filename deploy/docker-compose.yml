@@ -111,6 +111,10 @@ services:
       # same private network.
       # CARGO_ALLOW_PRIVATE_GIT_HOSTS: "false"
     volumes:
+      # Read-write, and that is inherent: deploying containers needs the
+      # daemon, and write access to this socket is root on the host. Any RCE in
+      # the control plane is therefore host compromise — see the threat model
+      # in the README. Traefik above gets the same socket read-only.
       - /var/run/docker.sock:/var/run/docker.sock
       - cargo-data:/var/lib/cargo
     networks:
