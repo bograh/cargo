@@ -4,7 +4,7 @@
 # so a reader can still see what it is. Dependabot bumps these
 # (.github/dependabot.yml) — a digest pin without a bump mechanism just means
 # the base image never gets its security updates.
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS web
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS web
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
