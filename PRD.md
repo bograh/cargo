@@ -130,13 +130,15 @@ Existing self-hosted options (Dokploy, Coolify) prove the model but come with th
 
 ## 8. Out of Scope (v1)
 
-- Managed databases (Postgres/Redis/MySQL/Mongo) — Phase 2
-- User-supplied docker-compose app source — Phase 2
-- Multi-server / remote Docker hosts — Phase 3
-- Zero-downtime (blue/green) deployments — Phase 3
+- ~~Managed databases (Postgres/Redis/MySQL/Mongo) — Phase 2~~ **shipped (8.1)**
+- ~~User-supplied docker-compose app source — Phase 2~~ **shipped (13.1)**
+- ~~Multi-server / remote Docker hosts — Phase 3~~ **shipped (12a)**
+- ~~Zero-downtime (blue/green) deployments — Phase 3~~ **shipped (Phase 11)**
+- ~~App metrics/monitoring dashboards — Phase 3~~ **shipped (13.2)**
+- ~~Notifications (email/Slack) for deployment events — later~~ **shipped (10.8)**
+- ~~OIDC provider — Phase 2~~ **shipped (8.2)**
+- ~~Master-key rotation~~ **shipped (13.3)**
 - Kubernetes target — future, behind `DeployProvider`
-- App metrics/monitoring dashboards — Phase 3
-- Notifications (email/Slack) for deployment events — later
 - GitLab/Bitbucket/Gitea integration — later (GitHub-only v1)
 - Billing, plans, quotas — not applicable to internal tool
 
@@ -152,11 +154,13 @@ Existing self-hosted options (Dokploy, Coolify) prove the model but come with th
 
 ## 10. Roadmap
 
-| Phase | Contents |
-|---|---|
-| **v1** | Auth/orgs/invites · GitHub + image sources · Dockerfile/Nixpacks builders · wildcard + custom domains with auto SSL · env vars · live logs · rollback · install script |
-| **Phase 2** | Managed databases (Postgres, Redis first) · OIDC provider · docker-compose app source |
-| **Phase 3** | Multi-server (Docker-over-SSH) · zero-downtime blue/green deploys · metrics/monitoring |
+| Phase | Contents | Status |
+|---|---|---|
+| **v1** | Auth/orgs/invites · GitHub + image sources · Dockerfile/Nixpacks builders · wildcard + custom domains with auto SSL · env vars · live logs · rollback · install script | ✅ shipped |
+| **Phase 2** | Managed databases (Postgres, Redis first) · OIDC provider · docker-compose app source | ✅ shipped |
+| **Phase 3** | Multi-server (Docker-over-SSH) · zero-downtime blue/green deploys · metrics/monitoring | ✅ shipped (12a on workers) |
+| **Production Hardening** | Security & performance audit: invite-only signup, git-clone SSRF screening, compose validation, instance resource ceilings, Redis ACL isolation, DB connection pooling, indexed queries, rate limiting, SSE stream caps, Slowloris protection, govulncheck CI | ✅ shipped |
+| **Remaining** | Additional git providers (GitLab/Bitbucket/Gitea) · per-host metrics (12b) · worker-host bootstrap (12c) | ⬜ planned |
 
 ## 11. Technical Constraints & Dependencies
 

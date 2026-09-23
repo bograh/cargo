@@ -1,10 +1,10 @@
 # Cargo — Phased Plans v2
 
-Forward roadmap from the current shipped state (**2026-07-23**). Supersedes the
-forward-looking half of [PhasedPlans.md](PhasedPlans.md), which remains the historical
-record of Phases 0–9. v2 inserts a **Production Hardening** milestone ahead of the
-remaining feature roadmap, because operational safety now gates real-world use more than any
-new feature does.
+Forward roadmap from the current shipped state (**2026-07-23**, updated **2026-09-07**).
+Supersedes the forward-looking half of [PhasedPlans.md](PhasedPlans.md), which remains the
+historical record of Phases 0–9. v2 inserts a **Production Hardening** milestone ahead of
+the remaining feature roadmap, because operational safety now gates real-world use more than
+any new feature does.
 
 Status legend: ✅ done · ◑ partial · 🔜 next · ⬜ not started
 
@@ -24,9 +24,8 @@ Verified against the code, not just the plan docs. Full detail in [PhasedPlans.m
 | App metrics (docker stats + Traefik Prometheus, live charts + 48h history) | 9.3 | ✅ app + host (13.2) |
 | Web UI redesign · app stop/start · deployment supersede | extra | ✅ |
 
-**Still open from the original roadmap:** docker-compose app source (8.3), multi-server
-(9.1), zero-downtime blue/green (9.2), instance/host monitoring (rest of 9.3), plus the
-whole class of operational gaps captured below.
+**Still open from the original roadmap:** additional git providers (GitLab/Bitbucket/Gitea),
+per-host metrics (12b), and worker-host bootstrap flow (12c).
 
 ---
 
@@ -134,7 +133,7 @@ merges them into one backend pool and the hand-off needs no proxy reconfiguratio
 
 ---
 
-## Phase 12 — Multi-server (Docker-over-SSH, 9.1) ◑
+## Phase 12 — Multi-server (Docker-over-SSH, 9.1) ◑ (12a done)
 
 *Largest architectural step; validates the existing `DeployProvider` seam. Own spec → plan
 cycle. Spec: `docs/superpowers/specs/2026-08-22-cargo-multi-server-design.md`; slice 12a
@@ -160,7 +159,7 @@ Sliced per the spec: hosts + remote deploys first, observability and bootstrap n
 
 ---
 
-## Phase 13 — Remaining roadmap & finishers ⬜
+## Phase 13 — Remaining roadmap & finishers ◑
 
 Independent, each a small-to-medium own cycle; sequence by demand.
 
@@ -207,12 +206,44 @@ Behind the same source abstraction as GitHub. PRD "later".
 
 ---
 
+## Security & Performance Hardening (PR #2) ✅
+
+Audit-driven hardening branch (20 commits, 82 files, +3,435/−306), merged 2026-09-07.
+Covers all 20 gaps identified in the production-readiness audit.
+
+### Security fixes
+- **Invite-only signup by default** — non-first accounts can no longer self-register; configurable per instance (Anyone / Invited only / Nobody)
+- **Instance resource ceilings** — new `CARGO_MAX_MEM_LIMIT` / `_CPU_LIMIT` / `_PIDS_LIMIT` cap how far a tenant can raise per-app limits
+- **Redis ACL isolation** — shared mode now uses per-app ACL users with channel access instead of the instance admin password
+- **Invite binding** — emailed invites are single-use and bound to the recipient's address
+- **Git-clone SSRF screening** — new `internal/giturl` package rejects non-https/ssh transports, `ext::` helpers, leading-dash hosts, and resolves to block metadata/internal addresses
+- **Build path containment** — `dockerfile_path`, `build_context`, `compose_path` cannot escape the checkout via `../../..`
+- **Env var validation** — keys validated; batch-applied atomically in one transaction
+- **SSE stream caps & access revalidation** — per-user (8) and instance (64) stream caps; 1-minute access revalidation drops revoked/expired sessions
+- **Compose hardening** — rejects tenant-supplied Traefik labels, external networks, and images carrying their own Traefik labels
+- **Slowloris protection** — read and idle timeouts on both HTTP listeners
+- **Rate limiting** — per-real-client rate limiting with idle-bucket eviction
+- **Build-path escape** — `internal/builder/paths.go` `Within()` containment check
+
+### Performance fixes
+- **DB indexing** — migration 00021: 4 indexes on previously-scanning lookups
+- **Connection pool sizing** — pgx pool now 20 max / 2 min (was 4)
+- **Metrics batching** — all apps sampled in one `docker stats` call
+
+### CI & supply chain
+- `govulncheck` + `npm audit --omit=dev` CI jobs
+- `oxlint` lint job
+- Dockerfile pins base images by SHA256 digest
+- `.github/dependabot.yml` for docker/gomod/npm/actions
+
+---
+
 ## Sequencing summary
 
-1. **Phase 10 — Production Hardening (m11)** — next; gates real use.
-2. **Phase 11 — Zero-downtime blue/green** — highest-value feature; needs 10.1/10.2.
-3. **Phase 12 — Multi-server** — biggest architecture change.
-4. **Phase 13 — finishers** — compose source, instance monitoring, key rotation, more git providers, by demand.
+1. **Phase 10 — Production Hardening (m11)** — ✅ complete.
+2. **Phase 11 — Zero-downtime blue/green** — ✅ complete.
+3. **Phase 12 — Multi-server** — ◑ 12a done (hosts & remote deploys); 12b (per-host metrics) and 12c (proxy bootstrap/join) remaining.
+4. **Phase 13 — finishers** — ◑ compose source ✅, instance monitoring ✅, key rotation ✅; additional git providers remaining.
 
 Each Phase 11–13 item follows the established spec → plan → ship cadence under
 `docs/superpowers/{specs,plans}` with the SDD task breakdown in `.superpowers/sdd`.
