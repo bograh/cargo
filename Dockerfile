@@ -19,7 +19,7 @@ COPY . .
 COPY --from=web /app/internal/webui/dist ./internal/webui/dist
 RUN CGO_ENABLED=0 go build -o /bin/cargod ./cmd/server
 
-FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 # docker-cli-buildx provides the BuildKit builder nixpacks requires (its
 # generated Dockerfiles use cache mounts); without it nixpacks builds fail and
 # plain Dockerfile builds fall back to the deprecated legacy builder.
