@@ -2,6 +2,7 @@ package giturl
 
 import (
 	"errors"
+	"net"
 	"testing"
 )
 
@@ -87,5 +88,37 @@ func TestHatchDoesNotWidenTransports(t *testing.T) {
 func TestCheckHostRejectsLiteralPrivateAddress(t *testing.T) {
 	if err := CheckHost("https://169.254.169.254/latest/meta-data/", false); !errors.Is(err, ErrPrivateAddress) {
 		t.Fatalf("got %v, want ErrPrivateAddress", err)
+	}
+}
+
+func TestPublicIP(t *testing.T) {
+	for s, want := range map[string]bool{
+		"8.8.8.8":          true,
+		"2606:4700::1111":  true,
+		"127.0.0.1":        false,
+		"10.1.2.3":         false,
+		"172.16.0.1":       false,
+		"192.168.1.1":      false,
+		"169.254.169.254":  false,
+		"0.0.0.0":          false,
+		"100.64.0.1":       false,
+		"224.0.0.1":        false,
+		"::1":              false,
+		"::":               false,
+		"fe80::1":          false,
+		"fc00::1":          false,
+		"fd12:3456::1":     false,
+		"::ffff:10.0.0.1":  false,
+		"::ffff:8.8.8.8":   true,
+		"64:ff9b::a00:1":   false, // NAT64 of 10.0.0.1
+		"64:ff9b::808:808": true,  // NAT64 of 8.8.8.8
+	} {
+		ip := net.ParseIP(s)
+		if ip == nil {
+			t.Fatalf("bad test address %q", s)
+		}
+		if got := PublicIP(ip); got != want {
+			t.Errorf("PublicIP(%s) = %v, want %v", s, got, want)
+		}
 	}
 }

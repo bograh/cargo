@@ -2,12 +2,16 @@ package jobs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/bograh/cargo/internal/giturl"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 )
@@ -44,10 +48,55 @@ func defaultLookup(ctx context.Context, host string) error {
 	return err
 }
 
+// errNonPublicAddress is returned by the probe dialer when a domain resolves
+// to an address the control plane must not reach.
+var errNonPublicAddress = errors.New("domain resolves to a non-public address")
+
+// publicOnlyControl runs after DNS resolution, on the exact address being
+// dialed, so a tenant domain pointed at 127.0.0.1, an RFC1918 range or the
+// cloud metadata service cannot turn the domain check into a request from
+// the control plane's network position — including via DNS rebinding.
+func publicOnlyControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !giturl.PublicIP(ip) {
+		return fmt.Errorf("%w: %s", errNonPublicAddress, host)
+	}
+	return nil
+}
+
+// newProbeClient builds the HTTP client for domain probes. control vets each
+// dialed address (publicOnlyControl in production). Redirects are not
+// followed: a 3xx already proves the domain answers, and following one would
+// let a tenant steer the request to a host of their choosing.
+func newProbeClient(control func(network, address string, c syscall.RawConn) error) *http.Client {
+	dialer := &net.Dialer{Timeout: 5 * time.Second, Control: control}
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			Proxy:               nil,
+			DialContext:         dialer.DialContext,
+			TLSHandshakeTimeout: 5 * time.Second,
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+var probeClient = newProbeClient(publicOnlyControl)
+
 // defaultProbe reports whether the host answers HTTP(S) at all; any status
-// code counts — routing is what we verify, not app health (FR-5.4).
+// code counts — routing is what we verify, not app health (FR-5.4). A domain
+// that only resolves to non-public addresses never answers.
 func defaultProbe(ctx context.Context, host string) bool {
-	client := &http.Client{Timeout: 5 * time.Second}
+	return probeWith(ctx, probeClient, host)
+}
+
+func probeWith(ctx context.Context, client *http.Client, host string) bool {
 	for _, scheme := range []string{"https://", "http://"} {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, scheme+host, nil)
 		if err != nil {

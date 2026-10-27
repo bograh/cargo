@@ -55,7 +55,7 @@ func Validate(raw string, allowPrivate bool) error {
 	if allowPrivate {
 		return nil
 	}
-	if ip := net.ParseIP(host); ip != nil && !publicIP(ip) {
+	if ip := net.ParseIP(host); ip != nil && !PublicIP(ip) {
 		return fmt.Errorf("%w: %s", ErrPrivateAddress, host)
 	}
 	return nil
@@ -128,7 +128,7 @@ func CheckHost(raw string, allowPrivate bool) error {
 		return nil
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		if !publicIP(ip) {
+		if !PublicIP(ip) {
 			return fmt.Errorf("%w: %s", ErrPrivateAddress, host)
 		}
 		return nil
@@ -138,16 +138,17 @@ func CheckHost(raw string, allowPrivate bool) error {
 		return fmt.Errorf("resolve %s: %w", host, err)
 	}
 	for _, ip := range addrs {
-		if !publicIP(ip) {
+		if !PublicIP(ip) {
 			return fmt.Errorf("%w: %s is %s", ErrPrivateAddress, host, ip)
 		}
 	}
 	return nil
 }
 
-// publicIP reports whether an address is one the control plane could plausibly
-// have been asked to reach on purpose.
-func publicIP(ip net.IP) bool {
+// PublicIP reports whether an address is one the control plane could plausibly
+// have been asked to reach on purpose. Anything that dials tenant-supplied
+// hosts (git clone screening, the domain check) should refuse the rest.
+func PublicIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() ||
 		ip.IsUnspecified() || ip.IsMulticast() {
@@ -164,9 +165,23 @@ func publicIP(ip net.IP) bool {
 			return false
 		}
 	}
-	// IPv4-mapped and NAT64 forms of the above.
+	// IPv4-mapped forms are handled by To4 above; NAT64 (64:ff9b::/96)
+	// embeds an IPv4 address that a translating gateway would reach.
 	if v4 := ip.To4(); v4 == nil && len(ip) == net.IPv6len {
-		if ip[0] == 0xfc || ip[0] == 0xfd { // unique local, fc00::/7
+		if ip[0]&0xfe == 0xfc { // unique local, fc00::/7
+			return false
+		}
+		if ip[0] == 0x00 && ip[1] == 0x64 && ip[2] == 0xff && ip[3] == 0x9b &&
+			isZero(ip[4:12]) {
+			return PublicIP(net.IPv4(ip[12], ip[13], ip[14], ip[15]))
+		}
+	}
+	return true
+}
+
+func isZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
 			return false
 		}
 	}
