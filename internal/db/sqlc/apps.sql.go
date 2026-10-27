@@ -11,6 +11,43 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addAppRetirement = `-- name: AddAppRetirement :exec
+INSERT INTO app_retirements (app_id, target) VALUES ($1, $2)
+ON CONFLICT (app_id, target) DO NOTHING
+`
+
+type AddAppRetirementParams struct {
+	AppID  pgtype.UUID
+	Target string
+}
+
+func (q *Queries) AddAppRetirement(ctx context.Context, arg AddAppRetirementParams) error {
+	_, err := q.db.Exec(ctx, addAppRetirement, arg.AppID, arg.Target)
+	return err
+}
+
+const appDeploymentPresence = `-- name: AppDeploymentPresence :one
+SELECT
+    (SELECT d.id FROM deployments d WHERE d.app_id = $1 AND d.status = 'live'
+     ORDER BY d.created_at DESC LIMIT 1)::uuid AS live_id,
+    EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = $1
+            AND d.status IN ('queued', 'building', 'deploying')) AS in_flight
+`
+
+type AppDeploymentPresenceRow struct {
+	LiveID   pgtype.UUID
+	InFlight bool
+}
+
+// What a host move has to carry over: the deployment serving now (if any) and
+// whether one is still on its way.
+func (q *Queries) AppDeploymentPresence(ctx context.Context, appID pgtype.UUID) (AppDeploymentPresenceRow, error) {
+	row := q.db.QueryRow(ctx, appDeploymentPresence, appID)
+	var i AppDeploymentPresenceRow
+	err := row.Scan(&i.LiveID, &i.InFlight)
+	return i, err
+}
+
 const countAppsOnHost = `-- name: CountAppsOnHost :one
 SELECT count(*) FROM applications WHERE host_id = $1
 `
@@ -151,6 +188,20 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.ActiveColor,
 	)
 	return i, err
+}
+
+const deleteAppRetirement = `-- name: DeleteAppRetirement :exec
+DELETE FROM app_retirements WHERE app_id = $1 AND target = $2
+`
+
+type DeleteAppRetirementParams struct {
+	AppID  pgtype.UUID
+	Target string
+}
+
+func (q *Queries) DeleteAppRetirement(ctx context.Context, arg DeleteAppRetirementParams) error {
+	_, err := q.db.Exec(ctx, deleteAppRetirement, arg.AppID, arg.Target)
+	return err
 }
 
 const deleteApplication = `-- name: DeleteApplication :exec
@@ -305,6 +356,30 @@ func (q *Queries) ListAppMetricsSince(ctx context.Context, arg ListAppMetricsSin
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppRetirements = `-- name: ListAppRetirements :many
+SELECT target FROM app_retirements WHERE app_id = $1 ORDER BY created_at, target
+`
+
+func (q *Queries) ListAppRetirements(ctx context.Context, appID pgtype.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, listAppRetirements, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var target string
+		if err := rows.Scan(&target); err != nil {
+			return nil, err
+		}
+		items = append(items, target)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

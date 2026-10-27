@@ -308,7 +308,10 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 		appError(w, err)
 		return
 	}
+	var moved *sqlc.Deployment
 	if body.HostID != nil {
+		from := apps.TargetKey(app.HostID)
+		var newHost pgtype.UUID
 		if *body.HostID == "" {
 			// Clearing the assignment moves the app back to the control plane.
 			if _, err := s.pool.Exec(r.Context(),
@@ -316,12 +319,87 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusInternalServerError, "internal", "could not clear host")
 				return
 			}
-		} else if err := s.assignHost(r.Context(), id, app.OrgID, userFrom(r.Context()).ID, *body.HostID); err != nil {
-			hostError(w, err)
-			return
+		} else {
+			if err := newHost.Scan(*body.HostID); err != nil {
+				hostError(w, errors.New("host_id must be a UUID"))
+				return
+			}
+			if err := s.assignHost(r.Context(), id, app.OrgID, userFrom(r.Context()).ID, *body.HostID); err != nil {
+				hostError(w, err)
+				return
+			}
+		}
+		app.HostID = newHost
+		if to := apps.TargetKey(newHost); to != from {
+			dep, err := s.relocateApp(r.Context(), app, userFrom(r.Context()).ID, from, to)
+			if err != nil {
+				slog.Warn("app move follow-up failed", "app", app.Slug, "err", err)
+				Error(w, http.StatusInternalServerError, "internal",
+					"host updated, but moving the running app failed: "+err.Error())
+				return
+			}
+			moved = dep
 		}
 	}
-	writeJSON(w, http.StatusOK, appJSON(app))
+	out := appJSON(app)
+	if moved != nil {
+		// The deployment that brings the app up on its new host; the old
+		// location is cleared once it is live.
+		out["move_deployment_id"] = uuidString(moved.ID)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// relocateApp follows a host change through. The old target is recorded for
+// retirement first, so whatever happens next it is never forgotten.
+//
+// An app that is serving (or about to) is redeployed onto its new target and
+// the deploy pipeline retires the old one once the new one is live, so the
+// move never leaves nothing serving. The redeploy re-applies the live image
+// (a rollback to it) rather than rebuilding, so a move never changes which
+// version runs; a compose app has no single image to re-apply and rebuilds
+// its branch instead.
+//
+// A stopped app is not started by a move, and an app that was never deployed
+// has nothing to bring over: both are retired from the old target right away.
+func (s *Server) relocateApp(ctx context.Context, app sqlc.Application, actor pgtype.UUID, from, to string) (*sqlc.Deployment, error) {
+	q := sqlc.New(s.pool)
+	if err := apps.RecordMove(ctx, q, app.ID, from, to); err != nil {
+		return nil, fmt.Errorf("record previous host: %w", err)
+	}
+	presence, err := q.AppDeploymentPresence(ctx, app.ID)
+	if err != nil {
+		return nil, fmt.Errorf("check deployments: %w", err)
+	}
+	if app.DesiredState != "stopped" && (presence.LiveID.Valid || presence.InFlight) && s.enqueue != nil {
+		var dep sqlc.Deployment
+		if presence.LiveID.Valid && app.SourceType != "compose" {
+			dep, err = s.deps.Rollback(ctx, app.ID, actor, presence.LiveID)
+		} else {
+			dep, err = s.deps.Create(ctx, app.ID, actor, "manual")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("queue redeploy: %w", err)
+		}
+		if err := s.enqueue.EnqueueDeploy(ctx, uuidString(dep.ID)); err != nil {
+			_ = s.deps.Finish(context.WithoutCancel(ctx), dep.ID, "failed", "enqueue failed: "+err.Error())
+			return nil, fmt.Errorf("queue redeploy: %w", err)
+		}
+		return &dep, nil
+	}
+	if s.provider == nil {
+		return nil, nil
+	}
+	hostTargets, _ := s.hostsAdmin.(apps.HostTargets)
+	if err := apps.RetireStale(context.WithoutCancel(ctx), q, s.provider, hostTargets, app.ID, app.Slug, to, io.Discard); err != nil {
+		// The target stays recorded; the app's next deploy retries it.
+		slog.Warn("retire app from previous host failed", "app", app.Slug, "err", err)
+		if s.audit != nil {
+			s.audit.Record(ctx, actor, app.OrgID, "app.retire_failed", "app", uuidString(app.ID),
+				map[string]any{"error": err.Error()})
+		}
+	}
+	return nil, nil
 }
 
 func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
@@ -342,9 +420,23 @@ func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 			"cannot reach the app's worker host to remove its containers: "+perr.Error())
 		return
 	}
+	// An app moved recently may still run where it used to. Those records go
+	// with the app row, so read them now and act on them once the delete has
+	// been authorized and done.
+	var previous []string
+	if s.pool != nil {
+		previous, _ = sqlc.New(s.pool).ListAppRetirements(r.Context(), app.ID)
+	}
 	if err := s.apps.Delete(r.Context(), id, userFrom(r.Context()).ID); err != nil {
 		appError(w, err)
 		return
+	}
+	if len(previous) > 0 && s.provider != nil {
+		hostTargets, _ := s.hostsAdmin.(apps.HostTargets)
+		if err := apps.RetireTargets(context.WithoutCancel(r.Context()), sqlc.New(s.pool), s.provider, hostTargets,
+			app.ID, app.Slug, apps.TargetKey(app.HostID), previous, io.Discard); err != nil {
+			slog.Warn("retire deleted app from previous host failed", "app", app.Slug, "err", err)
+		}
 	}
 	if provider != nil {
 		if err := provider.Teardown(context.WithoutCancel(r.Context()), uuidString(app.ID), app.Slug, io.Discard); err != nil {

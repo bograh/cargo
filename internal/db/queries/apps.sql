@@ -69,3 +69,22 @@ LIMIT 1;
 
 -- name: PurgeAppMetrics :execrows
 DELETE FROM app_metrics WHERE created_at < now() - interval '48 hours';
+
+-- name: AddAppRetirement :exec
+INSERT INTO app_retirements (app_id, target) VALUES ($1, $2)
+ON CONFLICT (app_id, target) DO NOTHING;
+
+-- name: DeleteAppRetirement :exec
+DELETE FROM app_retirements WHERE app_id = $1 AND target = $2;
+
+-- name: ListAppRetirements :many
+SELECT target FROM app_retirements WHERE app_id = $1 ORDER BY created_at, target;
+
+-- name: AppDeploymentPresence :one
+-- What a host move has to carry over: the deployment serving now (if any) and
+-- whether one is still on its way.
+SELECT
+    (SELECT d.id FROM deployments d WHERE d.app_id = $1 AND d.status = 'live'
+     ORDER BY d.created_at DESC LIMIT 1)::uuid AS live_id,
+    EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = $1
+            AND d.status IN ('queued', 'building', 'deploying')) AS in_flight;

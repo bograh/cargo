@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/bograh/cargo/internal/apps"
+	"github.com/bograh/cargo/internal/audit"
 	"github.com/bograh/cargo/internal/builder"
 	"github.com/bograh/cargo/internal/compose"
 	"github.com/bograh/cargo/internal/db/sqlc"
@@ -192,7 +193,7 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 	}
 	defer func() { _ = logw.Close() }()
 
-	remote, err := p.run(ctx, dep, deploymentID, logw)
+	remote, ranOn, err := p.run(ctx, dep, deploymentID, logw)
 	if err != nil {
 		// Persist the failure even when ctx was cancelled (e.g. job timeout);
 		// otherwise the status stays "deploying" and River's retry re-enters
@@ -230,7 +231,36 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 	if err := pruneApp(context.WithoutCancel(ctx), sqlc.New(p.Pool), p.Deployments, dep.AppID, remote); err != nil {
 		slog.Warn("post-deploy prune failed", "app", appIDStr, "err", err)
 	}
+	p.retirePrevious(context.WithoutCancel(ctx), dep.AppID, ranOn, logw)
 	return nil
+}
+
+// retirePrevious removes the app from wherever it ran before it was moved,
+// now that it serves from ranOn. Only after live, so a move never leaves the
+// app with nothing serving. Best-effort like prune: a failure is logged and
+// audited and the target stays recorded, so the next deploy retries it.
+//
+// A deploy that went live somewhere the app no longer points at (it was
+// moved again while this deploy ran) retires nothing: the deploy queued by
+// that later move is the one that brings the app to its final target.
+func (p *Pipeline) retirePrevious(ctx context.Context, appID pgtype.UUID, ranOn string, logw io.Writer) {
+	app, err := p.Apps.GetRaw(ctx, appID)
+	if err != nil {
+		slog.Warn("retire previous targets: load app", "app", uuidStr(appID), "err", err)
+		return
+	}
+	if apps.TargetKey(app.HostID) != ranOn {
+		return
+	}
+	hostTargets, _ := p.Hosts.(apps.HostTargets)
+	err = apps.RetireStale(ctx, sqlc.New(p.Pool), p.Provider, hostTargets, appID, app.Slug, ranOn, logw)
+	if err == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(logw, "==> warning: could not remove the app from its previous location: %v (will retry on the next deploy)\n", err)
+	slog.Warn("retire previous targets failed", "app", app.Slug, "err", err)
+	audit.NewService(p.Pool).Record(ctx, pgtype.UUID{}, app.OrgID, "app.retire_failed", "app", uuidStr(appID),
+		map[string]any{"error": err.Error()})
 }
 
 // guardImageLabels refuses an image that would declare its own Traefik
@@ -262,14 +292,15 @@ func (p *Pipeline) guardImageLabels(ctx context.Context, read imageLabelReader, 
 
 // run executes the deployment. On success it also returns how to remove an
 // image on the worker host the app ran on (nil for the control plane), for
-// the post-deploy prune.
-func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer) (imageRemover, error) {
+// the post-deploy prune, and that target's app_retirements key.
+func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer) (imageRemover, string, error) {
 	var remote imageRemover
-	err := p.runOn(ctx, dep, deploymentID, logw, &remote)
-	return remote, err
+	ranOn := apps.ControlPlaneTarget
+	err := p.runOn(ctx, dep, deploymentID, logw, &remote, &ranOn)
+	return remote, ranOn, err
 }
 
-func (p *Pipeline) runOn(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer, remote *imageRemover) error {
+func (p *Pipeline) runOn(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer, remote *imageRemover, ranOn *string) error {
 	app, err := p.Apps.GetRaw(ctx, dep.AppID)
 	if err != nil {
 		return fmt.Errorf("load app: %w", err)
@@ -299,6 +330,7 @@ func (p *Pipeline) runOn(ctx context.Context, dep sqlc.Deployment, deploymentID 
 		}); ok {
 			_, _ = fmt.Fprintf(logw, "==> deploying to worker host %s\n", hostLabel(target))
 			provider = fb.ForTarget(*target)
+			*ranOn = apps.TargetKey(app.HostID)
 			if r, ok := provider.(interface {
 				RemoveImage(ctx context.Context, ref string) error
 			}); ok {

@@ -42,3 +42,19 @@ func (m *Manager) Resolve(ctx context.Context, appID string) (*reconciler.Target
 	}
 	return &tg, h.Status, nil
 }
+
+// ResolveHost materializes a worker host's execution environment by host ID,
+// for work that addresses a host the app no longer points at (tearing an app
+// down where it used to run). A host that no longer exists is reported as
+// hosts.ErrNotFound.
+func (m *Manager) ResolveHost(ctx context.Context, hostID string) (*reconciler.Target, error) {
+	h, err := m.hostSvc.GetByID(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	tg, err := m.mat.Target(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	return &tg, nil
+}
