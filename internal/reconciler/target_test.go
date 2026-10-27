@@ -62,3 +62,14 @@ func TestSpecHostIDCarriesRouting(t *testing.T) {
 		t.Fatal("HostID not stored")
 	}
 }
+
+func TestForHostKeepsColorStore(t *testing.T) {
+	d := NewDocker(t.TempDir())
+	d.SetColors(failingColors{})
+	if NewDocker("").ForHost(Target{}).colors != nil {
+		t.Fatal("unexpected store on a bare provider")
+	}
+	if d.ForHost(Target{HostID: "h"}).colors == nil {
+		t.Fatal("ForHost dropped the color store; hosted apps would bypass active_color")
+	}
+}

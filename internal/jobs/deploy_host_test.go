@@ -26,13 +26,19 @@ func (f *fakeHostProvider) ForTarget(t reconciler.Target) reconciler.DeployProvi
 }
 
 // stubRouter is a canned HostRouter.
+// When wantApp is set, Resolve fails unless it is asked about that app —
+// HostRouter.Resolve takes an *app* ID, never a host ID.
 type stubRouter struct {
-	target *reconciler.Target
-	status string
-	err    error
+	target  *reconciler.Target
+	status  string
+	err     error
+	wantApp string
 }
 
-func (s stubRouter) Resolve(_ context.Context, _ string) (*reconciler.Target, string, error) {
+func (s stubRouter) Resolve(_ context.Context, appID string) (*reconciler.Target, string, error) {
+	if s.wantApp != "" && appID != s.wantApp {
+		return nil, "", errors.New("stubRouter: resolved " + appID + ", want app " + s.wantApp)
+	}
 	if s.err != nil {
 		return nil, "", s.err
 	}
@@ -78,7 +84,7 @@ func TestPipelineHostedAppRoutesAndRecords(t *testing.T) {
 	fhp := &fakeHostProvider{}
 	p := f.pipeline
 	p.Provider = fhp
-	p.Hosts = stubRouter{target: &sentinel, status: "online"}
+	p.Hosts = stubRouter{target: &sentinel, status: "online", wantApp: uuidString(t, f.app.ID)}
 
 	ctx := context.Background()
 	dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")

@@ -3,6 +3,8 @@ package reconciler
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestGenerateCompose(t *testing.T) {
@@ -14,7 +16,7 @@ func TestGenerateCompose(t *testing.T) {
 	want := `name: cargo-app-my-api
 services:
   app:
-    image: app-my-api:d1
+    image: "app-my-api:d1"
     env_file: .env
     restart: unless-stopped
     security_opt:
@@ -55,7 +57,7 @@ func TestGenerateComposeWithLimits(t *testing.T) {
 	want := `name: cargo-app-my-api
 services:
   app:
-    image: app-my-api:d1
+    image: "app-my-api:d1"
     env_file: .env
     restart: unless-stopped
     mem_limit: 512m
@@ -96,7 +98,7 @@ func TestGenerateComposeMultiNetwork(t *testing.T) {
 	want := `name: cargo-app-my-api
 services:
   app:
-    image: app-my-api:d1
+    image: "app-my-api:d1"
     env_file: .env
     restart: unless-stopped
     security_opt:
@@ -141,7 +143,7 @@ func TestGenerateComposeBlueGreen(t *testing.T) {
 	want := `name: cargo-app-my-api-green
 services:
   app:
-    image: app-my-api:d2
+    image: "app-my-api:d2"
     env_file: .env
     restart: unless-stopped
     security_opt:
@@ -160,7 +162,7 @@ services:
       - traefik.http.routers.app-my-api.tls=true
       - traefik.http.routers.app-my-api.service=app-my-api
       - traefik.http.services.app-my-api.loadbalancer.server.port=3000
-      - traefik.http.services.app-my-api.loadbalancer.healthcheck.path=/health
+      - "traefik.http.services.app-my-api.loadbalancer.healthcheck.path=/health"
       - traefik.http.services.app-my-api.loadbalancer.healthcheck.interval=3s
       - traefik.http.services.app-my-api.loadbalancer.healthcheck.timeout=2s
 networks:
@@ -361,5 +363,32 @@ func TestGenerateEnvFile(t *testing.T) {
 	}
 	if _, err := generateEnvFile(map[string]string{"OK\nINJECTED": "1"}); err == nil {
 		t.Fatal("expected a newline in a key to be rejected")
+	}
+}
+
+// Tenant-originated values must stay scalars: a newline in the image or the
+// healthcheck path must not become a sibling key such as privileged: true.
+func TestGenerateComposeQuotesTenantValues(t *testing.T) {
+	spec := Spec{
+		AppID: "a1", Slug: "evil", Port: 80, BlueGreen: true,
+		Image:           "nginx\n    privileged: true\n    volumes: [\"/:/host\"]",
+		HealthcheckPath: "/h\n    privileged: true",
+		Domains:         []string{"evil.apps.example.com"},
+	}
+	var doc struct {
+		Services map[string]map[string]any `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(GenerateCompose(spec)), &doc); err != nil {
+		t.Fatalf("generated compose is not valid YAML: %v", err)
+	}
+	app := doc.Services["app"]
+	if _, ok := app["privileged"]; ok {
+		t.Fatal("image/healthcheck injection produced a privileged key")
+	}
+	if _, ok := app["volumes"]; ok {
+		t.Fatal("image injection produced a volumes key")
+	}
+	if app["image"] != spec.Image {
+		t.Fatalf("image = %q, want the literal value back", app["image"])
 	}
 }

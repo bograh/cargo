@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/bograh/cargo/internal/reconciler"
 )
 
 // appLogStreamer is the runtime-log capability the deploy provider exposes.
@@ -52,18 +50,14 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 
 	// Route log streaming through the app's worker host when it has one
 	// (Phase 12a). The target-bound provider reaches the right daemon.
-	if resolver, ok := s.hostsAdmin.(interface {
-		Resolve(ctx context.Context, appID string) (*reconciler.Target, string, error)
-	}); ok && app.HostID.Valid {
-		target, _, rerr := resolver.Resolve(ctx, appIDStr)
-		if rerr == nil && target != nil {
-			if fb, ok := streamer.(interface {
-				ForTarget(reconciler.Target) reconciler.DeployProvider
-			}); ok {
-				if bound, isStreamer := fb.ForTarget(*target).(appLogStreamer); isStreamer {
-					streamer = bound
-				}
-			}
+	if app.HostID.Valid {
+		bound, err := s.providerFor(ctx, app)
+		if err != nil {
+			Error(w, http.StatusBadGateway, "host_unavailable", err.Error())
+			return
+		}
+		if bs, isStreamer := bound.(appLogStreamer); isStreamer {
+			streamer = bs
 		}
 	}
 	// The reader is bound to the stream context, so a lapsed session kills the

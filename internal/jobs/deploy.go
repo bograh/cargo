@@ -5,11 +5,11 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -45,8 +45,20 @@ type DeployWorker struct {
 }
 
 func (w *DeployWorker) Work(ctx context.Context, job *river.Job[DeployArgs]) error {
-	return w.P.Run(ctx, job.Args.DeploymentID)
+	err := w.P.Run(ctx, job.Args.DeploymentID)
+	var snooze *river.JobSnoozeError
+	if err != nil && !errors.As(err, &snooze) && job.Attempt >= job.MaxAttempts {
+		// Out of retries on an error that struck before the pipeline could
+		// record anything (pool, lock, log file): don't leave the row
+		// "queued" for the orphan reaper — fail it now, with the reason.
+		w.P.failIfUnfinished(context.WithoutCancel(ctx), job.Args.DeploymentID, err)
+	}
+	return err
 }
+
+// deployLockRetry is how long a deploy waits before retrying when another
+// deploy of the same app holds the per-app lock.
+const deployLockRetry = 10 * time.Second
 
 func (w *DeployWorker) Timeout(*river.Job[DeployArgs]) time.Duration {
 	return deployJobTimeout
@@ -148,19 +160,26 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 		return err
 	}
 	switch dep.Status {
-	case "live", "failed", "cancelled":
+	case "live", "failed", "cancelled", "superseded":
 		return nil // terminal — nothing to do (e.g. duplicate retry)
 	}
 
-	// Serialize deploys per app (FR-4.4).
+	// Serialize deploys per app (FR-4.4). A try-lock plus snooze rather than
+	// a blocking lock: waiting inside the job burned its 30-minute timeout
+	// and, with two deploys of one app queued, tied up both deploy workers
+	// while every other app's deploys waited behind them.
 	conn, err := p.Pool.Acquire(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Release()
 	appIDStr := uuidStr(dep.AppID)
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(hashtext($1))", appIDStr); err != nil {
+	var locked bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock(hashtext($1))", appIDStr).Scan(&locked); err != nil {
 		return err
+	}
+	if !locked {
+		return river.JobSnooze(deployLockRetry)
 	}
 	defer func() {
 		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock(hashtext($1))", appIDStr)
@@ -168,11 +187,13 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 
 	logw, err := p.Deployments.LogWriter(deploymentID)
 	if err != nil {
+		_ = p.Deployments.Finish(context.WithoutCancel(ctx), depID, "failed", "open deploy log: "+err.Error())
 		return err
 	}
 	defer func() { _ = logw.Close() }()
 
-	if err := p.run(ctx, dep, deploymentID, logw); err != nil {
+	remote, err := p.run(ctx, dep, deploymentID, logw)
+	if err != nil {
 		// Persist the failure even when ctx was cancelled (e.g. job timeout);
 		// otherwise the status stays "deploying" and River's retry re-enters
 		// run(), hitting an illegal deploying→building transition.
@@ -185,7 +206,10 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 		return err
 	}
 	_, _ = fmt.Fprintln(logw, "==> live")
-	if err := p.Deployments.Finish(ctx, depID, "live", ""); err != nil {
+	// WithoutCancel: the app is already serving. A job timeout landing here
+	// must not leave the row "deploying" for a retry that would then record
+	// a successful deploy as failed.
+	if err := p.Deployments.Finish(context.WithoutCancel(ctx), depID, "live", ""); err != nil {
 		return err
 	}
 	obs.RecordDeploy("live", time.Since(dep.CreatedAt.Time))
@@ -203,7 +227,7 @@ func (p *Pipeline) Run(ctx context.Context, deploymentID string) error {
 	// Reclaim disk immediately: keep only the newest few deployments/images
 	// for this app rather than waiting for the daily prune. Best-effort — a
 	// prune failure never fails the (already successful) deploy.
-	if err := pruneApp(context.WithoutCancel(ctx), sqlc.New(p.Pool), p.Deployments, dep.AppID); err != nil {
+	if err := pruneApp(context.WithoutCancel(ctx), sqlc.New(p.Pool), p.Deployments, dep.AppID, remote); err != nil {
 		slog.Warn("post-deploy prune failed", "app", appIDStr, "err", err)
 	}
 	return nil
@@ -236,7 +260,16 @@ func (p *Pipeline) guardImageLabels(ctx context.Context, read imageLabelReader, 
 		"rebuild the image without them", ref, strings.Join(reserved, ", "))
 }
 
-func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer) error {
+// run executes the deployment. On success it also returns how to remove an
+// image on the worker host the app ran on (nil for the control plane), for
+// the post-deploy prune.
+func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer) (imageRemover, error) {
+	var remote imageRemover
+	err := p.runOn(ctx, dep, deploymentID, logw, &remote)
+	return remote, err
+}
+
+func (p *Pipeline) runOn(ctx context.Context, dep sqlc.Deployment, deploymentID string, logw io.Writer, remote *imageRemover) error {
 	app, err := p.Apps.GetRaw(ctx, dep.AppID)
 	if err != nil {
 		return fmt.Errorf("load app: %w", err)
@@ -246,7 +279,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 	// means the control plane itself — the default for every existing app.
 	provider := p.Provider
 	if app.HostID.Valid && p.Hosts != nil {
-		target, hostStatus, err := p.Hosts.Resolve(ctx, uuidStr(app.HostID))
+		target, hostStatus, err := p.Hosts.Resolve(ctx, uuidStr(app.ID))
 		if err != nil {
 			return fmt.Errorf("resolve worker host: %w", err)
 		}
@@ -266,6 +299,11 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		}); ok {
 			_, _ = fmt.Fprintf(logw, "==> deploying to worker host %s\n", hostLabel(target))
 			provider = fb.ForTarget(*target)
+			if r, ok := provider.(interface {
+				RemoveImage(ctx context.Context, ref string) error
+			}); ok {
+				*remote = r.RemoveImage
+			}
 		} else {
 			return fmt.Errorf("deploy provider does not support worker hosts")
 		}
@@ -291,7 +329,7 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 			}
 		case "image":
 			imageTag = app.ImageRef
-			if err := p.registryLogin(ctx, app, logw); err != nil {
+			if err := p.pullImage(ctx, provider, app, imageTag, logw); err != nil {
 				return err
 			}
 			if err := p.Deployments.SetBuildInfo(ctx, dep.ID, "", imageTag); err != nil {
@@ -306,6 +344,24 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 			}
 		default:
 			return fmt.Errorf("unknown source type %q", app.SourceType)
+		}
+	}
+
+	// Put the image on the daemon that will run it. A built image exists only
+	// on the control plane's daemon; a registry image is (re-)pulled for a
+	// rollback just as for a fresh deploy.
+	if imageTag != "" && dep.Trigger == "rollback" && app.SourceType == "image" {
+		if err := p.pullImage(ctx, provider, app, imageTag, logw); err != nil {
+			return err
+		}
+	}
+	if imageTag != "" && app.SourceType == "git" {
+		if shipper, ok := provider.(interface {
+			ShipImage(ctx context.Context, ref string, log io.Writer) error
+		}); ok {
+			if err := shipper.ShipImage(ctx, imageTag, logw); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -400,11 +456,31 @@ func (p *Pipeline) run(ctx context.Context, dep sqlc.Deployment, deploymentID st
 		return err
 	}
 	// A successful deploy means the app should be up: clear any prior "stopped"
-	// intent so a stopped app that gets redeployed comes back running.
-	if err := p.Apps.SetDesiredStateRaw(ctx, app.ID, "running"); err != nil {
-		return err
+	// intent so a stopped app that gets redeployed comes back running. The
+	// containers are already serving, so failing to record that must not
+	// turn the deploy into a "failed" one.
+	if err := p.Apps.SetDesiredStateRaw(context.WithoutCancel(ctx), app.ID, "running"); err != nil {
+		slog.Warn("record desired state after deploy failed", "app", app.Slug, "err", err)
 	}
 	return nil
+}
+
+// failIfUnfinished marks a deployment failed unless it already reached a
+// terminal status.
+func (p *Pipeline) failIfUnfinished(ctx context.Context, deploymentID string, cause error) {
+	id, err := uuidOf(deploymentID)
+	if err != nil {
+		return
+	}
+	dep, err := p.Deployments.GetRaw(ctx, id)
+	if err != nil {
+		return
+	}
+	switch dep.Status {
+	case "live", "failed", "cancelled", "superseded":
+		return
+	}
+	_ = p.Deployments.Finish(ctx, id, "failed", cause.Error())
 }
 
 // composeSourceDir is where a compose-source app's checkout lives. Unlike a
@@ -494,7 +570,7 @@ func (p *Pipeline) buildFromGit(ctx context.Context, app sqlc.Application, dep s
 	}
 	name := app.Builder
 	if name == "" || name == "auto" {
-		name = builder.Detect(filepath.Join(workDir, app.BuildContext), app.DockerfilePath)
+		name = builder.DetectIn(workDir, app.BuildContext, app.DockerfilePath)
 	}
 	_, _ = fmt.Fprintf(logw, "==> building with %s → %s\n", name, imageTag)
 	var buildArgs map[string]string
@@ -511,18 +587,23 @@ func (p *Pipeline) buildFromGit(ctx context.Context, app sqlc.Application, dep s
 	return imageTag, err
 }
 
-// registryLogin authenticates the local docker daemon for private image pulls.
-func (p *Pipeline) registryLogin(ctx context.Context, app sqlc.Application, logw io.Writer) error {
+// pullImage pulls an image-source app's image onto the daemon that will run
+// it, using only this app's registry credentials (see reconciler.PullImage).
+// Providers without the capability (test fakes) skip the explicit pull.
+func (p *Pipeline) pullImage(ctx context.Context, provider reconciler.DeployProvider, app sqlc.Application, ref string, logw io.Writer) error {
 	creds, err := p.Apps.DecryptedRegistryCreds(ctx, app)
-	if err != nil || creds == nil {
+	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(logw, "==> docker login %s\n", creds.Server)
-	cmd := exec.CommandContext(ctx, "docker", "login", creds.Server, "-u", creds.Username, "--password-stdin")
-	cmd.Stdin = strings.NewReader(creds.Password)
-	cmd.Stdout, cmd.Stderr = logw, logw
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker login: %w", err)
+	puller, ok := provider.(interface {
+		PullImage(ctx context.Context, ref string, auth *reconciler.RegistryAuth, log io.Writer) error
+	})
+	if !ok {
+		return nil
 	}
-	return nil
+	var auth *reconciler.RegistryAuth
+	if creds != nil {
+		auth = &reconciler.RegistryAuth{Server: creds.Server, Username: creds.Username, Password: creds.Password}
+	}
+	return puller.PullImage(ctx, ref, auth, logw)
 }

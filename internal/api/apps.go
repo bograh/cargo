@@ -11,6 +11,7 @@ import (
 
 	"github.com/bograh/cargo/internal/apps"
 	"github.com/bograh/cargo/internal/db/sqlc"
+	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -157,18 +158,30 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 	if body.AutoDeploy != nil {
 		in.AutoDeploy = *body.AutoDeploy
 	}
+	// Check the host before creating anything: validating it afterwards
+	// returned 400 for a bad host while leaving the app row behind, so the
+	// user's retry hit a name conflict or made a duplicate.
+	wantHost := body.HostID != nil && *body.HostID != ""
+	if wantHost {
+		if _, err := s.checkHost(r.Context(), *body.HostID); err != nil {
+			hostError(w, err)
+			return
+		}
+	}
 	app, err := s.apps.Create(r.Context(), orgID, userFrom(r.Context()).ID, in)
 	if err != nil {
 		appError(w, err)
 		return
 	}
-	// Host assignment is validated and applied after creation (the app row
-	// must exist to reference). A bad host id fails the request.
-	if body.HostID != nil && *body.HostID != "" {
+	if wantHost {
 		if err := s.assignHost(r.Context(), app.ID, orgID, userFrom(r.Context()).ID, *body.HostID); err != nil {
+			// The host vanished or went unreachable in between: don't leave a
+			// half-created app for the retry to collide with.
+			_ = s.apps.Delete(context.WithoutCancel(r.Context()), app.ID, userFrom(r.Context()).ID)
 			hostError(w, err)
 			return
 		}
+		_ = app.HostID.Scan(*body.HostID) // reflect the assignment in the response
 	}
 	writeJSON(w, http.StatusCreated, appJSON(app))
 }
@@ -176,18 +189,64 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 // assignHost validates that the host exists and can take work, then points
 // the app at it.
 func (s *Server) assignHost(ctx context.Context, appID, orgID, actor pgtype.UUID, hostID string) error {
-	h, err := s.hostSvc.GetByID(ctx, hostID)
-	if err != nil || !h.ID.Valid {
-		return errors.New("worker host not found")
-	}
-	if h.Status == "unreachable" {
-		return fmt.Errorf("worker host %q is unreachable", h.Name)
+	if _, err := s.checkHost(ctx, hostID); err != nil {
+		return err
 	}
 	if _, _, err := s.orgs.Get(ctx, orgID, actor); err != nil {
 		return errors.New("organization not found")
 	}
-	_, err = s.pool.Exec(ctx, `UPDATE applications SET host_id = $2::uuid WHERE id = $1`, appID, hostID)
+	_, err := s.pool.Exec(ctx, `UPDATE applications SET host_id = $2::uuid WHERE id = $1`, appID, hostID)
 	return err
+}
+
+// checkHost confirms a worker host exists and can take work.
+func (s *Server) checkHost(ctx context.Context, hostID string) (sqlc.Host, error) {
+	if s.hostSvc == nil {
+		return sqlc.Host{}, errors.New("worker hosts are not configured")
+	}
+	h, err := s.hostSvc.GetByID(ctx, hostID)
+	if err != nil || !h.ID.Valid {
+		return sqlc.Host{}, errors.New("worker host not found")
+	}
+	if h.Status == "unreachable" {
+		return sqlc.Host{}, fmt.Errorf("worker host %q is unreachable", h.Name)
+	}
+	return h, nil
+}
+
+// hostResolver is satisfied by *hostmgr.Manager (wired as hostsAdmin).
+type hostResolver interface {
+	Resolve(ctx context.Context, appID string) (*reconciler.Target, string, error)
+}
+
+// providerFor returns the deploy provider bound to the daemon that runs app:
+// the control plane's own, or its worker host's. Stop, Start, Delete and log
+// streaming used the unbound provider, so for a hosted app they ran `docker
+// compose` against the local daemon, reported success, and left the worker's
+// containers serving — after a delete, with nothing in the database pointing
+// at them. Call it while the app row still exists: resolution reads it.
+func (s *Server) providerFor(ctx context.Context, app sqlc.Application) (reconciler.DeployProvider, error) {
+	if s.provider == nil || !app.HostID.Valid {
+		return s.provider, nil
+	}
+	resolver, ok := s.hostsAdmin.(hostResolver)
+	if !ok {
+		return nil, errors.New("app runs on a worker host but host routing is not configured")
+	}
+	target, _, err := resolver.Resolve(ctx, uuidString(app.ID))
+	if err != nil {
+		return nil, fmt.Errorf("resolve worker host: %w", err)
+	}
+	if target == nil {
+		return s.provider, nil
+	}
+	fb, ok := s.provider.(interface {
+		ForTarget(reconciler.Target) reconciler.DeployProvider
+	})
+	if !ok {
+		return nil, errors.New("deploy provider does not support worker hosts")
+	}
+	return fb.ForTarget(*target), nil
 }
 
 func hostError(w http.ResponseWriter, err error) {
@@ -276,14 +335,19 @@ func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 		appError(w, err)
 		return
 	}
+	// Resolve the daemon before the row (and with it the host link) is gone.
+	provider, perr := s.providerFor(r.Context(), app)
+	if perr != nil {
+		Error(w, http.StatusBadGateway, "host_unavailable",
+			"cannot reach the app's worker host to remove its containers: "+perr.Error())
+		return
+	}
 	if err := s.apps.Delete(r.Context(), id, userFrom(r.Context()).ID); err != nil {
 		appError(w, err)
 		return
 	}
-	if s.provider != nil {
-		appID, _ := app.ID.Value()
-		idStr, _ := appID.(string)
-		if err := s.provider.Teardown(r.Context(), idStr, app.Slug, io.Discard); err != nil {
+	if provider != nil {
+		if err := provider.Teardown(context.WithoutCancel(r.Context()), uuidString(app.ID), app.Slug, io.Discard); err != nil {
 			slog.Warn("app teardown failed", "app", app.Slug, "err", err)
 		}
 	}
@@ -326,11 +390,13 @@ func (s *Server) setAppRunState(w http.ResponseWriter, r *http.Request, id pgtyp
 		writeJSON(w, http.StatusOK, appJSON(app))
 		return
 	}
-	var perr error
-	if state == "stopped" {
-		perr = s.provider.Stop(ctx, uuidString(id), io.Discard)
-	} else {
-		perr = s.provider.Start(ctx, uuidString(id), io.Discard)
+	provider, perr := s.providerFor(ctx, app)
+	if perr == nil {
+		if state == "stopped" {
+			perr = provider.Stop(ctx, uuidString(id), io.Discard)
+		} else {
+			perr = provider.Start(ctx, uuidString(id), io.Discard)
+		}
 	}
 	if perr != nil {
 		prev := "running"

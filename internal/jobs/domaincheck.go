@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/bograh/cargo/internal/db/sqlc"
@@ -23,6 +24,20 @@ type DomainCheckWorker struct {
 func (w *DomainCheckWorker) Work(ctx context.Context, _ *river.Job[DomainCheckArgs]) error {
 	return RunDomainCheck(ctx, w.Pool, defaultLookup, defaultProbe)
 }
+
+// Timeout replaces River's 1-minute default. Domains are probed in bounded
+// parallel (domainCheckConcurrency), each capped at domainCheckPerHost, so a
+// pass over many domains needs more than a minute; at one minute a handful of
+// unresponsive domains timed out every run and later domains never updated.
+func (w *DomainCheckWorker) Timeout(*river.Job[DomainCheckArgs]) time.Duration {
+	return 10 * time.Minute
+}
+
+const (
+	domainCheckConcurrency = 8
+	// domainCheckPerHost bounds DNS plus both probes for one domain.
+	domainCheckPerHost = 15 * time.Second
+)
 
 func defaultLookup(ctx context.Context, host string) error {
 	_, err := net.DefaultResolver.LookupHost(ctx, host)
@@ -61,14 +76,36 @@ func RunDomainCheck(
 	if err != nil {
 		return err
 	}
-	for _, d := range domains {
-		status := "pending"
-		if err := lookup(ctx, d.Hostname); err != nil {
-			status = "misconfigured"
-		} else if probe(ctx, d.Hostname) {
-			status = "active"
-		}
-		if err := q.UpdateDomainStatus(ctx, sqlc.UpdateDomainStatusParams{ID: d.ID, Status: status}); err != nil {
+	type result struct {
+		d      sqlc.Domain
+		status string
+	}
+	results := make([]result, len(domains))
+	sem := make(chan struct{}, domainCheckConcurrency)
+	var wg sync.WaitGroup
+	for i, d := range domains {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			hctx, cancel := context.WithTimeout(ctx, domainCheckPerHost)
+			defer cancel()
+			status := "pending"
+			if err := lookup(hctx, d.Hostname); err != nil {
+				status = "misconfigured"
+			} else if probe(hctx, d.Hostname) {
+				status = "active"
+			}
+			results[i] = result{d, status}
+		}()
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, r := range results {
+		if err := q.UpdateDomainStatus(ctx, sqlc.UpdateDomainStatusParams{ID: r.d.ID, Status: r.status}); err != nil {
 			return err
 		}
 	}

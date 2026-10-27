@@ -2,9 +2,11 @@ package jobs
 
 import (
 	"context"
+	"errors"
 
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -30,6 +32,9 @@ func (s DBColorStore) ActiveColor(ctx context.Context, appID string) (string, er
 		return "", nil // never deployed through this table: empty color
 	}
 	c, err := s.Q.GetActiveColor(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil // app row gone (being deleted): nothing serves
+	}
 	if err != nil {
 		return "", err
 	}
@@ -41,5 +46,5 @@ func (s DBColorStore) SetActiveColor(ctx context.Context, appID, color string) e
 	if err != nil {
 		return nil
 	}
-	return s.Q.SetActiveColor(ctx, sqlc.SetActiveColorParams{ID: id, ActiveColor: pgtype.Text{String: color, Valid: true}})
+	return s.Q.SetActiveColor(ctx, sqlc.SetActiveColorParams{ID: id, ActiveColor: pgtype.Text{String: color, Valid: color != ""}})
 }

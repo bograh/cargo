@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -219,6 +221,7 @@ func TestApplyBlueGreenServesThroughout(t *testing.T) {
 	if err := d.Apply(ctx, spec, &log); err != nil {
 		t.Fatalf("first apply: %v\n%s", err, log.String())
 	}
+	skipUnlessContainerIPReachable(t, d, spec)
 
 	// Poll every app container the way Traefik would, and record any moment
 	// when none of them answers.
@@ -482,4 +485,31 @@ func TestApplyComposeSource(t *testing.T) {
 	if strings.TrimSpace(remaining) != "" {
 		t.Fatalf("containers survived teardown: %q", remaining)
 	}
+}
+
+// skipUnlessContainerIPReachable skips a test that dials container bridge IPs
+// when this process cannot reach them — Docker Desktop (macOS, Windows/WSL2)
+// runs the daemon in a VM whose bridge network the host cannot route to, so
+// every probe would read as an outage that has nothing to do with the code.
+func skipUnlessContainerIPReachable(t *testing.T, d *Docker, spec Spec) {
+	t.Helper()
+	ctx := context.Background()
+	args, _, err := d.activeProject(ctx, spec.AppID)
+	if err != nil {
+		t.Fatalf("active project: %v", err)
+	}
+	cid, err := d.outputCompose(ctx, args, "ps", "-q", "app")
+	if err != nil || cid == "" {
+		t.Fatalf("no app container after apply (err %v)", err)
+	}
+	ipJSON, _ := output(ctx, "docker", "inspect", "-f", `{{json .NetworkSettings.Networks}}`, cid)
+	addr := firstIP(ipJSON)
+	if addr == "" {
+		t.Skip("container has no bridge IP to probe")
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(addr, strconv.Itoa(int(spec.Port))), 3*time.Second)
+	if err != nil {
+		t.Skipf("container IP %s is not reachable from the test process (Docker Desktop?): %v", addr, err)
+	}
+	_ = conn.Close()
 }

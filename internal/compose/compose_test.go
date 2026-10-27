@@ -467,3 +467,43 @@ func TestGenerateOverlayDefaultsToTheTrafficService(t *testing.T) {
 		t.Fatalf("overlay should still describe the traffic service:\n%s", got)
 	}
 }
+
+// A volume declared external, or renamed away from its project-scoped default,
+// is a handle on data the app does not own — the platform's Postgres volume
+// above all.
+func TestValidateRejectsForeignVolumes(t *testing.T) {
+	const svc = "name: cargo-app-me\nservices:\n  web:\n    image: x\n    volumes:\n      - pg:/x\n"
+	for name, y := range map[string]string{
+		"external":         svc + "volumes:\n  pg:\n    external: true\n    name: cargo_cargo-db\n",
+		"external long":    svc + "volumes:\n  pg:\n    external:\n      name: cargo_cargo-db\n",
+		"rename platform":  svc + "volumes:\n  pg:\n    name: cargo_cargo-db\n",
+		"rename other app": svc + "volumes:\n  pg:\n    name: cargo-app-victim_pg\n",
+		"rename db":        svc + "volumes:\n  pg:\n    name: cargo-db-1234_data\n",
+		"rename arbitrary": svc + "volumes:\n  pg:\n    name: shared\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := Validate([]byte(y), root(t)); !errors.Is(err, ErrUnsafe) {
+				t.Fatalf("want ErrUnsafe, got %v", err)
+			}
+		})
+	}
+	// The default compose renders for an ordinary named volume stays allowed.
+	ok := svc + "volumes:\n  pg:\n    name: cargo-app-me_pg\n"
+	if err := Validate([]byte(ok), root(t)); err != nil {
+		t.Fatalf("project-scoped volume rejected: %v", err)
+	}
+}
+
+// With the project pinned to cargo-app-<slug>, compose renders the project's
+// own networks as cargo-app-<slug>_<key>. That is the app's own network, not
+// another tenant's — but naming a *different* app's network still fails.
+func TestValidateAllowsOwnProjectScopedNetwork(t *testing.T) {
+	own := "name: cargo-app-me\nservices:\n  web:\n    image: x\nnetworks:\n  default:\n    name: cargo-app-me_default\n"
+	if err := Validate([]byte(own), root(t)); err != nil {
+		t.Fatalf("own project network rejected: %v", err)
+	}
+	other := "name: cargo-app-me\nservices:\n  web:\n    image: x\nnetworks:\n  default:\n    name: cargo-app-victim_default\n"
+	if err := Validate([]byte(other), root(t)); !errors.Is(err, ErrUnsafe) {
+		t.Fatalf("another app's network: want ErrUnsafe, got %v", err)
+	}
+}

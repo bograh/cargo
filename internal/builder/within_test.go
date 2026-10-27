@@ -39,3 +39,30 @@ func TestWithinFollowsSymlinksOutOfTheCheckout(t *testing.T) {
 		t.Fatal("symlink out of the checkout was accepted")
 	}
 }
+
+// A symlink committed into the checkout must not redirect the control plane's
+// write (.env, Dockerfile.cargo) onto a file outside it.
+func TestWriteFileNoFollowReplacesSymlink(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	victim := filepath.Join(outside, "config")
+	if err := os.WriteFile(victim, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, ".env")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFileNoFollow(link, []byte("KEY=VALUE\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "original" {
+		t.Fatalf("write followed the symlink: victim now %q", got)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil || fi.Mode()&os.ModeSymlink != 0 || !fi.Mode().IsRegular() {
+		t.Fatalf("want a regular file at %s, got %v (err %v)", link, fi.Mode(), err)
+	}
+	if got, _ := os.ReadFile(link); string(got) != "KEY=VALUE\n" {
+		t.Fatalf("content = %q", got)
+	}
+}

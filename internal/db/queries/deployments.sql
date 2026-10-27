@@ -32,7 +32,18 @@ UPDATE deployments SET status = 'failed', error = $1, finished_at = now()
 WHERE status IN ('queued', 'building', 'deploying') AND created_at < $2;
 
 -- name: ListPrunableDeployments :many
-SELECT * FROM deployments WHERE app_id = $1 ORDER BY created_at DESC OFFSET $2;
+-- Deployments outside the newest `keep` that are finished and not serving.
+-- The window alone used to decide: five newer failed (or still queued)
+-- deploys pushed the live row out of it, deleting the rollback target — and
+-- an in-flight deployment out from under its own worker.
+SELECT d.* FROM deployments d
+WHERE d.app_id = sqlc.arg('app_id')
+  AND d.status IN ('failed', 'cancelled', 'superseded')
+  AND d.id NOT IN (
+      SELECT k.id FROM deployments k WHERE k.app_id = sqlc.arg('app_id')
+      ORDER BY k.created_at DESC LIMIT sqlc.arg('keep')
+  )
+ORDER BY d.created_at DESC;
 
 -- name: DeleteDeployment :exec
 DELETE FROM deployments WHERE id = $1;

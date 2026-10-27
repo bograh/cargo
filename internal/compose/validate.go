@@ -81,6 +81,9 @@ func ReservedLabel(key string) bool {
 }
 
 type composeFile struct {
+	// Name is the project name. Rendered configuration always carries it, and
+	// compose derives every default volume name from it.
+	Name     string                    `yaml:"name"`
 	Services map[string]composeService `yaml:"services"`
 	Volumes  map[string]composeVolume  `yaml:"volumes"`
 	Secrets  map[string]composeMount   `yaml:"secrets"`
@@ -121,10 +124,14 @@ type composeService struct {
 }
 
 // composeVolume is a top-level volume definition. A "named" volume with
-// local-driver bind options is a bind mount wearing a disguise.
+// local-driver bind options is a bind mount wearing a disguise; one marked
+// `external`, or renamed with `name:`, is a handle on a volume that already
+// exists — the control plane's own Postgres data, or another tenant's.
 type composeVolume struct {
 	Driver     string            `yaml:"driver"`
 	DriverOpts map[string]string `yaml:"driver_opts"`
+	External   yaml.Node         `yaml:"external"`
+	Name       string            `yaml:"name"`
 }
 
 // composeMount is the shape of a top-level secret or config, which can read an
@@ -340,6 +347,21 @@ func validateTopLevel(f composeFile, absRoot string) error {
 	sort.Strings(names)
 	for _, name := range names {
 		v := f.Volumes[name]
+		if isExternal(v.External) {
+			return fmt.Errorf(
+				"%w: volume %q is declared external, which mounts a volume that already exists on the "+
+					"host — including the platform's database and other apps' data; declare an ordinary "+
+					"named volume instead", ErrUnsafe, name)
+		}
+		// Rendered configuration fills in `name:` for every volume; the only
+		// acceptable value is the project-scoped default compose derives
+		// itself. Anything else addresses a volume this project does not own.
+		if override := strings.TrimSpace(v.Name); override != "" && override != f.Name+"_"+name {
+			return fmt.Errorf(
+				"%w: volume %q sets name: %q, which points it at a volume outside this app; "+
+					"remove the name override and let compose scope the volume to your project",
+				ErrUnsafe, name, override)
+		}
 		// `driver_opts: {type: none, device: /etc, o: bind}` is the documented
 		// way to define a bind mount as a named volume. A service referencing
 		// it looks completely ordinary.
@@ -396,7 +418,10 @@ func validateNetworks(f composeFile) error {
 					"host — including the platform's own; declare an ordinary network instead",
 				ErrUnsafe, name)
 		}
-		if override := strings.TrimSpace(n.Name); cargoManagedNetwork(override) {
+		// The project's own default-scoped name (<project>_<key>, which
+		// rendered configuration always fills in) is not an override: with
+		// the project pinned to cargo-app-<slug> it merely looks like one.
+		if override := strings.TrimSpace(n.Name); override != f.Name+"_"+name && cargoManagedNetwork(override) {
 			return fmt.Errorf(
 				"%w: network %q sets name: %q, which points it at a network Cargo manages; "+
 					"remove the name override and let compose scope the network to your project",
