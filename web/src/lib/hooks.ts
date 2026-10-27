@@ -6,12 +6,28 @@ import type { App, Org, RegistrationMode } from "./types";
 
 const ACTIVE_ORG_KEY = "cargo.activeOrgId";
 
-function readStoredOrgId(): string | undefined {
+export function readStoredOrgId(): string | undefined {
   try {
     return localStorage.getItem(ACTIVE_ORG_KEY) ?? undefined;
   } catch {
     return undefined;
   }
+}
+
+export function clearStoredOrgId() {
+  try {
+    localStorage.removeItem(ACTIVE_ORG_KEY);
+  } catch {
+    // ignore storage failures (private mode, quota)
+  }
+}
+
+// Static routes that share the /orgs/:orgId shape but name no org.
+const RESERVED_ORG_SEGMENTS = new Set(["new"]);
+
+/** Only real org ids are worth remembering; /orgs/new matches the org route too. */
+export function isOrgId(id: string | undefined): id is string {
+  return !!id && !RESERVED_ORG_SEGMENTS.has(id);
 }
 
 interface OrgRow {
@@ -66,7 +82,8 @@ export function useActiveOrgId(): string | undefined {
   const orgMatch = useMatch("/orgs/:orgId/*");
   const appMatch = useMatch("/apps/:appId/*");
   const { data: app } = useApp(appMatch?.params.appId);
-  const routeOrgId = orgMatch?.params.orgId ?? app?.org_id;
+  const matchedOrgId = orgMatch?.params.orgId;
+  const routeOrgId = (isOrgId(matchedOrgId) ? matchedOrgId : undefined) ?? app?.org_id;
 
   useEffect(() => {
     if (!routeOrgId) return;

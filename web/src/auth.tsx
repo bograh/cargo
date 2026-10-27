@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { api, post } from "./lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { api, onSessionExpired, post } from "./lib/api";
+import { clearStoredOrgId } from "./lib/hooks";
 import type { User } from "./lib/types";
 import { Spinner } from "./components/ui";
 
@@ -17,6 +19,14 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  // Drops everything cached for the previous session so the next user never
+  // sees it, and forgets their last-active org.
+  const resetSession = useCallback(() => {
+    queryClient.clear();
+    clearStoredOrgId();
+  }, [queryClient]);
 
   useEffect(() => {
     api<User>("/auth/me")
@@ -25,11 +35,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const u = await post<User>("/auth/login", { email, password });
-    setUser(u);
-    return u;
-  }, []);
+  // A refresh the server refused means the session is over: drop the user so
+  // RequireAuth sends them to /login instead of leaving them in a shell where
+  // every query fails.
+  useEffect(
+    () =>
+      onSessionExpired(() => {
+        setUser((prev) => {
+          if (prev) resetSession();
+          return null;
+        });
+      }),
+    [resetSession],
+  );
+
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const u = await post<User>("/auth/login", { email, password });
+      resetSession();
+      setUser(u);
+      return u;
+    },
+    [resetSession],
+  );
 
   const register = useCallback(
     async (email: string, password: string, inviteToken?: string) => {
@@ -39,16 +67,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password,
         ...(inviteToken ? { invite_token: inviteToken } : {}),
       });
+      resetSession();
       setUser(u);
       return u;
     },
-    [],
+    [resetSession],
   );
 
   const logout = useCallback(async () => {
-    await post("/auth/logout");
-    setUser(null);
-  }, []);
+    try {
+      await post("/auth/logout");
+    } finally {
+      resetSession();
+      setUser(null);
+    }
+  }, [resetSession]);
 
   return (
     <AuthContext.Provider value={{ user, loading, login, register, logout }}>

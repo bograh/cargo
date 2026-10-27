@@ -88,8 +88,9 @@ export default function NewApp() {
     e.preventDefault();
     setBusy(true);
     setError("");
+    let app: App;
     try {
-      const app = await post<App>(`/orgs/${orgId}/apps`, {
+      app = await post<App>(`/orgs/${orgId}/apps`, {
         name,
         source_type: sourceType,
         git_repo_url: sourceType === "image" ? "" : gitRepoURL,
@@ -103,20 +104,34 @@ export default function NewApp() {
         auto_deploy: autoDeploy,
         host_id: hostId || undefined,
       });
-      const vars = Object.fromEntries(
-        envRows.filter((r) => r.key.trim()).map((r) => [r.key.trim(), r.value]),
-      );
-      if (Object.keys(vars).length > 0) {
-        await put(`/apps/${app.id}/env`, { vars });
-      }
-      const dep = await post<Deployment>(`/apps/${app.id}/deploy`);
-      void qc.invalidateQueries({ queryKey: ["apps", orgId] });
-      navigate(`/deployments/${dep.id}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "failed to create app";
       setError(message);
       toast(message, "error");
       setBusy(false);
+      return;
+    }
+    // The app exists from here on. A later failure must not leave the form up
+    // for a resubmit that would create a duplicate: report it on the app.
+    void qc.invalidateQueries({ queryKey: ["apps", orgId] });
+    const vars = Object.fromEntries(
+      envRows.filter((r) => r.key.trim()).map((r) => [r.key.trim(), r.value]),
+    );
+    try {
+      if (Object.keys(vars).length > 0) {
+        await put(`/apps/${app.id}/env`, { vars });
+      }
+    } catch (err) {
+      toast(`App created, but saving environment variables failed: ${errMessage(err)}`, "error");
+      navigate(`/apps/${app.id}/env`);
+      return;
+    }
+    try {
+      const dep = await post<Deployment>(`/apps/${app.id}/deploy`);
+      navigate(`/deployments/${dep.id}`);
+    } catch (err) {
+      toast(`App created, but the deploy could not start: ${errMessage(err)}`, "error");
+      navigate(`/apps/${app.id}`);
     }
   }
 
@@ -330,4 +345,8 @@ export default function NewApp() {
       </form>
     </div>
   );
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "unknown error";
 }

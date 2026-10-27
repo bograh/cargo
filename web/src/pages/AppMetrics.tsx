@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { openStream } from "../lib/sse";
 import { useApp } from "../lib/hooks";
 import type { AppMetric } from "../lib/types";
 import { Card, EmptyState, PageHeader, Skeleton, StatusDot } from "../components/ui";
@@ -27,7 +28,7 @@ export default function AppMetrics() {
   const [connected, setConnected] = useState(false);
   const seeded = useRef(false);
 
-  const { data: history } = useQuery({
+  const { data: history, error: historyError } = useQuery({
     queryKey: ["metrics", appId],
     queryFn: () => api<AppMetric[]>(`/apps/${appId}/metrics?window=24h`),
     enabled: !!appId,
@@ -37,18 +38,17 @@ export default function AppMetrics() {
     if (!appId) return;
     setLive([]);
     seeded.current = false;
-    const es = new EventSource(`/api/v1/apps/${appId}/metrics/stream`);
-    es.onopen = () => setConnected(true);
-    es.onmessage = (e) => {
-      try {
-        const m = JSON.parse(e.data) as AppMetric;
-        setLive((prev) => [...prev, m].slice(-MAX_POINTS));
-      } catch {
-        /* ignore malformed frame */
-      }
-    };
-    es.onerror = () => setConnected(false);
-    return () => es.close();
+    return openStream(`/api/v1/apps/${appId}/metrics/stream`, {
+      onOpen: () => setConnected(true),
+      onMessage: (data) => {
+        try {
+          setLive((prev) => [...prev, JSON.parse(data) as AppMetric].slice(-MAX_POINTS));
+        } catch {
+          /* ignore malformed frame */
+        }
+      },
+      onDisconnect: () => setConnected(false),
+    });
   }, [appId]);
 
   // Seed the live buffer from history once.
@@ -61,6 +61,7 @@ export default function AppMetrics() {
 
   if (isLoading) return <Skeleton className="h-64" />;
   if (error || !app) return <EmptyState title="Application not found" />;
+  if (historyError) return <EmptyState title="Could not load metrics" />;
   if (history === undefined) return <Skeleton className="h-64" />;
 
   const latest = live[live.length - 1];

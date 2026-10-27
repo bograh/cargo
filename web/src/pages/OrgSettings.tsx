@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, del } from "../lib/api";
-import { useOrg } from "../lib/hooks";
+import { clearStoredOrgId, readStoredOrgId, useOrg } from "../lib/hooks";
+import type { Org } from "../lib/types";
 import { Badge, Button, Card, ConfirmModal, Icon, PageHeader, useToast } from "../components/ui";
 
 interface GithubStatus {
@@ -59,8 +60,13 @@ export default function OrgSettings() {
 
   const deleteOrg = useMutation({
     mutationFn: () => del(`/orgs/${orgId}`),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["orgs"] });
+    onSuccess: async () => {
+      // Drop the org from every cache before leaving: Home redirects using the
+      // cached org list, and would land right back on the deleted org.
+      qc.setQueryData<Org[]>(["orgs"], (orgs) => orgs?.filter((o) => o.id !== orgId));
+      qc.removeQueries({ queryKey: ["org", orgId] });
+      if (readStoredOrgId() === orgId) clearStoredOrgId();
+      await qc.invalidateQueries({ queryKey: ["orgs"] });
       toast("Organization deleted");
       navigate("/");
     },

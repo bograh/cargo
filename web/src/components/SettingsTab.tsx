@@ -12,6 +12,8 @@ export function SettingsTab({ app }: { app: App }) {
   const [name, setName] = useState(app.name);
   const [branch, setBranch] = useState(app.git_branch);
   const [imageRef, setImageRef] = useState(app.image_ref);
+  const [composePath, setComposePath] = useState(app.compose_path);
+  const [composeService, setComposeService] = useState(app.compose_service);
   const [builder, setBuilder] = useState(app.builder);
   const [port, setPort] = useState(app.exposed_port);
   const [healthPath, setHealthPath] = useState(app.healthcheck_path);
@@ -39,6 +41,9 @@ export function SettingsTab({ app }: { app: App }) {
         pids_limit: pidsLimit.trim() === "" ? 0 : Number(pidsLimit),
         notify_on_success: notifyOnSuccess,
         deploy_strategy: deployStrategy,
+        ...(app.source_type === "compose"
+          ? { compose_path: composePath, compose_service: composeService }
+          : {}),
       }),
     onSuccess: () => {
       toast("Settings saved");
@@ -91,6 +96,33 @@ export function SettingsTab({ app }: { app: App }) {
                   <option value="dockerfile">Dockerfile</option>
                   <option value="nixpacks">Nixpacks</option>
                 </Select>
+              </div>
+            </div>
+          ) : app.source_type === "compose" ? (
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="s-branch">Branch</Label>
+                <Input id="s-branch" value={branch} onChange={(e) => setBranch(e.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="s-compose-path">Compose file</Label>
+                  <Input
+                    id="s-compose-path"
+                    value={composePath}
+                    onChange={(e) => setComposePath(e.target.value)}
+                    placeholder="docker-compose.yml"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="s-compose-service">Service</Label>
+                  <Input
+                    id="s-compose-service"
+                    value={composeService}
+                    onChange={(e) => setComposeService(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-muted">The service that serves HTTP.</p>
+                </div>
               </div>
             </div>
           ) : (
