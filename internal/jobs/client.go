@@ -29,7 +29,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 func NewClient(pool *pgxpool.Pool, p *Pipeline, dbSvc *databases.Service, collector *metrics.Collector, backuper *PlatformBackuper, diskChecker *DiskChecker, auditRetentionDays int) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &DeployWorker{P: p})
-	river.AddWorker(workers, &PruneWorker{Pool: pool, Deps: p.Deployments})
+	river.AddWorker(workers, &PruneWorker{Pool: pool, Deps: p.Deployments, Hosts: p})
 	river.AddWorker(workers, &DomainCheckWorker{Pool: pool})
 	river.AddWorker(workers, &HousekeepingWorker{Pool: pool, AuditRetentionDays: auditRetentionDays})
 	river.AddWorker(workers, &DBProvisionWorker{Databases: dbSvc})

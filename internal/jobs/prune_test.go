@@ -78,7 +78,7 @@ func TestPruneRetainsImageStillInUse(t *testing.T) {
 	}
 
 	// The stale row itself is still pruned — only its image survives.
-	if err := RunPrune(ctx, f.pipeline.Pool, f.deps); err != nil {
+	if err := RunPrune(ctx, f.pipeline.Pool, f.deps, nil); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 	var stale int
@@ -123,7 +123,7 @@ func TestRunPruneKeepsNewestFive(t *testing.T) {
 		}
 	}
 
-	if err := RunPrune(ctx, f.pipeline.Pool, f.deps); err != nil {
+	if err := RunPrune(ctx, f.pipeline.Pool, f.deps, nil); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 
@@ -176,7 +176,7 @@ func TestPruneNeverDeletesLiveOrInFlight(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := RunPrune(ctx, f.pipeline.Pool, f.deps); err != nil {
+	if err := RunPrune(ctx, f.pipeline.Pool, f.deps, nil); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 	for name, id := range map[string]pgtype.UUID{"live": live.ID, "queued": queued.ID} {

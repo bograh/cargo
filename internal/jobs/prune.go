@@ -2,13 +2,16 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
+	"github.com/bograh/cargo/internal/reconciler"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -25,15 +28,62 @@ type PruneWorker struct {
 	river.WorkerDefaults[PruneArgs]
 	Pool *pgxpool.Pool
 	Deps *deployments.Service
+	// Hosts routes image removal to the worker host an app runs on. nil
+	// means single-host: images are only removed on the control plane.
+	Hosts HostRemovers
 }
 
 func (w *PruneWorker) Work(ctx context.Context, _ *river.Job[PruneArgs]) error {
-	return RunPrune(ctx, w.Pool, w.Deps)
+	return RunPrune(ctx, w.Pool, w.Deps, w.Hosts)
+}
+
+// HostRemovers yields the image remover for a hosted app's worker host.
+// *Pipeline implements it (see RemoverFor).
+type HostRemovers interface {
+	RemoverFor(ctx context.Context, appID string) (imageRemover, error)
+}
+
+// errHostUnavailable marks a hosted app whose worker host cannot be reached
+// right now; prune skips the app and retries on the next run.
+var errHostUnavailable = errors.New("worker host unavailable")
+
+// RemoverFor resolves the app's worker host and returns a remover bound to
+// that host's daemon. A control-plane app yields (nil, nil).
+func (p *Pipeline) RemoverFor(ctx context.Context, appID string) (imageRemover, error) {
+	if p.Hosts == nil {
+		return nil, nil
+	}
+	target, status, err := p.Hosts.Resolve(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errHostUnavailable, err)
+	}
+	if target == nil {
+		return nil, nil
+	}
+	if status == "unreachable" {
+		return nil, fmt.Errorf("%w: %s is unreachable", errHostUnavailable, hostLabel(target))
+	}
+	fb, ok := p.Provider.(interface {
+		ForTarget(reconciler.Target) reconciler.DeployProvider
+	})
+	if !ok {
+		return nil, nil
+	}
+	r, ok := fb.ForTarget(*target).(interface {
+		RemoveImage(ctx context.Context, ref string) error
+	})
+	if !ok {
+		return nil, nil
+	}
+	return r.RemoveImage, nil
 }
 
 // RunPrune keeps the newest keepDeployments per app and removes older
-// deployments' rows, log files, and images (best effort on images).
-func RunPrune(ctx context.Context, pool *pgxpool.Pool, deps *deployments.Service) error {
+// deployments' rows, log files, and images (best effort on images). Images
+// that ran on a worker host are removed there too. An app whose host cannot
+// be reached is skipped — its rows are kept so the next run can still find
+// and remove the images on that host.
+func RunPrune(ctx context.Context, pool *pgxpool.Pool, deps *deployments.Service, hosts HostRemovers) error {
 	q := sqlc.New(pool)
 	rows, err := pool.Query(ctx, `SELECT DISTINCT app_id FROM deployments`)
 	if err != nil {
@@ -56,7 +106,18 @@ func RunPrune(ctx context.Context, pool *pgxpool.Pool, deps *deployments.Service
 		if err != nil {
 			return err
 		}
-		if err := pruneApp(ctx, q, deps, id, nil); err != nil {
+		var remote imageRemover
+		if hosts != nil {
+			remote, err = hosts.RemoverFor(ctx, appID)
+			if errors.Is(err, errHostUnavailable) {
+				slog.Warn("prune: skipping app on unavailable worker host", "app", appID, "err", err)
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("prune %s: %w", appID, err)
+			}
+		}
+		if err := pruneApp(ctx, q, deps, id, remote); err != nil {
 			return fmt.Errorf("prune %s: %w", appID, err)
 		}
 	}
