@@ -11,6 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimSessionRotation = `-- name: ClaimSessionRotation :execrows
+UPDATE sessions SET rotated_at = now()
+WHERE id = $1 AND rotated_at IS NULL AND revoked_at IS NULL
+`
+
+// Atomically claims the right to rotate a refresh token: exactly one of any
+// number of concurrent refreshes with the same token sees 1 row affected.
+func (q *Queries) ClaimSessionRotation(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, claimSessionRotation, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (user_id, family_id, access_hash, refresh_hash, access_expires_at, refresh_expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)

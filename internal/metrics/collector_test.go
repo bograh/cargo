@@ -33,3 +33,21 @@ func TestSampleTrafficNoTraffic(t *testing.T) {
 		t.Errorf("expected all zero, got %v %v %v %v", reqRate, errRate, p50, p95)
 	}
 }
+
+// Percentiles describe the interval, not Traefik's whole uptime: a burst of
+// slow requests must show up even after a long history of fast ones.
+func TestSampleTrafficPercentilesArePerInterval(t *testing.T) {
+	c := &Collector{}
+	prev := TrafficCounters{
+		Requests: 10000, DurationCount: 10000,
+		Buckets: map[float64]float64{0.1: 10000, 1: 10000, math.Inf(1): 10000},
+	}
+	cur := TrafficCounters{
+		Requests: 10100, DurationCount: 10100,
+		Buckets: map[float64]float64{0.1: 10000, 1: 10100, math.Inf(1): 10100},
+	}
+	_, _, p50, _ := c.sampleTraffic(prev, cur, 15)
+	if p50 <= 100 {
+		t.Errorf("p50 = %vms, want > 100ms (every request this interval was slow)", p50)
+	}
+}

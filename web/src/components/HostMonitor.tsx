@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { openStream } from "../lib/sse";
 import type { AppMetricSummary, HostMetric } from "../lib/types";
 import { Badge, Card, EmptyState, Icon, StatusDot } from "./ui";
 import { Sparkline } from "./ui/Sparkline";
@@ -35,17 +36,17 @@ export function HostMonitor() {
   });
 
   useEffect(() => {
-    const es = new EventSource("/api/v1/admin/host/metrics/stream");
-    es.onopen = () => setConnected(true);
-    es.onmessage = (e) => {
-      try {
-        setLive((prev) => [...prev, JSON.parse(e.data) as HostMetric].slice(-MAX_POINTS));
-      } catch {
-        /* ignore malformed frame */
-      }
-    };
-    es.onerror = () => setConnected(false);
-    return () => es.close();
+    return openStream("/api/v1/admin/host/metrics/stream", {
+      onOpen: () => setConnected(true),
+      onMessage: (data) => {
+        try {
+          setLive((prev) => [...prev, JSON.parse(data) as HostMetric].slice(-MAX_POINTS));
+        } catch {
+          /* ignore malformed frame */
+        }
+      },
+      onDisconnect: () => setConnected(false),
+    });
   }, []);
 
   useEffect(() => {

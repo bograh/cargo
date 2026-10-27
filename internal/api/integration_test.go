@@ -148,7 +148,9 @@ func TestFullAuthOrgInviteFlow(t *testing.T) {
 		t.Fatalf("alice admin: %d", rec.Code)
 	}
 
-	// Refresh rotates and old refresh is rejected afterwards.
+	// Refresh rotates. The old refresh token is honoured only within the short
+	// concurrent-refresh grace window (reuse after it is theft detection,
+	// covered in internal/auth); logging out ends the family for every token.
 	var oldRefresh string
 	for _, ck := range alice.cookies {
 		if ck.Name == "cargo_refresh" {
@@ -159,8 +161,15 @@ func TestFullAuthOrgInviteFlow(t *testing.T) {
 		t.Fatalf("refresh: %d", rec.Code)
 	}
 	stale := &client{h: h, cookies: []*http.Cookie{{Name: "cargo_refresh", Value: oldRefresh}}}
+	if rec, _ := stale.do(t, http.MethodPost, "/api/v1/auth/refresh", ""); rec.Code != http.StatusOK {
+		t.Fatalf("concurrent refresh within grace: %d", rec.Code)
+	}
+	if rec, _ := alice.do(t, http.MethodPost, "/api/v1/auth/logout", ""); rec.Code != http.StatusOK {
+		t.Fatalf("logout: %d", rec.Code)
+	}
+	stale = &client{h: h, cookies: []*http.Cookie{{Name: "cargo_refresh", Value: oldRefresh}}}
 	if rec, _ := stale.do(t, http.MethodPost, "/api/v1/auth/refresh", ""); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("stale refresh: %d", rec.Code)
+		t.Fatalf("stale refresh after logout: %d", rec.Code)
 	}
 }
 

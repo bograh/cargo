@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/bograh/cargo/internal/builder"
 	"github.com/bograh/cargo/internal/compose"
 )
 
@@ -20,7 +20,9 @@ func (d *Docker) writeComposeEnv(spec Spec) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(spec.SourceDir, ".env"), []byte(content), 0o600)
+	// The checkout is tenant-controlled: a committed `.env` symlink must not
+	// redirect this write onto a control-plane file.
+	return builder.WriteFileNoFollow(filepath.Join(spec.SourceDir, ".env"), []byte(content), 0o600)
 }
 
 // validateComposeSource is the authoritative safety gate for a user-supplied
@@ -45,7 +47,10 @@ func (d *Docker) validateComposeSource(ctx context.Context, spec Spec) ([]string
 	userFile := filepath.Join(spec.SourceDir, spec.ComposeFile)
 	// The user's file alone: the overlay's own additions are Cargo's and need
 	// no checking, and excluding it keeps the rules free of special cases.
-	rendered, err := d.output(ctx, "docker", "compose", "-f", userFile, "config")
+	// -p pins the project name to the one the overlay applies at `up`, so the
+	// default volume names the gate accepts are the ones that will be created
+	// (a user-set `name:` in the file must not decide whose volumes these are).
+	rendered, err := d.output(ctx, "docker", "compose", "-p", "cargo-app-"+spec.Slug, "-f", userFile, "config")
 	if err != nil {
 		// compose reports the actual problem (bad YAML, an unknown `extends`
 		// target) on stderr; without it the user just sees "exit status 1".

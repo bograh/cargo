@@ -14,3 +14,11 @@ SELECT * FROM users ORDER BY created_at;
 
 -- name: AnyUserExists :one
 SELECT EXISTS (SELECT 1 FROM users);
+
+-- name: LockUserCreation :exec
+-- Serialises account creation for the rest of the transaction. CreateUser
+-- decides instance-admin by "no users exist yet"; under READ COMMITTED two
+-- concurrent first registrations would both see an empty table and both
+-- become admin. Taking this lock first, then inserting in a later statement
+-- (fresh snapshot), makes that check exact.
+SELECT pg_advisory_xact_lock(hashtext('cargo.users.create'));

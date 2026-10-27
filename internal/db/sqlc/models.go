@@ -22,6 +22,12 @@ type AppMetric struct {
 	P95Ms         float64
 }
 
+type AppRetirement struct {
+	AppID     pgtype.UUID
+	Target    string
+	CreatedAt pgtype.Timestamptz
+}
+
 type Application struct {
 	ID               pgtype.UUID
 	OrgID            pgtype.UUID
@@ -136,6 +142,13 @@ type GithubInstallation struct {
 	InstallationID int64
 	AccountLogin   string
 	CreatedAt      pgtype.Timestamptz
+}
+
+type GithubSetupState struct {
+	Nonce     string
+	OrgID     pgtype.UUID
+	UserID    pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
 }
 
 type Host struct {

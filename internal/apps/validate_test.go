@@ -44,3 +44,39 @@ func TestValidateEnvKey(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateImageRef(t *testing.T) {
+	ok := []string{
+		"nginx", "nginx:alpine", "library/nginx:1.27", "ghcr.io/org/app:v1.2.3",
+		"localhost:5000/team/app", "registry.example.com:443/a/b/c:latest",
+		"redis@sha256:" + strings.Repeat("a", 64),
+		"ghcr.io/org/app:tag@sha256:" + strings.Repeat("0", 64),
+	}
+	for _, r := range ok {
+		if err := ValidateImageRef(r); err != nil {
+			t.Errorf("%q: want accepted, got %v", r, err)
+		}
+	}
+	bad := []string{
+		"", "nginx\n    privileged: true", "nginx # comment", "Nginx", "nginx:",
+		"nginx:tag with space", "-nginx", "nginx\"", "a/../b", "nginx:{x}",
+	}
+	for _, r := range bad {
+		if err := ValidateImageRef(r); err == nil {
+			t.Errorf("%q: want rejected, got nil", r)
+		}
+	}
+}
+
+func TestValidateHealthcheckPath(t *testing.T) {
+	for _, p := range []string{"", "/", "/healthz", "/api/v1/health?full=1", "/a%20b"} {
+		if err := validateHealthcheckPath(p); err != nil {
+			t.Errorf("%q: want accepted, got %v", p, err)
+		}
+	}
+	for _, p := range []string{"healthz", "/x\n    privileged: true", "/a b", "/a#b", "/a\"b", "/a'b", "/a`b"} {
+		if err := validateHealthcheckPath(p); err == nil {
+			t.Errorf("%q: want rejected, got nil", p)
+		}
+	}
+}

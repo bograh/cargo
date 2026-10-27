@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../auth";
@@ -11,12 +11,15 @@ export { AuthShell } from "../components/AuthShell";
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // RequireAuth records where the user was headed; send them back there.
+  const from = (location.state as { from?: string } | null)?.from ?? "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [searchParams] = useSearchParams();
-  const ssoError = searchParams.get("error") === "oidc";
+  const ssoError = searchParams.get("error");
   const { data: providers } = useQuery({
     queryKey: ["auth", "providers"],
     queryFn: () => api<{ password: boolean; oidc: boolean }>("/auth/providers"),
@@ -28,7 +31,7 @@ export default function Login() {
     setError("");
     try {
       await login(email, password);
-      navigate("/");
+      navigate(from, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "login failed");
     } finally {
@@ -40,7 +43,9 @@ export default function Login() {
     <AuthShell title="Log in">
       {ssoError && (
         <p className="mb-4 rounded-lg border border-danger/40 bg-danger-tint px-3 py-2 text-sm text-danger">
-          SSO sign-in failed. Try again or use your password.
+          {ssoError === "registration_closed"
+            ? "Registration is closed. Ask an admin for an invite to create an account."
+            : "SSO sign-in failed. Try again or use your password."}
         </p>
       )}
       <form onSubmit={submit} className="space-y-4">

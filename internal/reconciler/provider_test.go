@@ -3,10 +3,13 @@ package reconciler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"net/http"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -219,6 +222,10 @@ func TestApplyBlueGreenServesThroughout(t *testing.T) {
 	if err := d.Apply(ctx, spec, &log); err != nil {
 		t.Fatalf("first apply: %v\n%s", err, log.String())
 	}
+	// Probe from a sidecar on the app's own network, the vantage point
+	// Traefik has. Dialing container IPs from the test process only works on
+	// a Linux host; Docker Desktop keeps them inside its VM.
+	probe := startProbeSidecar(t, d, spec)
 
 	// Poll every app container the way Traefik would, and record any moment
 	// when none of them answers.
@@ -232,7 +239,6 @@ func TestApplyBlueGreenServesThroughout(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		client := &http.Client{Timeout: 2 * time.Second}
 		for pollCtx.Err() == nil {
 			served := false
 			for _, color := range []string{"blue", "green"} {
@@ -250,13 +256,9 @@ func TestApplyBlueGreenServesThroughout(t *testing.T) {
 				if addr == "" {
 					continue
 				}
-				resp, err := client.Get(fmt.Sprintf("http://%s:%d/", addr, spec.Port))
-				if err == nil {
-					_ = resp.Body.Close()
-					if resp.StatusCode < 500 {
-						served = true
-						break
-					}
+				if probe(pollCtx, addr, spec.Port) {
+					served = true
+					break
 				}
 			}
 			// Cancelling pollCtx aborts the docker calls above, which would
@@ -481,5 +483,44 @@ func TestApplyComposeSource(t *testing.T) {
 	remaining, _ := output(ctx, "docker", "ps", "-aq", "--filter", "label=com.docker.compose.project=cargo-app-cs-test")
 	if strings.TrimSpace(remaining) != "" {
 		t.Fatalf("containers survived teardown: %q", remaining)
+	}
+}
+
+// startProbeSidecar starts a throwaway busybox container on the network the
+// app's active container is attached to, and returns a probe that asks it to
+// fetch http://addr:port/. The test is skipped (not failed) only when the
+// sidecar itself cannot be started, e.g. no busybox image and no registry.
+func startProbeSidecar(t *testing.T, d *Docker, spec Spec) func(ctx context.Context, addr string, port int32) bool {
+	t.Helper()
+	ctx := context.Background()
+	args, _, err := d.activeProject(ctx, spec.AppID)
+	if err != nil {
+		t.Fatalf("active project: %v", err)
+	}
+	cid, err := d.outputCompose(ctx, args, "ps", "-q", "app")
+	if err != nil || cid == "" {
+		t.Fatalf("no app container after apply (err %v)", err)
+	}
+	netsJSON, _ := output(ctx, "docker", "inspect", "-f", `{{json .NetworkSettings.Networks}}`, cid)
+	var nets map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(netsJSON), &nets); err != nil || len(nets) == 0 {
+		t.Fatalf("app container networks: %q (%v)", netsJSON, err)
+	}
+	var network string
+	for n := range nets {
+		network = n
+		break
+	}
+	name := fmt.Sprintf("cargo-test-probe-%s-%d", spec.Slug, time.Now().UnixNano())
+	if out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm", "--name", name,
+		"--network", network, "busybox:stable", "sleep", "600").CombinedOutput(); err != nil {
+		t.Skipf("cannot start probe sidecar on %s: %v\n%s", network, err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+	return func(ctx context.Context, addr string, port int32) bool {
+		url := fmt.Sprintf("http://%s/", net.JoinHostPort(addr, strconv.Itoa(int(port))))
+		// busybox wget exits non-zero on connection failure and on 4xx/5xx.
+		return exec.CommandContext(ctx, "docker", "exec", name,
+			"wget", "-q", "-T", "2", "-O", "/dev/null", url).Run() == nil
 	}
 }

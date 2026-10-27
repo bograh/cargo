@@ -176,8 +176,24 @@ func (s *Service) Finish(ctx context.Context, id pgtype.UUID, status, errMsg str
 	if status != "live" && status != "failed" && status != "cancelled" {
 		return ErrBadTransition
 	}
-	return s.q.FinishDeployment(ctx, sqlc.FinishDeploymentParams{ID: id, Status: status, Error: errMsg})
+	if err := s.q.FinishDeployment(ctx, sqlc.FinishDeploymentParams{ID: id, Status: status, Error: errMsg}); err != nil {
+		return err
+	}
+	// Wake live log viewers so their stream ends with the outcome instead of
+	// idling until the tab closes.
+	if s.hub != nil {
+		if v, err := id.Value(); err == nil {
+			if idStr, ok := v.(string); ok {
+				s.hub.Publish(StatusTopic(idStr), []byte(status))
+			}
+		}
+	}
+	return nil
 }
+
+// StatusTopic is the hub topic a deployment's terminal status is published on.
+// It is separate from the log topic so the marker never lands in the log file.
+func StatusTopic(id string) string { return "deploy-status:" + id }
 
 // Supersede demotes an app's prior live deployment(s) to "superseded", leaving
 // exceptID (the deployment that just went live) as the only live row. Their

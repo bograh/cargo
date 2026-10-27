@@ -94,6 +94,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := s.oidc.ResolveCallback(r.Context(), oidcRedirectURL(r), code, st.Nonce)
+	if errors.Is(err, oidc.ErrRegistrationClosed) {
+		http.Redirect(w, r, "/login?error=registration_closed", http.StatusFound)
+		return
+	}
 	if err != nil {
 		redirectOIDCErr(w, r)
 		return

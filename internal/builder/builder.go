@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 )
 
 type Input struct {
@@ -25,14 +24,33 @@ type Builder interface {
 // Detect chooses a builder for auto mode: a user Dockerfile wins, then a
 // language generator (a lean multi-stage Dockerfile), then Nixpacks as the
 // universal fallback (FR-3.3).
+//
+// workDir is both the repository root and the build context here; DetectIn
+// handles a build context below the root.
 func Detect(workDir, dockerfilePath string) string {
+	return DetectIn(workDir, ".", dockerfilePath)
+}
+
+// DetectIn is Detect for a checkout whose build context is a subdirectory.
+// The Dockerfile is looked up the way the build resolves it — relative to the
+// repository root (`docker build -f`, see Dockerfile.Build) — while language
+// generators inspect the build context. Looking the Dockerfile up under the
+// context instead picked "dockerfile" for build_context=api with only
+// api/Dockerfile present, and the build then failed on a missing file.
+func DetectIn(root, contextPath, dockerfilePath string) string {
 	if dockerfilePath == "" {
 		dockerfilePath = "Dockerfile"
 	}
-	if _, err := os.Stat(filepath.Join(workDir, dockerfilePath)); err == nil {
-		return "dockerfile"
+	if p, err := Within(root, dockerfilePath); err == nil {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return "dockerfile"
+		}
 	}
-	if g, ok := detectGenerator(workDir); ok {
+	ctxDir, err := Within(root, contextPath)
+	if err != nil {
+		return "nixpacks" // the build itself reports the unsafe path
+	}
+	if g, ok := detectGenerator(ctxDir); ok {
 		return g.Name()
 	}
 	return "nixpacks"

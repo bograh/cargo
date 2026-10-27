@@ -83,3 +83,62 @@ func validateGitURL(raw string, allowPrivate bool) error {
 	}
 	return nil
 }
+
+// imageRefRe is the docker reference grammar (distribution/reference):
+// an optional registry host[:port]/, slash-separated lowercase path
+// components, an optional :tag and an optional @digest. image_ref is rendered
+// into the generated compose file, so anything outside this grammar — a
+// newline above all — would let a tenant write their own compose keys
+// (privileged, host mounts) into a file the control plane applies.
+var imageRefRe = regexp.MustCompile(
+	`^(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)(?:\.(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?))*(?::[0-9]+)?/)?` +
+		`[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*` +
+		`(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?` +
+		`(?:@[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*:[0-9a-fA-F]{32,})?$`)
+
+// ValidateImageRef checks an image reference against the docker grammar.
+func ValidateImageRef(ref string) error {
+	if len(ref) > 255 || !imageRefRe.MatchString(ref) {
+		return fmt.Errorf("%w: image_ref %q is not a valid image reference "+
+			"(e.g. nginx:1.27, ghcr.io/org/app:tag)", ErrValidation, ref)
+	}
+	return nil
+}
+
+// healthPathRe is an absolute URL path (with optional query) built from the
+// RFC 3986 unreserved/sub-delim characters. healthcheck_path becomes a
+// Traefik label in the generated compose file, so it must not carry
+// whitespace, quotes, '#', or anything YAML would read as structure.
+var healthPathRe = regexp.MustCompile(`^/[A-Za-z0-9._~/%!$&()*+,;=:@?-]*$`)
+
+func validateHealthcheckPath(p string) error {
+	if p == "" {
+		return nil
+	}
+	if len(p) > 512 || !healthPathRe.MatchString(p) {
+		return fmt.Errorf("%w: healthcheck_path must be an absolute URL path such as /healthz", ErrValidation)
+	}
+	return nil
+}
+
+// composeServiceRe is the compose service-name form.
+var composeServiceRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
+func validateComposeService(s string) error {
+	if s == "" {
+		return nil
+	}
+	if len(s) > 128 || !composeServiceRe.MatchString(s) {
+		return fmt.Errorf("%w: compose_service %q is not a valid service name", ErrValidation, s)
+	}
+	return nil
+}
+
+// validateBuilder checks the builder selector on both create and update.
+func validateBuilder(b string) error {
+	switch b {
+	case "", "auto", "dockerfile", "nixpacks":
+		return nil
+	}
+	return fmt.Errorf("%w: builder must be auto, dockerfile, or nixpacks", ErrValidation)
+}

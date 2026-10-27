@@ -27,6 +27,9 @@ var (
 	ErrNotConfigured = errors.New("oidc not configured")
 	ErrValidation    = errors.New("oidc validation failed")
 	ErrExchange      = errors.New("oidc exchange failed")
+	// ErrRegistrationClosed: the IdP vouched for someone with no Cargo
+	// account, and the instance's registration policy doesn't let SSO mint one.
+	ErrRegistrationClosed = errors.New("oidc: no account for this identity and registration is not open")
 )
 
 const discoveryTimeout = 5 * time.Second
@@ -161,7 +164,7 @@ func (s *Service) resolveUser(ctx context.Context, issuer, subject, email string
 
 	u, err := q.GetUserByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
-		u, err = q.CreateUser(ctx, sqlc.CreateUserParams{Email: email, PasswordHash: pgtype.Text{}})
+		u, err = s.provisionUser(ctx, q, email)
 	}
 	if err != nil {
 		return sqlc.User{}, err
@@ -180,6 +183,33 @@ func (s *Service) resolveUser(ctx context.Context, issuer, subject, email string
 		return sqlc.User{}, err
 	}
 	return u, tx.Commit(ctx)
+}
+
+// provisionUser creates a passwordless SSO account, honouring the same
+// registration policy as password sign-up. A verified IdP email proves who
+// someone is, not that this instance wants them: with Google as the IdP,
+// "any verified email" is everyone. Only an open instance (or the very first
+// account, which bootstraps the admin) provisions on sight; invite-only has
+// no invite to check on this path, so it refuses — an invitee can register
+// with the invite, then link SSO by logging in with the same verified email.
+func (s *Service) provisionUser(ctx context.Context, q *sqlc.Queries, email string) (sqlc.User, error) {
+	if err := q.LockUserCreation(ctx); err != nil {
+		return sqlc.User{}, err
+	}
+	exists, err := q.AnyUserExists(ctx)
+	if err != nil {
+		return sqlc.User{}, err
+	}
+	if exists {
+		mode, err := s.settings.Registration(ctx)
+		if err != nil {
+			return sqlc.User{}, err
+		}
+		if mode != settings.RegistrationOpen {
+			return sqlc.User{}, ErrRegistrationClosed
+		}
+	}
+	return q.CreateUser(ctx, sqlc.CreateUserParams{Email: email, PasswordHash: pgtype.Text{}})
 }
 
 // clientContext routes go-oidc and oauth2 HTTP traffic through s.httpClient.

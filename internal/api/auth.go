@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -169,8 +170,17 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	var access, refresh string
 	if c, err := r.Cookie("cargo_access"); err == nil {
-		_ = s.auth.Logout(r.Context(), c.Value)
+		access = c.Value
+	}
+	if c, err := r.Cookie("cargo_refresh"); err == nil {
+		refresh = c.Value
+	}
+	if access != "" || refresh != "" {
+		if err := s.auth.Logout(r.Context(), access, refresh); err != nil {
+			slog.Warn("logout: session revoke failed", "err", err)
+		}
 	}
 	s.clearAuthCookies(w)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})

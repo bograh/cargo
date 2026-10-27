@@ -136,10 +136,19 @@ docker run --rm --network cargo-proxy alpine sh -c 'nc -z -w3 db 5432 || echo is
 
 ### Upgrades (NFR-8)
 
+Re-run the installer — on an existing install it updates in place:
+
 ```bash
-docker compose pull && docker compose up -d   # add your TLS overlay's -f flag for production installs
+curl -fsSL https://usecargo.vercel.app/install.sh | sh
+# or, from an existing checkout:
+git -C /opt/cargo pull --ff-only && /opt/cargo/deploy/install.sh --update
 ```
 
+The bootstrap fast-forwards the checkout and then runs `deploy/install.sh
+--update`, which keeps `.env` untouched (the master key and
+database password must never change under existing data), picks the same
+compose overlays the install used, and runs `docker compose up -d --build`.
+`--force` re-runs the setup prompts but also keeps the existing secrets.
 Migrations run automatically at startup; running user apps are not touched.
 
 ## Backups & disaster recovery
@@ -201,6 +210,13 @@ all operations), and gives each host an isolated docker context under
 When creating an app, pick a worker host in the form. Blue/green deploys
 work identically on workers. If a worker goes unreachable mid-deploy the
 deployment fails cleanly and other hosts are unaffected.
+
+Moving an app to another host (or back to the control plane) in its settings
+redeploys it on the new target; once that deployment is live, Cargo stops the
+app's containers on the old target. A failed clean-up is audited and retried on
+the next deploy. Stopped apps are not started by a move. Built images are
+shipped to the worker with `docker save | docker load`, and the per-host SSH
+config (key, pinned `known_hosts`) is used for every connection.
 
 For the full design see
 [multi-server spec](../docs/superpowers/specs/2026-08-22-cargo-multi-server-design.md).

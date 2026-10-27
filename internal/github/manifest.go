@@ -31,7 +31,14 @@ func BuildManifest(origin string) (string, error) {
 			"active": true,
 		},
 		"redirect_url": origin + ManifestCallbackPath,
-		"public":       false,
+		// Ask the installing user to authorize the app during installation.
+		// GitHub then sends them to the callback URL with an OAuth code next
+		// to installation_id, which lets the setup handler prove they can
+		// administer that installation (VerifyInstallationAccess).
+		"callback_urls":            []string{origin + SetupPath},
+		"setup_url":                origin + SetupPath,
+		"request_oauth_on_install": true,
+		"public":                   false,
 		// Least privilege: read repository contents (to clone) + metadata, and
 		// subscribe to push events for auto-deploy.
 		"default_permissions": map[string]string{
@@ -78,6 +85,8 @@ func ExchangeManifestCode(ctx context.Context, code string) (AppConfig, error) {
 		Slug          string `json:"slug"`
 		PEM           string `json:"pem"`
 		WebhookSecret string `json:"webhook_secret"`
+		ClientID      string `json:"client_id"`
+		ClientSecret  string `json:"client_secret"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return AppConfig{}, err
@@ -90,6 +99,8 @@ func ExchangeManifestCode(ctx context.Context, code string) (AppConfig, error) {
 		AppSlug:       out.Slug,
 		PrivateKey:    out.PEM,
 		WebhookSecret: out.WebhookSecret,
+		ClientID:      out.ClientID,
+		ClientSecret:  out.ClientSecret,
 	}, nil
 }
 

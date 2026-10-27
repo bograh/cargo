@@ -101,3 +101,17 @@ func TestAllowPrivateGitHosts(t *testing.T) {
 		t.Fatal("a non-boolean should be rejected")
 	}
 }
+
+func TestLoadAppsSuffix(t *testing.T) {
+	cfg, err := Load(envWith(map[string]string{
+		"CARGO_DATABASE_URL": "postgres://cargo:cargo@localhost:5432/cargo",
+		"CARGO_MASTER_KEY":   validMasterKey,
+		"CARGO_APPS_SUFFIX":  " Apps.Example.com ",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AppsSuffix != "apps.example.com" {
+		t.Errorf("AppsSuffix = %q, want apps.example.com", cfg.AppsSuffix)
+	}
+}

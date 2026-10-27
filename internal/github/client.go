@@ -140,16 +140,26 @@ func (c *Client) ListBranches(ctx context.Context, installationID int64, fullNam
 	if err != nil {
 		return nil, err
 	}
-	var out []struct {
-		Name string `json:"name"`
+	var names []string
+	// Paged like ListRepos: a single page silently truncated repos with more
+	// than 100 branches. Capped so a pathological repo can't spin forever.
+	for page := 1; page <= 50; page++ {
+		var out []struct {
+			Name string `json:"name"`
+		}
+		url := fmt.Sprintf("%s/repos/%s/branches?per_page=100&page=%d", c.APIBase, fullName, page)
+		if err := c.doJSON(ctx, http.MethodGet, url, token, &out); err != nil {
+			return nil, err
+		}
+		for _, b := range out {
+			names = append(names, b.Name)
+		}
+		if len(out) < 100 {
+			break
+		}
 	}
-	url := fmt.Sprintf("%s/repos/%s/branches?per_page=100", c.APIBase, fullName)
-	if err := c.doJSON(ctx, http.MethodGet, url, token, &out); err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(out))
-	for _, b := range out {
-		names = append(names, b.Name)
+	if names == nil {
+		names = []string{}
 	}
 	return names, nil
 }

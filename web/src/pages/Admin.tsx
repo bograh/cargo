@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { api, del, post, put } from "../lib/api";
@@ -45,6 +45,20 @@ function InstanceSettingsCard() {
   const [smtpPass, setSmtpPass] = useState("");
   const [smtpFrom, setSmtpFrom] = useState("");
   const [error, setError] = useState("");
+
+  // Pre-fill the stored SMTP config once so editing one field doesn't blank
+  // the rest. The password is write-only: left empty, the server keeps it.
+  const smtpSeeded = useRef(false);
+  useEffect(() => {
+    const smtp = data?.smtp;
+    if (!smtp || smtpSeeded.current) return;
+    smtpSeeded.current = true;
+    if (!smtp.configured) return;
+    setSmtpHost(smtp.host ?? "");
+    if (smtp.port) setSmtpPort(String(smtp.port));
+    setSmtpUser(smtp.username ?? "");
+    setSmtpFrom(smtp.from ?? "");
+  }, [data?.smtp]);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["admin", "settings"] });
@@ -172,7 +186,7 @@ function InstanceSettingsCard() {
             <Input aria-label="smtp host" placeholder="smtp.example.com" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} />
             <Input aria-label="smtp port" type="number" placeholder="587" value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} />
             <Input aria-label="smtp username" placeholder="username" value={smtpUser} onChange={(e) => setSmtpUser(e.target.value)} />
-            <Input aria-label="smtp password" type="password" placeholder="password (write-only)" value={smtpPass} onChange={(e) => setSmtpPass(e.target.value)} />
+            <Input aria-label="smtp password" type="password" placeholder={data?.smtp.configured ? "password (blank keeps current)" : "password (write-only)"} value={smtpPass} onChange={(e) => setSmtpPass(e.target.value)} />
             <Input aria-label="smtp from" placeholder="cargo@example.com" value={smtpFrom} onChange={(e) => setSmtpFrom(e.target.value)} className="col-span-2" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -196,6 +210,72 @@ interface GithubAppStatus {
   configured: boolean;
   app_slug: string;
   app_id: number;
+  client_id?: string;
+  ownership_verified?: boolean;
+}
+
+// GithubOAuthForm adds the app's OAuth client credentials so installs are
+// verified against the installing GitHub user. The secret is write-only:
+// blank keeps the stored one.
+function GithubOAuthForm({ status }: { status: GithubAppStatus }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [clientId, setClientId] = useState(status.client_id ?? "");
+  const [clientSecret, setClientSecret] = useState("");
+  const [error, setError] = useState("");
+  const save = useMutation({
+    mutationFn: () => put("/admin/settings/github-app", { client_id: clientId, client_secret: clientSecret }),
+    onSuccess: () => {
+      setClientSecret("");
+      void qc.invalidateQueries({ queryKey: ["admin", "github-app"] });
+      toast("Saved");
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "save failed";
+      setError(message);
+      toast(message, "error");
+    },
+  });
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    save.mutate();
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-3 border-t border-border pt-4">
+      {!status.ownership_verified && (
+        <p className="rounded-lg border border-amber/40 bg-amber-tint px-3 py-2 text-xs text-amber">
+          Installation ownership is not verified. Without the app&apos;s OAuth client ID and secret, an org admin
+          who learns another account&apos;s installation ID could connect it. In the GitHub App settings, enable
+          &ldquo;Request user authorization (OAuth) during installation&rdquo;, set the callback URL to{" "}
+          <code className="font-mono">{`${window.location.origin}/api/v1/github/setup`}</code>, then enter the
+          client credentials here.
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label htmlFor="gh-client-id">OAuth client ID</Label>
+          <Input id="gh-client-id" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="gh-client-secret">OAuth client secret</Label>
+          <Input
+            id="gh-client-secret"
+            type="password"
+            value={clientSecret}
+            placeholder={status.ownership_verified ? "blank keeps current" : ""}
+            onChange={(e) => setClientSecret(e.target.value)}
+          />
+        </div>
+      </div>
+      <FieldError message={error} />
+      <Button type="submit" disabled={save.isPending}>
+        Save OAuth client
+      </Button>
+    </form>
+  );
 }
 
 function GithubAppForm() {
@@ -245,7 +325,14 @@ function GithubAppForm() {
         title="GitHub App"
         aside={
           status?.configured ? (
-            <Badge tone="live">configured — {status.app_slug} (#{status.app_id})</Badge>
+            <div className="flex flex-wrap justify-end gap-1">
+              <Badge tone="live">configured — {status.app_slug} (#{status.app_id})</Badge>
+              {status.ownership_verified ? (
+                <Badge tone="live">ownership verified</Badge>
+              ) : (
+                <Badge tone="amber">ownership unverified</Badge>
+              )}
+            </div>
           ) : (
             <Badge tone="neutral">not configured</Badge>
           )
@@ -263,6 +350,8 @@ function GithubAppForm() {
           <Icon name="git-branch" size={14} /> Create GitHub App automatically
         </Button>
       </a>
+
+      {status?.configured && <GithubOAuthForm key={status.client_id ?? ""} status={status} />}
 
       <button
         type="button"

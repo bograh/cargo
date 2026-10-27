@@ -131,8 +131,7 @@ func (m *Manager) Verify(ctx context.Context, h sqlc.Host) (VerifyResult, error)
 	}
 	res.Status = statusOnline
 	res.EngineVersion = engine
-	res.CPUCount = m.remoteNproc(ctx, tg.Env)
-	res.MemTotalMB = m.remoteMemMB(ctx, tg.Env)
+	res.CPUCount, res.MemTotalMB = m.remoteCapacity(ctx, tg.Env)
 	err = m.hostSvc.UpdateCapacity(ctx, h.ID.String(), statusOnline, engine,
 		int32(res.CPUCount), res.MemTotalMB)
 	return res, err
@@ -157,27 +156,20 @@ func (m *Manager) dockerVersion(ctx context.Context, env []string) (string, erro
 	return v.Server.Version, nil
 }
 
-func (m *Manager) remoteNproc(ctx context.Context, env []string) int {
-	out, err := m.run(ctx, env, "nproc")
+// remoteCapacity asks the worker's Docker daemon for its CPU count and total
+// memory. `nproc` and `free -m` were run as plain local commands — the target
+// env only redirects docker — so every host reported the control plane's own
+// capacity. `docker info` is answered by the daemon the env points at.
+func (m *Manager) remoteCapacity(ctx context.Context, env []string) (cpus int, memMB int64) {
+	out, err := m.run(ctx, env, "docker", "info", "--format", "{{.NCPU}} {{.MemTotal}}")
 	if err != nil {
-		return 0
+		return 0, 0
 	}
-	n, _ := strconv.Atoi(out)
-	return n
-}
-
-func (m *Manager) remoteMemMB(ctx context.Context, env []string) int64 {
-	out, err := m.run(ctx, env, "free", "-m")
-	if err != nil {
-		return 0
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return 0, 0
 	}
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		// Mem:  15000  4200  6100 ...
-		if strings.HasPrefix(line, "Mem:") && len(fields) >= 2 {
-			mb, _ := strconv.ParseInt(fields[1], 10, 64)
-			return mb
-		}
-	}
-	return 0
+	cpus, _ = strconv.Atoi(fields[0])
+	memBytes, _ := strconv.ParseInt(fields[1], 10, 64)
+	return cpus, memBytes / (1024 * 1024)
 }

@@ -1,14 +1,16 @@
 package api
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/bograh/cargo/internal/db/sqlc"
 	"github.com/bograh/cargo/internal/deployments"
@@ -137,8 +139,16 @@ func (s *Server) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 func isTerminal(status string) bool {
-	return status == "live" || status == "failed" || status == "cancelled"
+	switch status {
+	case "live", "failed", "cancelled", "superseded":
+		return true
+	}
+	return false
 }
+
+// deployStatusPoll is the fallback for a terminal transition the stream isn't
+// told about (the orphan reaper, a status write from another process).
+const deployStatusPoll = 5 * time.Second
 
 // handleDeploymentLogs streams a deployment's log over SSE (FR-4.3):
 // replay the persisted file, then live events until the client disconnects.
@@ -167,45 +177,98 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 
 	idStr := chi.URLParam(r, "deploymentID")
 
-	// Subscribe before replay so no live line is missed.
-	ch, cancel := s.hub.Subscribe("deploy:" + idStr)
-	defer cancel()
+	// The log file is the single source of truth for lines; hub messages only
+	// say "the file grew". Reading every line from the file at a tracked offset
+	// means a line written while the replay runs is sent exactly once (it used
+	// to arrive both from the replay and from the live channel).
+	// Subscribe before the first read so no growth is missed.
+	logCh, cancelLog := s.hub.Subscribe("deploy:" + idStr)
+	defer cancelLog()
+	statusCh, cancelStatus := s.hub.Subscribe(deployments.StatusTopic(idStr))
+	defer cancelStatus()
 
 	startSSE(w)
 
 	send := func(line string) {
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", line)
+	}
+	tail := &logTail{path: s.logPath(idStr)}
+	defer tail.close()
+	drain := func(final bool) {
+		for _, line := range tail.read(final) {
+			send(line)
+		}
 		flusher.Flush()
 	}
-	if f, err := os.Open(s.logPath(idStr)); err == nil {
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			send(scanner.Text())
-		}
-		_ = f.Close()
+	finish := func(status string) {
+		drain(true)
+		send("[deployment " + status + "]")
+		flusher.Flush()
 	}
+
+	drain(false)
 	if isTerminal(dep.Status) {
-		send("[deployment " + dep.Status + "]")
+		finish(dep.Status)
 		return
 	}
+	poll := time.NewTicker(deployStatusPoll)
+	defer poll.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg := <-ch:
-			for _, line := range splitLines(msg) {
-				send(line)
+		case <-logCh:
+			drain(false)
+		case st := <-statusCh:
+			finish(string(st))
+			return
+		case <-poll.C:
+			cur, err := s.deps.Get(ctx, id, userFrom(r.Context()).ID)
+			if err == nil && isTerminal(cur.Status) {
+				finish(cur.Status)
+				return
 			}
+			drain(false)
 		}
 	}
 }
 
-func splitLines(b []byte) []string {
+// logTail incrementally reads complete lines from a deployment log that may
+// not exist yet and may still be growing.
+type logTail struct {
+	path    string
+	f       *os.File
+	partial []byte
+}
+
+func (t *logTail) read(final bool) []string {
+	if t.f == nil {
+		f, err := os.Open(t.path)
+		if err != nil {
+			return nil
+		}
+		t.f = f
+	}
+	buf, _ := io.ReadAll(t.f)
+	t.partial = append(t.partial, buf...)
 	var out []string
-	scanner := bufio.NewScanner(bytes.NewReader(b))
-	for scanner.Scan() {
-		out = append(out, scanner.Text())
+	for {
+		i := bytes.IndexByte(t.partial, '\n')
+		if i < 0 {
+			break
+		}
+		out = append(out, strings.TrimSuffix(string(t.partial[:i]), "\r"))
+		t.partial = t.partial[i+1:]
+	}
+	if final && len(t.partial) > 0 {
+		out = append(out, string(t.partial))
+		t.partial = nil
 	}
 	return out
+}
+
+func (t *logTail) close() {
+	if t.f != nil {
+		_ = t.f.Close()
+	}
 }

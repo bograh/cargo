@@ -20,15 +20,29 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		targetType, targetID := auditTarget(r.URL.Path)
+		// Resolve the owning org before the handler runs: a DELETE removes the
+		// very row the lookup needs.
+		resolvedOrg := s.resourceOrg(r, targetType, targetID)
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
 		if ww.Status() < 200 || ww.Status() >= 300 {
 			return
 		}
 		actor := userFrom(r.Context())
-		targetType, targetID := auditTarget(r.URL.Path)
-		s.audit.Record(r.Context(), actor.ID, orgFromRequest(r), r.Method, targetType, targetID,
-			map[string]any{"path": r.URL.Path, "status": ww.Status()})
+		detail := map[string]any{"path": r.URL.Path, "status": ww.Status()}
+		orgID := orgFromRequest(r)
+		if !orgID.Valid {
+			orgID = resolvedOrg
+		}
+		// Deleting an org: audit_log.org_id references organizations, so the
+		// gone org can't be the row's org. Record it instance-level with the
+		// ID in detail rather than losing the entry to a foreign-key error.
+		if r.Method == http.MethodDelete && targetType == "orgs" && isResourceRoot(r.URL.Path) {
+			detail["org_id"] = targetID
+			orgID = pgtype.UUID{}
+		}
+		s.audit.Record(r.Context(), actor.ID, orgID, r.Method, targetType, targetID, detail)
 	})
 }
 
@@ -53,6 +67,28 @@ func auditTarget(path string) (string, string) {
 		id = parts[1]
 	}
 	return parts[0], id
+}
+
+// resourceOrg finds the org behind /apps/{id}, /deployments/{id} and
+// /databases/{id} paths, which carry no {orgID} route param.
+func (s *Server) resourceOrg(r *http.Request, targetType, targetID string) pgtype.UUID {
+	switch targetType {
+	case "apps", "deployments", "databases":
+	default:
+		return pgtype.UUID{}
+	}
+	var id pgtype.UUID
+	if id.Scan(targetID) != nil {
+		return pgtype.UUID{}
+	}
+	return s.audit.ResolveOrg(r.Context(), targetType, id)
+}
+
+// isResourceRoot reports whether path addresses a resource itself
+// (/api/v1/<type>/<id>) rather than a sub-resource of it.
+func isResourceRoot(path string) bool {
+	p := strings.Trim(strings.TrimPrefix(path, "/api/v1/"), "/")
+	return len(strings.Split(p, "/")) == 2
 }
 
 // orgFromRequest extracts the {orgID} route param when present, so org-scoped

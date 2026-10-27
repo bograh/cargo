@@ -81,6 +81,9 @@ export function DatabasesTab({ orgId }: { orgId: string }) {
     queryKey: ["databases", orgId],
     queryFn: () => api<DatabaseInstance[]>(`/orgs/${orgId}/databases`),
     enabled: !!orgId,
+    // Provisioning runs as a background job; poll until it settles.
+    refetchInterval: (query) =>
+      query.state.data?.some((d) => d.status === "provisioning") ? 3000 : false,
   });
 
   const invalidateList = () => void qc.invalidateQueries({ queryKey: ["databases", orgId] });

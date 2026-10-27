@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bograh/cargo/internal/builder"
 	"github.com/bograh/cargo/internal/compose"
 )
 
@@ -37,10 +38,12 @@ func NewDocker(dataDir string) *Docker {
 }
 
 // ForHost returns a view of this provider bound to one worker host. The
-// receiver is left untouched; data dir and timeouts are shared.
+// receiver is left untouched; data dir, color store and timeouts are shared.
+// The color store must carry over: without it a hosted app fell back to
+// state.json and applications.active_color was never written for it.
 func (d *Docker) ForHost(t Target) *Docker {
 	tt := t
-	return &Docker{dataDir: d.dataDir, target: &tt, HealthTimeout: d.HealthTimeout}
+	return &Docker{dataDir: d.dataDir, target: &tt, colors: d.colors, HealthTimeout: d.HealthTimeout}
 }
 
 // ForTarget is the seam-friendly form of ForHost: consumers (the deploy
@@ -161,7 +164,7 @@ func (d *Docker) writeProject(spec Spec) (string, error) {
 	if spec.ComposeFile != "" {
 		// The user's checkout is the project directory, so their env_file and
 		// relative bind mounts resolve against their own repository.
-		if err := os.WriteFile(filepath.Join(spec.SourceDir, ".env"), []byte(envContent), 0o600); err != nil {
+		if err := builder.WriteFileNoFollow(filepath.Join(spec.SourceDir, ".env"), []byte(envContent), 0o600); err != nil {
 			return "", err
 		}
 		overlay := compose.GenerateOverlay(compose.OverlaySpec{
@@ -312,7 +315,10 @@ func (d *Docker) Apply(ctx context.Context, spec Spec, log io.Writer) error {
 func (d *Docker) applyRecreate(ctx context.Context, spec Spec, log io.Writer) error {
 	// An app moving back from blue/green still has a color project running;
 	// note it now and reap it once the recreate project is healthy.
-	prev := d.activeColor(ctx, spec.AppID)
+	prev, err := d.lookupActiveColor(ctx, spec.AppID)
+	if err != nil {
+		return err
+	}
 	spec.Color = ""
 	composePath, err := d.writeProject(spec)
 	if err != nil {
@@ -320,15 +326,23 @@ func (d *Docker) applyRecreate(ctx context.Context, spec Spec, log io.Writer) er
 	}
 	d.ensureNetwork(ctx)
 	args := d.composeArgs(spec, composePath)
+	base := d.gateBaseline(ctx, args, serviceName(spec))
 	if err := d.runCompose(ctx, log, args, "up", "-d", "--remove-orphans"); err != nil {
 		return err
 	}
-	if err := d.waitHealthy(ctx, args, serviceName(spec), spec, log); err != nil {
+	if err := d.waitHealthyFrom(ctx, args, serviceName(spec), spec, log, base); err != nil {
 		return err
 	}
 	if prev != "" {
-		_ = os.Remove(d.statePath(spec.AppID))
-		d.downColor(ctx, spec.AppID, prev, log)
+		// Clear the recorded color as well as the project: with the color
+		// left set, stop/start/logs/stats kept addressing the reaped color's
+		// directory, and the next blue/green deploy skipped retiring this
+		// recreate project and ran beside it.
+		cleanup := context.WithoutCancel(ctx)
+		if err := d.setActiveColor(cleanup, spec.AppID, ""); err != nil {
+			return fmt.Errorf("clear active color: %w", err)
+		}
+		d.downColor(cleanup, spec.AppID, prev, log)
 	}
 	return nil
 }
@@ -341,7 +355,10 @@ func (d *Docker) applyRecreate(ctx context.Context, spec Spec, log io.Writer) er
 // A new version that fails its gate is torn down and the old color is left
 // untouched and serving — the deployment fails with no manual rollback needed.
 func (d *Docker) applyBlueGreen(ctx context.Context, spec Spec, log io.Writer) error {
-	prev := d.activeColor(ctx, spec.AppID)
+	prev, err := d.lookupActiveColor(ctx, spec.AppID)
+	if err != nil {
+		return err
+	}
 	// A previous deploy may have been interrupted after starting a color but
 	// before recording it; clear any stale project for the color we're about
 	// to occupy so `up -d` starts from a clean slate.
@@ -375,11 +392,14 @@ func (d *Docker) applyBlueGreen(ctx context.Context, spec Spec, log io.Writer) e
 		_, _ = fmt.Fprintf(log, "==> starting %s\n", spec.Color)
 	}
 	args := d.composeArgs(spec, composePath)
+	base := d.gateBaseline(ctx, args, serviceName(spec))
 	if err := d.runCompose(ctx, log, args, "up", "-d", "--remove-orphans"); err != nil {
-		d.downColor(ctx, spec.AppID, spec.Color, io.Discard)
+		// WithoutCancel: a timed-out `up` can leave a half-started color in
+		// the Traefik pool; the cleanup must run regardless.
+		d.downColor(context.WithoutCancel(ctx), spec.AppID, spec.Color, io.Discard)
 		return err
 	}
-	if err := d.waitHealthy(ctx, args, serviceName(spec), spec, log); err != nil {
+	if err := d.waitHealthyFrom(ctx, args, serviceName(spec), spec, log, base); err != nil {
 		_, _ = fmt.Fprintf(log, "==> %s failed its healthcheck; keeping the current version live\n", spec.Color)
 		// context.WithoutCancel: on a cancelled/timed-out deploy the cleanup
 		// still has to run, or the failed color keeps serving traffic beside
@@ -391,12 +411,18 @@ func (d *Docker) applyBlueGreen(ctx context.Context, spec Spec, log io.Writer) e
 	// Record the new color before reaping the old one: it is already in the
 	// Traefik pool and serving, so a crash here must leave it discoverable
 	// rather than stranding a container no later deploy knows about.
-	if err := d.setActiveColor(ctx, spec.AppID, spec.Color); err != nil {
-		return err
+	cleanup := context.WithoutCancel(ctx)
+	if err := d.setActiveColor(cleanup, spec.AppID, spec.Color); err != nil {
+		// The deploy is reported failed, so the recorded (previous) color must
+		// stay the one that serves: retire the new color rather than leave it
+		// load-balanced beside the old one with nothing tracking it.
+		_, _ = fmt.Fprintf(log, "==> could not record %s as live; keeping the current version\n", spec.Color)
+		d.downColor(cleanup, spec.AppID, spec.Color, io.Discard)
+		return fmt.Errorf("record active color: %w", err)
 	}
 	if prev != spec.Color {
 		_, _ = fmt.Fprintf(log, "==> %s is healthy\n", spec.Color)
-		d.downColor(ctx, spec.AppID, prev, log)
+		d.downColor(cleanup, spec.AppID, prev, log)
 	}
 	return nil
 }
@@ -436,6 +462,43 @@ func (d *Docker) containerStatus(ctx context.Context, args []string, service str
 // "container stays running". In production the controlplane shares the
 // cargo-proxy network, so the local HTTP gate is real there.
 func (d *Docker) waitHealthy(ctx context.Context, args []string, service string, spec Spec, log io.Writer) error {
+	return d.waitHealthyFrom(ctx, args, service, spec, log, gateBaseline{})
+}
+
+// gateBaseline is the service's container as it stood before `up`. When the
+// config is unchanged, `up -d` keeps that container, and its lifetime restart
+// count — from any restart long ago — must not read as a crash on boot.
+type gateBaseline struct {
+	cid      string
+	restarts int
+}
+
+// gateBaseline records the pre-`up` container, if any.
+func (d *Docker) gateBaseline(ctx context.Context, args []string, service string) gateBaseline {
+	cid, _, restarts := d.containerStatus(ctx, args, service)
+	if cid == "" {
+		return gateBaseline{}
+	}
+	n, _ := strconv.Atoi(restarts)
+	return gateBaseline{cid: cid, restarts: n}
+}
+
+// restartedSince reports whether a container restarted during this gate.
+func (b gateBaseline) restartedSince(cid, restarts string) bool {
+	if restarts == "" {
+		return false
+	}
+	n, err := strconv.Atoi(restarts)
+	if err != nil {
+		return restarts != "0"
+	}
+	if cid != "" && cid == b.cid {
+		return n > b.restarts
+	}
+	return n > 0
+}
+
+func (d *Docker) waitHealthyFrom(ctx context.Context, args []string, service string, spec Spec, log io.Writer, base gateBaseline) error {
 	deadline := time.Now().Add(d.HealthTimeout)
 	client := &http.Client{Timeout: 3 * time.Second}
 	httpCheck := spec.HealthcheckPath != "" && d.target == nil
@@ -460,7 +523,7 @@ func (d *Docker) waitHealthy(ctx context.Context, args []string, service string,
 			continue
 		}
 		// A restart during startup means the app crashed on boot.
-		if restarts != "0" && restarts != "" {
+		if base.restartedSince(cid, restarts) {
 			return fmt.Errorf("container keeps restarting (crash loop) — check the app's logs")
 		}
 		if runningSince.IsZero() {

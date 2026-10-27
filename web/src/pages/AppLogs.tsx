@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useApp } from "../lib/hooks";
+import { openStream } from "../lib/sse";
 import { Button, EmptyState, PageHeader, Skeleton, StatusDot } from "../components/ui";
 
 export default function AppLogs() {
@@ -19,11 +20,16 @@ export default function AppLogs() {
     if (!appId) return;
     setLines([]);
     setConnected(false);
-    const es = new EventSource(`/api/v1/apps/${appId}/logs`);
-    es.onopen = () => setConnected(true);
-    es.onmessage = (e) => setLines((prev) => [...prev, e.data]);
-    es.onerror = () => setConnected(false);
-    return () => es.close();
+    return openStream(`/api/v1/apps/${appId}/logs`, {
+      // Each connection replays the recent tail; start over rather than
+      // appending the same lines again after a reconnect.
+      onOpen: () => {
+        setLines([]);
+        setConnected(true);
+      },
+      onMessage: (line) => setLines((prev) => [...prev, line]),
+      onDisconnect: () => setConnected(false),
+    });
   }, [appId]);
 
   useEffect(() => {

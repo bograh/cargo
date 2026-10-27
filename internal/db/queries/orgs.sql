@@ -35,3 +35,9 @@ DELETE FROM memberships WHERE org_id = $1 AND user_id = $2;
 
 -- name: CountOwners :one
 SELECT COUNT(*) FROM memberships WHERE org_id = $1 AND role = 'owner';
+
+-- name: LockOrgMemberships :many
+-- Row-locks every membership of the org in a fixed order. Role changes and
+-- removals take this first so the last-owner check and the change it guards
+-- are atomic, and concurrent changes can't deadlock on lock ordering.
+SELECT * FROM memberships WHERE org_id = $1 ORDER BY user_id FOR UPDATE;

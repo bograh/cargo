@@ -235,6 +235,38 @@ func (q *Queries) ListOrganizationsForUser(ctx context.Context, userID pgtype.UU
 	return items, nil
 }
 
+const lockOrgMemberships = `-- name: LockOrgMemberships :many
+SELECT org_id, user_id, role, created_at FROM memberships WHERE org_id = $1 ORDER BY user_id FOR UPDATE
+`
+
+// Row-locks every membership of the org in a fixed order. Role changes and
+// removals take this first so the last-owner check and the change it guards
+// are atomic, and concurrent changes can't deadlock on lock ordering.
+func (q *Queries) LockOrgMemberships(ctx context.Context, orgID pgtype.UUID) ([]Membership, error) {
+	rows, err := q.db.Query(ctx, lockOrgMemberships, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Membership
+	for rows.Next() {
+		var i Membership
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.UserID,
+			&i.Role,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateMembershipRole = `-- name: UpdateMembershipRole :one
 UPDATE memberships SET role = $3 WHERE org_id = $1 AND user_id = $2 RETURNING org_id, user_id, role, created_at
 `

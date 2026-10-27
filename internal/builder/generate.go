@@ -65,7 +65,7 @@ func (g generatedBuilder) Build(ctx context.Context, in Input) error {
 		_, _ = fmt.Fprintf(in.Log, "==> generated multi-stage Dockerfile (%s):\n%s\n", g.gen.Name(), df)
 	}
 	dfPath := filepath.Join(ctxDir, generatedDockerfileName)
-	if err := os.WriteFile(dfPath, []byte(df), 0o644); err != nil {
+	if err := WriteFileNoFollow(dfPath, []byte(df), 0o644); err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(dfPath) }()

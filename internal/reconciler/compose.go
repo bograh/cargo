@@ -1,13 +1,16 @@
 package reconciler
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 )
 
-// GenerateCompose renders the per-app compose file. Output is fully
-// controlled (no user YAML), so plain string building is safe.
+// GenerateCompose renders the per-app compose file. No user YAML is taken in,
+// but a few values originate with the tenant (image, healthcheck path); those
+// are validated at the API and also emitted as quoted YAML scalars here, so a
+// value that slipped past validation still cannot add keys to the file.
 //
 // Domains[0] is the auto subdomain: its router uses the websecure
 // entrypoint's default TLS configuration (per-domain HTTP-01 or the
@@ -40,7 +43,7 @@ func GenerateCompose(spec Spec) string {
 	fmt.Fprintf(&b, "name: cargo-%s\n", project)
 	b.WriteString("services:\n")
 	b.WriteString("  app:\n")
-	fmt.Fprintf(&b, "    image: %s\n", spec.Image)
+	fmt.Fprintf(&b, "    image: %s\n", yamlQuote(spec.Image))
 	b.WriteString("    env_file: .env\n")
 	b.WriteString("    restart: unless-stopped\n")
 	if spec.MemoryLimit != "" {
@@ -80,7 +83,7 @@ func GenerateCompose(spec Spec) string {
 	// It needs a path to probe; without one the pool falls back to "container is
 	// running", which is why a healthcheck path is recommended for blue/green.
 	if spec.BlueGreen && spec.HealthcheckPath != "" {
-		fmt.Fprintf(&b, "      - traefik.http.services.%s.loadbalancer.healthcheck.path=%s\n", router, spec.HealthcheckPath)
+		fmt.Fprintf(&b, "      - %s\n", yamlQuote(fmt.Sprintf("traefik.http.services.%s.loadbalancer.healthcheck.path=%s", router, spec.HealthcheckPath)))
 		fmt.Fprintf(&b, "      - traefik.http.services.%s.loadbalancer.healthcheck.interval=3s\n", router)
 		fmt.Fprintf(&b, "      - traefik.http.services.%s.loadbalancer.healthcheck.timeout=2s\n", router)
 	}
@@ -89,6 +92,13 @@ func GenerateCompose(spec Spec) string {
 		fmt.Fprintf(&b, "  %s:\n    external: true\n", n)
 	}
 	return b.String()
+}
+
+// yamlQuote renders s as a double-quoted YAML scalar. JSON string syntax is a
+// subset of YAML's double-quoted style, so encoding/json does the escaping.
+func yamlQuote(s string) string {
+	out, _ := json.Marshal(s)
+	return string(out)
 }
 
 // writeLogging appends a json-file log-rotation block (10 MB × 3 files) to the

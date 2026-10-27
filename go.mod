@@ -1,6 +1,6 @@
 module github.com/bograh/cargo
 
-go 1.25.14
+go 1.26.10
 
 require (
 	github.com/coreos/go-oidc/v3 v3.20.0
@@ -89,6 +89,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )

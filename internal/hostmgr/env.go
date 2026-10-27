@@ -91,18 +91,33 @@ func (m *Materializer) Target(ctx context.Context, h sqlc.Host) (reconciler.Targ
 	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
 		return reconciler.Target{}, fmt.Errorf("write key: %w", err)
 	}
+	khPath := filepath.Join(sshDir, "known_hosts")
+	cfgPath := filepath.Join(sshDir, "config")
+	// Absolute paths throughout: OpenSSH resolves "~" and its default files
+	// from the passwd home directory, not $HOME, so a config that leaned on
+	// HOME was never read and the key and pinned host key went unused.
 	sshCfg := strings.Join([]string{
 		"Host *",
 		"\tStrictHostKeyChecking yes",
 		"\tIdentitiesOnly yes",
-		"\tIdentityFile ~/.ssh/id_ed25519",
+		"\tIdentityFile " + sshQuote(keyPath),
+		"\tUserKnownHostsFile " + sshQuote(khPath),
+		"\tGlobalKnownHostsFile /dev/null",
 	}, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte(sshCfg), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(sshCfg), 0o600); err != nil {
 		return reconciler.Target{}, fmt.Errorf("write ssh config: %w", err)
 	}
 
 	endpoint := endpointFor(h)
-	if err := m.pinKnownHosts(ctx, h, filepath.Join(sshDir, "known_hosts")); err != nil {
+	if err := m.pinKnownHosts(ctx, h, khPath); err != nil {
+		return reconciler.Target{}, err
+	}
+
+	// The docker CLI reaches an ssh:// context by running `ssh` from PATH with
+	// no way to pass -F. A per-host wrapper first on PATH supplies it, so every
+	// docker invocation for this host uses exactly this key and known_hosts.
+	binDir := filepath.Join(base, "bin")
+	if err := writeSSHWrapper(binDir, cfgPath); err != nil {
 		return reconciler.Target{}, err
 	}
 
@@ -110,6 +125,7 @@ func (m *Materializer) Target(ctx context.Context, h sqlc.Host) (reconciler.Targ
 		"DOCKER_CONFIG=" + filepath.Join(base, "docker"),
 		"HOME=" + filepath.Join(base, "home"),
 		"DOCKER_CONTEXT=" + contextName,
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 	}
 	if err := m.ensureContext(ctx, env, endpoint); err != nil {
 		return reconciler.Target{}, err
@@ -220,6 +236,41 @@ func (m *Materializer) ensureContext(ctx context.Context, env []string, endpoint
 		return fmt.Errorf("docker context create %s: %w", endpoint, err)
 	}
 	return nil
+}
+
+// writeSSHWrapper installs bin/ssh, which runs the real ssh client with the
+// host's own config file. The real binary is resolved now, by absolute path,
+// so the wrapper cannot find itself on PATH and recurse.
+func writeSSHWrapper(binDir, cfgPath string) error {
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		return fmt.Errorf("ssh wrapper dir: %w", err)
+	}
+	real, err := exec.LookPath("ssh")
+	if err != nil {
+		// Leave a wrapper that explains itself rather than a bare
+		// "executable file not found" from deep inside the docker CLI.
+		real = ""
+	}
+	var script string
+	if real == "" {
+		script = "#!/bin/sh\necho 'cargo: no ssh client on the control plane (install openssh-client)' >&2\nexit 127\n"
+	} else {
+		script = "#!/bin/sh\nexec " + shQuote(real) + " -F " + shQuote(cfgPath) + " \"$@\"\n"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "ssh"), []byte(script), 0o700); err != nil {
+		return fmt.Errorf("write ssh wrapper: %w", err)
+	}
+	return nil
+}
+
+// shQuote single-quotes s for /bin/sh.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// sshQuote double-quotes a path for ssh_config, which splits on whitespace.
+func sshQuote(s string) string {
+	return `"` + s + `"`
 }
 
 func (m *Materializer) hostDir(id pgtype.UUID) string {

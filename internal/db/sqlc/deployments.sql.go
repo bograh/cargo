@@ -155,16 +155,27 @@ func (q *Queries) ListDeploymentsForApp(ctx context.Context, appID pgtype.UUID) 
 }
 
 const listPrunableDeployments = `-- name: ListPrunableDeployments :many
-SELECT id, app_id, trigger, status, commit_sha, image_tag, error, actor, created_at, started_at, finished_at, host_id FROM deployments WHERE app_id = $1 ORDER BY created_at DESC OFFSET $2
+SELECT d.id, d.app_id, d.trigger, d.status, d.commit_sha, d.image_tag, d.error, d.actor, d.created_at, d.started_at, d.finished_at, d.host_id FROM deployments d
+WHERE d.app_id = $1
+  AND d.status IN ('failed', 'cancelled', 'superseded')
+  AND d.id NOT IN (
+      SELECT k.id FROM deployments k WHERE k.app_id = $1
+      ORDER BY k.created_at DESC LIMIT $2
+  )
+ORDER BY d.created_at DESC
 `
 
 type ListPrunableDeploymentsParams struct {
-	AppID  pgtype.UUID
-	Offset int32
+	AppID pgtype.UUID
+	Keep  int32
 }
 
+// Deployments outside the newest `keep` that are finished and not serving.
+// The window alone used to decide: five newer failed (or still queued)
+// deploys pushed the live row out of it, deleting the rollback target — and
+// an in-flight deployment out from under its own worker.
 func (q *Queries) ListPrunableDeployments(ctx context.Context, arg ListPrunableDeploymentsParams) ([]Deployment, error) {
-	rows, err := q.db.Query(ctx, listPrunableDeployments, arg.AppID, arg.Offset)
+	rows, err := q.db.Query(ctx, listPrunableDeployments, arg.AppID, arg.Keep)
 	if err != nil {
 		return nil, err
 	}

@@ -24,6 +24,7 @@ type stubGitHub struct {
 	branches   []string
 	saved      *github.AppConfig
 	connectErr error
+	setupOrg   pgtype.UUID
 }
 
 func (s *stubGitHub) AppStatus(context.Context) (bool, string, int64, error) {
@@ -42,8 +43,14 @@ func (s *stubGitHub) WebhookSecret(context.Context) (string, error) {
 	}
 	return s.secret, nil
 }
-func (s *stubGitHub) InstallURL(_ context.Context, state string) (string, error) {
-	return "https://github.com/apps/cargo-app/installations/new?state=" + state, nil
+func (s *stubGitHub) InstallURL(_ context.Context, _, _ pgtype.UUID) (string, error) {
+	return "https://github.com/apps/cargo-app/installations/new?state=nonce", nil
+}
+func (s *stubGitHub) ConsumeSetupState(_ context.Context, nonce string, _ pgtype.UUID) (pgtype.UUID, error) {
+	if s.setupOrg.Valid && nonce == "good-nonce" {
+		return s.setupOrg, nil
+	}
+	return pgtype.UUID{}, github.ErrInvalidSetupState
 }
 func (s *stubGitHub) OrgStatus(context.Context, pgtype.UUID) (bool, string, error) {
 	return s.connected, s.account, nil

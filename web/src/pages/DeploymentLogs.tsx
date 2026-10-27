@@ -1,23 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
+import { openStream } from "../lib/sse";
 import { useApp } from "../lib/hooks";
 import { isActive, type Deployment } from "../lib/types";
 import { StatusBadge } from "../components/StatusBadge";
-import { Button, PageHeader, Spinner } from "../components/ui";
+import { Button, EmptyState, PageHeader, Spinner } from "../components/ui";
+
+// The server ends a finished deployment's stream with this marker.
+const END_MARKER = /^\[deployment (live|failed|cancelled|superseded)\]$/;
 
 export default function DeploymentLogs() {
   const { deploymentId } = useParams();
   const [lines, setLines] = useState<string[]>([]);
   const logRef = useRef<HTMLPreElement>(null);
 
-  const { data: dep } = useQuery({
+  const { data: dep, error } = useQuery({
     queryKey: ["deployment", deploymentId],
     queryFn: () => api<Deployment>(`/deployments/${deploymentId}`),
-    refetchInterval: (query) => (query.state.data && !isActive(query.state.data.status) ? false : 3000),
+    // Poll while the deployment is in flight; stop once it settles or the
+    // request fails (a 404 never turns into a deployment).
+    refetchInterval: (query) => {
+      if (query.state.error) return false;
+      const data = query.state.data;
+      return data && !isActive(data.status) ? false : 3000;
+    },
     enabled: !!deploymentId,
   });
+  // Read by the stream's reconnect check without reopening the stream.
+  const settledRef = useRef(false);
+  settledRef.current = !!dep && !isActive(dep.status);
   const { data: app } = useApp(dep?.app_id);
 
   const scrollToBottom = useCallback(() => {
@@ -28,15 +41,31 @@ export default function DeploymentLogs() {
   useEffect(() => {
     if (!deploymentId) return;
     setLines([]);
-    const es = new EventSource(`/api/v1/deployments/${deploymentId}/logs`);
-    es.onmessage = (e) => setLines((prev) => [...prev, e.data]);
-    es.onerror = () => es.close();
-    return () => es.close();
+    let ended = false;
+    return openStream(`/api/v1/deployments/${deploymentId}/logs`, {
+      // Every connection replays the log from the start.
+      onOpen: () => setLines([]),
+      onMessage: (line) => {
+        if (END_MARKER.test(line)) ended = true;
+        setLines((prev) => [...prev, line]);
+      },
+      // Keep following an in-flight deploy across drops (session refresh,
+      // network blips); stop once it has finished.
+      shouldReconnect: () => !ended && !settledRef.current,
+    });
   }, [deploymentId]);
 
   useEffect(() => {
     scrollToBottom();
   }, [lines.length, scrollToBottom]);
+
+  if (error) {
+    return (
+      <EmptyState
+        title={error instanceof ApiError && error.status === 404 ? "Deployment not found" : "Could not load deployment"}
+      />
+    );
+  }
 
   return (
     <div>

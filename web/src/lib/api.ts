@@ -33,15 +33,54 @@ async function toError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, "unknown", `request failed (${res.status})`);
 }
 
+// Auth endpoints whose 401 means "bad credentials" or "no session to
+// refresh", not "access token expired". Everything else, including /auth/me,
+// gets the silent refresh-and-retry.
+const NO_REFRESH = new Set(["/auth/login", "/auth/register", "/auth/refresh"]);
+
+let inflightRefresh: Promise<boolean> | null = null;
+const expiredListeners = new Set<() => void>();
+
+/**
+ * Subscribes to "the session is gone": a refresh was attempted and the server
+ * refused it. Returns an unsubscribe function.
+ */
+export function onSessionExpired(fn: () => void): () => void {
+  expiredListeners.add(fn);
+  return () => {
+    expiredListeners.delete(fn);
+  };
+}
+
+/**
+ * Rotates the refresh token, single-flighted: concurrent callers share one
+ * POST /auth/refresh. The server treats a reused refresh token as theft and
+ * revokes the whole session family, so parallel refreshes would log the user
+ * out.
+ */
+export function refreshSession(): Promise<boolean> {
+  if (!inflightRefresh) {
+    inflightRefresh = rawRequest("/auth/refresh", { method: "POST" })
+      .then((res) => {
+        if (!res.ok) expiredListeners.forEach((fn) => fn());
+        return res.ok;
+      })
+      .catch(() => false)
+      .finally(() => {
+        inflightRefresh = null;
+      });
+  }
+  return inflightRefresh;
+}
+
 /**
  * JSON API call with the standard envelope. On a 401 from a non-auth
  * endpoint it attempts one silent refresh and retries.
  */
 export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
   let res = await rawRequest(path, opts);
-  if (res.status === 401 && !path.startsWith("/auth/")) {
-    const refreshed = await rawRequest("/auth/refresh", { method: "POST" });
-    if (refreshed.ok) {
+  if (res.status === 401 && !NO_REFRESH.has(path)) {
+    if (await refreshSession()) {
       res = await rawRequest(path, opts);
     }
   }

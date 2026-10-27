@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -115,6 +116,29 @@ func TestTargetMaterializesIsolatedDirs(t *testing.T) {
 	if err != nil || !strings.Contains(string(kh), scanLine) {
 		t.Fatalf("known_hosts: %q (%v)", kh, err)
 	}
+	// OpenSSH ignores $HOME, so the config must name the key and known_hosts
+	// by absolute path, and docker's `ssh` must be the wrapper that loads it.
+	sshDir := filepath.Join(wantBase, "home", ".ssh")
+	for _, want := range []string{
+		`IdentityFile "` + filepath.Join(sshDir, "id_ed25519") + `"`,
+		`UserKnownHostsFile "` + filepath.Join(sshDir, "known_hosts") + `"`,
+	} {
+		if !strings.Contains(string(cfg), want) {
+			t.Fatalf("ssh config missing %q:\n%s", want, cfg)
+		}
+	}
+	binDir := filepath.Join(wantBase, "bin")
+	if !strings.HasPrefix(env["PATH"], binDir+string(os.PathListSeparator)) {
+		t.Fatalf("PATH = %q, want the per-host bin dir first", env["PATH"])
+	}
+	wrapper, err := os.ReadFile(filepath.Join(binDir, "ssh"))
+	if err != nil {
+		t.Fatalf("ssh wrapper: %v", err)
+	}
+	if _, lookErr := exec.LookPath("ssh"); lookErr == nil &&
+		!strings.Contains(string(wrapper), "-F '"+filepath.Join(sshDir, "config")+"'") {
+		t.Fatalf("wrapper does not load the host config:\n%s", wrapper)
+	}
 
 	// Second call is stable and does not re-scan: onPin persisted the
 	// fingerprint into the row, as the API layer does in production.
@@ -162,5 +186,22 @@ func TestFingerprintMismatchAborts(t *testing.T) {
 	}
 	if _, err := m.Target(context.Background(), rotated); !errors.Is(err, reconciler.ErrHostKeyMismatch) {
 		t.Fatalf("err = %v, want ErrHostKeyMismatch", err)
+	}
+}
+
+// Capacity must come from the worker's daemon, not local nproc/free.
+func TestRemoteCapacityAsksTheDaemon(t *testing.T) {
+	m := &Manager{}
+	var got []string
+	m.SetRun(func(_ context.Context, env []string, name string, args ...string) (string, error) {
+		got = append([]string{name}, args...)
+		return "8 16777216000", nil
+	})
+	cpus, mem := m.remoteCapacity(context.Background(), []string{"DOCKER_CONTEXT=cargo-worker"})
+	if len(got) == 0 || got[0] != "docker" {
+		t.Fatalf("ran %v, want a docker invocation routed through the target", got)
+	}
+	if cpus != 8 || mem != 16000 {
+		t.Fatalf("cpus=%d mem=%d, want 8 / 16000", cpus, mem)
 	}
 }

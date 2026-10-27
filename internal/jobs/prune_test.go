@@ -78,7 +78,7 @@ func TestPruneRetainsImageStillInUse(t *testing.T) {
 	}
 
 	// The stale row itself is still pruned — only its image survives.
-	if err := RunPrune(ctx, f.pipeline.Pool, f.deps); err != nil {
+	if err := RunPrune(ctx, f.pipeline.Pool, f.deps, nil); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 	var stale int
@@ -117,9 +117,13 @@ func TestRunPruneKeepsNewestFive(t *testing.T) {
 		if err := f.deps.Finish(ctx, dep.ID, "live", ""); err != nil {
 			t.Fatal(err)
 		}
+		// As the pipeline does: the newest live row demotes the previous one.
+		if err := f.deps.Supersede(ctx, f.app.ID, dep.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	if err := RunPrune(ctx, f.pipeline.Pool, f.deps); err != nil {
+	if err := RunPrune(ctx, f.pipeline.Pool, f.deps, nil); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 
@@ -138,6 +142,68 @@ func TestRunPruneKeepsNewestFive(t *testing.T) {
 		}
 		if i >= 2 && err != nil {
 			t.Fatalf("new log %d missing: %v", i, err)
+		}
+	}
+}
+
+// The keep window must not decide alone: five newer failed (or in-flight)
+// deployments used to push the live row out of it and delete the rollback
+// target, and an in-flight row out from under its worker.
+func TestPruneNeverDeletesLiveOrInFlight(t *testing.T) {
+	f := setup(t, "image")
+	ctx := context.Background()
+
+	live, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.deps.SetStatus(ctx, live.ID, "deploying"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.deps.Finish(ctx, live.ID, "live", ""); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < keepDeployments+2; i++ {
+		dep, err := f.deps.Create(ctx, f.app.ID, f.owner, "manual")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.deps.Finish(ctx, dep.ID, "failed", "boom"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RunPrune(ctx, f.pipeline.Pool, f.deps, nil); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	for name, id := range map[string]pgtype.UUID{"live": live.ID, "queued": queued.ID} {
+		var n int
+		if err := f.pipeline.Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM deployments WHERE id = $1`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("%s deployment was pruned", name)
+		}
+	}
+}
+
+// Only images the build pipeline produced may be removed: an image-source
+// app's tag is a shared registry reference.
+func TestCargoBuiltTag(t *testing.T) {
+	for tag, want := range map[string]bool{
+		"app-web:abc123":      true,
+		"redis:7":             false,
+		"nginx:alpine":        false,
+		"ghcr.io/org/app-x:1": false,
+		"registry/app-web:v1": false,
+		"":                    false,
+	} {
+		if got := cargoBuiltTag(tag); got != want {
+			t.Errorf("cargoBuiltTag(%q) = %v, want %v", tag, got, want)
 		}
 	}
 }

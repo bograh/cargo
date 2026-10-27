@@ -47,10 +47,19 @@ Open `https://<platform-domain>` (or `http://localhost` / `http://<server-ip>` f
 
 ## Upgrade
 
+Re-run the installer — on an existing install it updates in place:
+
 ```bash
-docker compose pull && docker compose up -d   # add your TLS overlay's -f flag for production installs
+curl -fsSL https://usecargo.vercel.app/install.sh | sh
+# or, from an existing checkout:
+git -C /opt/cargo pull --ff-only && /opt/cargo/deploy/install.sh --update
 ```
 
+The bootstrap fast-forwards the checkout and then runs `deploy/install.sh
+--update`, which keeps `.env` untouched (the master key and
+database password must never change under existing data), picks the same
+compose overlays the install used, and runs `docker compose up -d --build`.
+`--force` re-runs the setup prompts but also keeps the existing secrets.
 Migrations run automatically at startup; running user apps are not touched.
 
 ## Local development
@@ -93,6 +102,13 @@ Cargo runs several background safeguards, all configurable via env vars in `depl
 Apps are not limited to the control-plane machine. Under **Admin → Worker hosts**, an instance admin can register any machine reachable over SSH that runs Docker Engine with the compose plugin: paste the host's address (`user@host`), SSH port, and a private key. Cargo seals the key with the master key, pins the host's fingerprint on first contact (a later mismatch aborts every operation to that host), and never touches its own `~/.ssh` or `~/.docker` — each host gets an isolated docker context under `<dataDir>/hosts/<id>/`.
 
 When creating an app, pick a worker host in the form; its domains must resolve to that host's IP (each worker runs its own Traefik/proxy stack — see [the multi-server design](docs/superpowers/specs/2026-08-22-cargo-multi-server-design.md)). Blue/green deploys work identically on workers; if a worker goes unreachable mid-deploy the deployment fails cleanly and other hosts are unaffected.
+
+Moving an app to another host (or back to the control plane) in its settings
+redeploys it on the new target; once that deployment is live, Cargo stops the
+app's containers on the old target. A failed clean-up is audited and retried on
+the next deploy. Stopped apps are not started by a move. Built images are
+shipped to the worker with `docker save | docker load`, and the per-host SSH
+config (key, pinned `known_hosts`) is used for every connection.
 
 Notes for this release: managed databases remain single-host; per-host metrics collection arrives with slice 12b; log streaming already follows the app's host. If Docker or the compose plugin is missing on the worker, verification reports `degraded` with a copy-paste install command — Cargo never installs software on your hosts by itself.
 

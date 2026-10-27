@@ -11,7 +11,7 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS build
+FROM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -23,18 +23,29 @@ FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d650
 # docker-cli-buildx provides the BuildKit builder nixpacks requires (its
 # generated Dockerfiles use cache mounts); without it nixpacks builds fail and
 # plain Dockerfile builds fall back to the deprecated legacy builder.
-RUN apk add --no-cache ca-certificates docker-cli docker-cli-buildx docker-cli-compose git curl
+# openssh-client provides the ssh that docker uses to reach worker hosts
+# (ssh:// docker contexts); without it every worker-host operation fails.
+RUN apk add --no-cache ca-certificates docker-cli docker-cli-buildx docker-cli-compose git curl openssh-client
 ARG NIXPACKS_VERSION=1.29.1
 # The release is downloaded over TLS from GitHub, which authenticates the
 # host but says nothing about the asset: a release can be re-uploaded, and a
 # compromised one would land in the image unnoticed. The tarball is verified
-# against this hash instead of being piped straight into tar. Bump both
-# together — the build fails loudly if they disagree.
-ARG NIXPACKS_SHA256=7ac8866e332486f4c717e4c7319e8fa4f3bffa949fb4a002a515a08703846525
+# against a pinned hash per architecture instead of being piped straight into
+# tar. Bump the version and every hash together — the build fails loudly if
+# they disagree, and refuses an architecture it has no hash for.
+ARG NIXPACKS_SHA256_AMD64=7ac8866e332486f4c717e4c7319e8fa4f3bffa949fb4a002a515a08703846525
+ARG NIXPACKS_SHA256_ARM64=2e9c0a7318979bfa85522910bfa5c5e84c946e042966daaf1f49aa40fde13bcb
+# Set by BuildKit from --platform (amd64, arm64, ...).
+ARG TARGETARCH
 RUN set -eu; \
-    url="https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/nixpacks-v${NIXPACKS_VERSION}-x86_64-unknown-linux-musl.tar.gz"; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) triple=x86_64-unknown-linux-musl;  sum="${NIXPACKS_SHA256_AMD64}" ;; \
+      arm64) triple=aarch64-unknown-linux-musl; sum="${NIXPACKS_SHA256_ARM64}" ;; \
+      *) echo "no pinned nixpacks build for ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/nixpacks-v${NIXPACKS_VERSION}-${triple}.tar.gz"; \
     curl -fsSL -o /tmp/nixpacks.tar.gz "$url"; \
-    echo "${NIXPACKS_SHA256}  /tmp/nixpacks.tar.gz" | sha256sum -c -; \
+    echo "${sum}  /tmp/nixpacks.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/nixpacks.tar.gz -C /usr/local/bin nixpacks; \
     rm /tmp/nixpacks.tar.gz
 COPY --from=build /bin/cargod /usr/local/bin/cargod

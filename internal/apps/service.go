@@ -192,10 +192,11 @@ func validateCreate(in CreateInput, max MaxLimits, allowPrivateGit bool) error {
 	default:
 		return fmt.Errorf("%w: source_type must be git, image, or compose", ErrValidation)
 	}
-	switch in.Builder {
-	case "", "auto", "dockerfile", "nixpacks":
-	default:
-		return fmt.Errorf("%w: builder must be auto, dockerfile, or nixpacks", ErrValidation)
+	if err := validateBuilder(in.Builder); err != nil {
+		return err
+	}
+	if err := validateAppStrings(in.ImageRef, in.HealthcheckPath, in.ComposeService); err != nil {
+		return err
 	}
 	if err := validateDeployStrategy(in.DeployStrategy); err != nil {
 		return err
@@ -210,6 +211,20 @@ func validateCreate(in CreateInput, max MaxLimits, allowPrivateGit bool) error {
 		}
 	}
 	return validateLimits(in.MemLimit, in.CPULimit, in.PidsLimit, max)
+}
+
+// validateAppStrings checks the free-text fields that end up in generated
+// compose files and labels. Empty values are skipped.
+func validateAppStrings(imageRef, healthPath, composeService string) error {
+	if imageRef != "" {
+		if err := ValidateImageRef(imageRef); err != nil {
+			return err
+		}
+	}
+	if err := validateHealthcheckPath(healthPath); err != nil {
+		return err
+	}
+	return validateComposeService(composeService)
 }
 
 func (s *Service) sealCreds(c *RegistryCreds) ([]byte, error) {
@@ -315,6 +330,29 @@ func (s *Service) Update(ctx context.Context, appID, actor pgtype.UUID, in Updat
 	set(&app.DockerfilePath, in.DockerfilePath)
 	set(&app.ComposePath, in.ComposePath)
 	set(&app.ComposeService, in.ComposeService)
+	if in.Builder != nil {
+		if err := validateBuilder(*in.Builder); err != nil {
+			return sqlc.Application{}, err
+		}
+	}
+	// Only the fields this request touches are re-checked, so an app stored
+	// before these rules existed can still be edited in other ways.
+	var imageRef, healthPath, composeSvc string
+	if in.ImageRef != nil {
+		imageRef = app.ImageRef
+		if imageRef == "" && app.SourceType == "image" {
+			return sqlc.Application{}, fmt.Errorf("%w: image source requires image_ref", ErrValidation)
+		}
+	}
+	if in.HealthcheckPath != nil {
+		healthPath = app.HealthcheckPath
+	}
+	if in.ComposeService != nil {
+		composeSvc = app.ComposeService
+	}
+	if err := validateAppStrings(imageRef, healthPath, composeSvc); err != nil {
+		return sqlc.Application{}, err
+	}
 	for _, f := range []struct{ field, path string }{
 		{"dockerfile_path", app.DockerfilePath},
 		{"build_context", app.BuildContext},

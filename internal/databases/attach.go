@@ -118,20 +118,102 @@ SELECT format('CREATE DATABASE %%I OWNER %%I', '%[1]s', '%[1]s')
 ALTER DATABASE %[1]s OWNER TO %[1]s;
 REVOKE CONNECT ON DATABASE %[1]s FROM PUBLIC;
 `, name, q)
-	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "postgres", script,
-		"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres"); err != nil {
+	att, err := s.reserveAttachment(ctx, pass, sqlc.CreateDatabaseAttachmentParams{
+		InstanceID: inst.ID, AppID: appID, DbName: txt(name), RoleName: txt(name),
+	})
+	if err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
-	secret, err := s.sealSecret(pass)
+	err = s.execOrRelease(ctx, att, func() error {
+		if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "postgres", script,
+			"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres"); err != nil {
+			return err
+		}
+		// A database kept from an earlier detach has had every object handed
+		// to postgres (REASSIGN OWNED in detachEngine). Owning the database
+		// grants nothing on its tables, so give them back to the new role or
+		// the app would hit "permission denied" on its own data.
+		_, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "postgres", reownScript(name),
+			"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", name)
+		return err
+	})
 	if err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
 	url := fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=disable", name, pass, dbHost(inst), name)
-	att, err := s.q.CreateDatabaseAttachment(ctx, sqlc.CreateDatabaseAttachmentParams{
-		InstanceID: inst.ID, AppID: appID,
-		DbName: txt(name), RoleName: txt(name), Secret: secret,
-	})
-	return url, att, dupAttachErr(err)
+	return url, att, nil
+}
+
+// reownScript transfers every user object in the current database that
+// postgres owns to role. Run inside the app's database on (re-)attach, it
+// undoes the REASSIGN OWNED BY <role> TO postgres that detach performs.
+// System schemas and extension members are left alone. Sequences that belong
+// to a table column follow their table, so they are skipped. role comes from
+// the validated slug.
+func reownScript(role string) string {
+	return fmt.Sprintf(`DO $do$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT n.nspname FROM pg_namespace n
+    WHERE n.nspowner = 'postgres'::regrole
+      AND n.nspname NOT LIKE 'pg\_%%' AND n.nspname <> 'information_schema'
+      AND NOT EXISTS (SELECT FROM pg_depend d WHERE d.classid = 'pg_namespace'::regclass AND d.objid = n.oid AND d.deptype = 'e')
+  LOOP
+    EXECUTE format('ALTER SCHEMA %%I OWNER TO %%I', r.nspname, '%[1]s');
+  END LOOP;
+  FOR r IN SELECT c.oid::regclass AS obj, c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relowner = 'postgres'::regrole AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+      AND n.nspname NOT LIKE 'pg\_%%' AND n.nspname <> 'information_schema'
+      AND NOT EXISTS (SELECT FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype IN ('a', 'i', 'e'))
+  LOOP
+    EXECUTE format('ALTER %%s %%s OWNER TO %%I',
+      CASE r.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW'
+        WHEN 'S' THEN 'SEQUENCE' WHEN 'f' THEN 'FOREIGN TABLE' ELSE 'TABLE' END,
+      r.obj, '%[1]s');
+  END LOOP;
+  FOR r IN SELECT p.oid::regprocedure AS obj FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE p.proowner = 'postgres'::regrole
+      AND n.nspname NOT LIKE 'pg\_%%' AND n.nspname <> 'information_schema'
+      AND NOT EXISTS (SELECT FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+  LOOP
+    EXECUTE format('ALTER ROUTINE %%s OWNER TO %%I', r.obj, '%[1]s');
+  END LOOP;
+  FOR r IN SELECT t.oid::regtype AS obj FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typowner = 'postgres'::regrole AND t.typtype IN ('e', 'd', 'r', 'c')
+      AND (t.typrelid = 0 OR (SELECT relkind FROM pg_class WHERE oid = t.typrelid) = 'c')
+      AND n.nspname NOT LIKE 'pg\_%%' AND n.nspname <> 'information_schema'
+      AND NOT EXISTS (SELECT FROM pg_depend d WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype IN ('e', 'i'))
+  LOOP
+    EXECUTE format('ALTER TYPE %%s OWNER TO %%I', r.obj, '%[1]s');
+  END LOOP;
+END
+$do$;
+`, role)
+}
+
+// reserveAttachment seals the password and inserts the attachment row before
+// any engine command runs. The UNIQUE(instance_id, app_id) constraint then
+// decides a concurrent double-attach up front: the loser gets ErrConflict
+// without having touched the engine, so it can never overwrite the winner's
+// password and leave the stored secret stale.
+func (s *Service) reserveAttachment(ctx context.Context, pass string, params sqlc.CreateDatabaseAttachmentParams) (sqlc.DatabaseAttachment, error) {
+	secret, err := s.sealSecret(pass)
+	if err != nil {
+		return sqlc.DatabaseAttachment{}, err
+	}
+	params.Secret = secret
+	att, err := s.q.CreateDatabaseAttachment(ctx, params)
+	return att, dupAttachErr(err)
+}
+
+// execOrRelease runs the engine-side provisioning for a reserved attachment
+// and deletes the reservation if it fails, so a failed attach can be retried.
+func (s *Service) execOrRelease(ctx context.Context, att sqlc.DatabaseAttachment, fn func() error) error {
+	if err := fn(); err != nil {
+		_ = s.q.DeleteDatabaseAttachment(context.WithoutCancel(ctx), att.ID)
+		return err
+	}
+	return nil
 }
 
 // dupAttachErr maps the UNIQUE(instance_id, app_id) violation (a concurrent
@@ -163,20 +245,21 @@ func (s *Service) attachMySQL(ctx context.Context, inst sqlc.DatabaseInstance, a
 			"GRANT ALL PRIVILEGES ON `%[1]s`.* TO '%[1]s'@'%%';\n"+
 			"FLUSH PRIVILEGES;\n",
 		name, pass)
-	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "mysql", script,
-		"sh", "-c", reconciler.MySQLClient); err != nil {
-		return "", sqlc.DatabaseAttachment{}, err
-	}
-	secret, err := s.sealSecret(pass)
+	att, err := s.reserveAttachment(ctx, pass, sqlc.CreateDatabaseAttachmentParams{
+		InstanceID: inst.ID, AppID: appID, DbName: txt(name), RoleName: txt(name),
+	})
 	if err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
+	if err := s.execOrRelease(ctx, att, func() error {
+		_, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "mysql", script,
+			"sh", "-c", reconciler.MySQLClient)
+		return err
+	}); err != nil {
+		return "", sqlc.DatabaseAttachment{}, err
+	}
 	url := fmt.Sprintf("mysql://%s:%s@%s:3306/%s", name, pass, dbHost(inst), name)
-	att, err := s.q.CreateDatabaseAttachment(ctx, sqlc.CreateDatabaseAttachmentParams{
-		InstanceID: inst.ID, AppID: appID,
-		DbName: txt(name), RoleName: txt(name), Secret: secret,
-	})
-	return url, att, dupAttachErr(err)
+	return url, att, nil
 }
 
 func (s *Service) attachMongo(ctx context.Context, inst sqlc.DatabaseInstance, appID pgtype.UUID, slug string) (string, sqlc.DatabaseAttachment, error) {
@@ -194,20 +277,21 @@ func (s *Service) attachMongo(ctx context.Context, inst sqlc.DatabaseInstance, a
 			"if (d.getUser('%[1]s')) { d.updateUser('%[1]s', { pwd: '%[2]s', roles: [{ role: 'readWrite', db: '%[1]s' }] }); }"+
 			" else { d.createUser({ user: '%[1]s', pwd: '%[2]s', roles: [{ role: 'readWrite', db: '%[1]s' }] }); }\n",
 		name, pass)
-	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "mongodb", script,
-		"sh", "-c", reconciler.MongoshAdmin); err != nil {
-		return "", sqlc.DatabaseAttachment{}, err
-	}
-	secret, err := s.sealSecret(pass)
+	att, err := s.reserveAttachment(ctx, pass, sqlc.CreateDatabaseAttachmentParams{
+		InstanceID: inst.ID, AppID: appID, DbName: txt(name), RoleName: txt(name),
+	})
 	if err != nil {
 		return "", sqlc.DatabaseAttachment{}, err
 	}
+	if err := s.execOrRelease(ctx, att, func() error {
+		_, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "mongodb", script,
+			"sh", "-c", reconciler.MongoshAdmin)
+		return err
+	}); err != nil {
+		return "", sqlc.DatabaseAttachment{}, err
+	}
 	url := fmt.Sprintf("mongodb://%s:%s@%s:27017/%s?authSource=%s", name, pass, dbHost(inst), name, name)
-	att, err := s.q.CreateDatabaseAttachment(ctx, sqlc.CreateDatabaseAttachmentParams{
-		InstanceID: inst.ID, AppID: appID,
-		DbName: txt(name), RoleName: txt(name), Secret: secret,
-	})
-	return url, att, dupAttachErr(err)
+	return url, att, nil
 }
 
 // attachRedis provisions a per-app ACL user on the instance. Both redis modes
@@ -259,7 +343,7 @@ func (s *Service) attachRedis(ctx context.Context, inst sqlc.DatabaseInstance, a
 		name, pass, channels, idx)
 	if _, err := s.provider.ExecDB(ctx, uuidStr(inst.ID), "redis", cmd,
 		"redis-cli", "--no-auth-warning"); err != nil {
-		_ = s.q.DeleteDatabaseAttachment(ctx, att.ID)
+		_ = s.q.DeleteDatabaseAttachment(context.WithoutCancel(ctx), att.ID)
 		return "", sqlc.DatabaseAttachment{}, err
 	}
 	url := fmt.Sprintf("redis://%s:%s@%s:6379/%d", name, pass, dbHost(inst), idx)

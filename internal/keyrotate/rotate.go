@@ -118,6 +118,20 @@ func Run(ctx context.Context, pool *pgxpool.Pool, oldKey, newKey []byte) (Result
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Hold every table that carries a sealed value still for the whole
+	// rotation. Without this, a control plane left running could write a
+	// secret between collect() and commit — sealed with the old key and never
+	// re-sealed, or overwritten here with its stale re-sealed value. EXCLUSIVE
+	// blocks writers but not readers. Give up quickly rather than queue behind
+	// a live server: the operator is meant to stop it first.
+	if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '10s'`); err != nil {
+		return res, err
+	}
+	if _, err := tx.Exec(ctx, `LOCK TABLE applications, hosts, env_vars,
+		database_instances, database_attachments, instance_settings IN EXCLUSIVE MODE`); err != nil {
+		return res, fmt.Errorf("lock secret tables (is the control plane still running? stop it first): %w", err)
+	}
+
 	secrets, err := collect(ctx, tx, &res)
 	if err != nil {
 		return res, err
