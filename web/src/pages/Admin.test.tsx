@@ -93,3 +93,48 @@ test("admin flags a webhook that cannot be decrypted", async () => {
   expect(await screen.findByText(/needs re-entry/i)).toBeInTheDocument();
   expect(await screen.findByText(/no alerts have been delivered/i)).toBeInTheDocument();
 });
+
+// Apps created before ownership verification existed have no OAuth client:
+// the page must say so and let the admin add one without re-entering the key.
+test("flags unverified github ownership and saves oauth client without echoing the secret", async () => {
+  const calls = mockApi({
+    ...adminRoutes(),
+    "GET /admin/settings/github-app": {
+      status: 200,
+      body: { configured: true, app_slug: "cargo-app", app_id: 7, client_id: "", ownership_verified: false },
+    },
+    "PUT /admin/settings/github-app": { status: 200, body: { status: "saved" } },
+  });
+  renderPage(<Admin />, { path: "/admin", route: "/admin" });
+
+  expect(await screen.findByText(/ownership unverified/i)).toBeInTheDocument();
+  expect(screen.getByText(/installation ownership is not verified/i)).toBeInTheDocument();
+
+  await userEvent.type(screen.getByLabelText(/oauth client id/i), "Iv1.abc");
+  const secret = screen.getByLabelText(/oauth client secret/i);
+  expect(secret).toHaveAttribute("type", "password");
+  await userEvent.type(secret, "shh");
+  await userEvent.click(screen.getByRole("button", { name: /save oauth client/i }));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.path === "/admin/settings/github-app" && c.method === "PUT");
+    expect(call?.body).toEqual({ client_id: "Iv1.abc", client_secret: "shh" });
+  });
+  await waitFor(() => expect(secret).toHaveValue(""));
+});
+
+test("shows verified github ownership", async () => {
+  mockApi({
+    ...adminRoutes(),
+    "GET /admin/settings/github-app": {
+      status: 200,
+      body: { configured: true, app_slug: "cargo-app", app_id: 7, client_id: "Iv1.abc", ownership_verified: true },
+    },
+  });
+  renderPage(<Admin />, { path: "/admin", route: "/admin" });
+
+  expect(await screen.findByText(/ownership verified/i)).toBeInTheDocument();
+  expect(screen.queryByText(/installation ownership is not verified/i)).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/oauth client id/i)).toHaveValue("Iv1.abc");
+  expect(screen.getByLabelText(/oauth client secret/i)).toHaveAttribute("placeholder", "blank keeps current");
+});

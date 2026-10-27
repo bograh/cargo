@@ -210,6 +210,72 @@ interface GithubAppStatus {
   configured: boolean;
   app_slug: string;
   app_id: number;
+  client_id?: string;
+  ownership_verified?: boolean;
+}
+
+// GithubOAuthForm adds the app's OAuth client credentials so installs are
+// verified against the installing GitHub user. The secret is write-only:
+// blank keeps the stored one.
+function GithubOAuthForm({ status }: { status: GithubAppStatus }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [clientId, setClientId] = useState(status.client_id ?? "");
+  const [clientSecret, setClientSecret] = useState("");
+  const [error, setError] = useState("");
+  const save = useMutation({
+    mutationFn: () => put("/admin/settings/github-app", { client_id: clientId, client_secret: clientSecret }),
+    onSuccess: () => {
+      setClientSecret("");
+      void qc.invalidateQueries({ queryKey: ["admin", "github-app"] });
+      toast("Saved");
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "save failed";
+      setError(message);
+      toast(message, "error");
+    },
+  });
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    save.mutate();
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-3 border-t border-border pt-4">
+      {!status.ownership_verified && (
+        <p className="rounded-lg border border-amber/40 bg-amber-tint px-3 py-2 text-xs text-amber">
+          Installation ownership is not verified. Without the app&apos;s OAuth client ID and secret, an org admin
+          who learns another account&apos;s installation ID could connect it. In the GitHub App settings, enable
+          &ldquo;Request user authorization (OAuth) during installation&rdquo;, set the callback URL to{" "}
+          <code className="font-mono">{`${window.location.origin}/api/v1/github/setup`}</code>, then enter the
+          client credentials here.
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label htmlFor="gh-client-id">OAuth client ID</Label>
+          <Input id="gh-client-id" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="gh-client-secret">OAuth client secret</Label>
+          <Input
+            id="gh-client-secret"
+            type="password"
+            value={clientSecret}
+            placeholder={status.ownership_verified ? "blank keeps current" : ""}
+            onChange={(e) => setClientSecret(e.target.value)}
+          />
+        </div>
+      </div>
+      <FieldError message={error} />
+      <Button type="submit" disabled={save.isPending}>
+        Save OAuth client
+      </Button>
+    </form>
+  );
 }
 
 function GithubAppForm() {
@@ -259,7 +325,14 @@ function GithubAppForm() {
         title="GitHub App"
         aside={
           status?.configured ? (
-            <Badge tone="live">configured — {status.app_slug} (#{status.app_id})</Badge>
+            <div className="flex flex-wrap justify-end gap-1">
+              <Badge tone="live">configured — {status.app_slug} (#{status.app_id})</Badge>
+              {status.ownership_verified ? (
+                <Badge tone="live">ownership verified</Badge>
+              ) : (
+                <Badge tone="amber">ownership unverified</Badge>
+              )}
+            </div>
           ) : (
             <Badge tone="neutral">not configured</Badge>
           )
@@ -277,6 +350,8 @@ function GithubAppForm() {
           <Icon name="git-branch" size={14} /> Create GitHub App automatically
         </Button>
       </a>
+
+      {status?.configured && <GithubOAuthForm key={status.client_id ?? ""} status={status} />}
 
       <button
         type="button"

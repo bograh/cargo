@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -64,5 +65,51 @@ func TestAppConfigRoundTripEncrypted(t *testing.T) {
 	}
 	if strings.Contains(string(row.Value), "hush-hush") || strings.Contains(string(row.Value), "PEMKEY") {
 		t.Fatal("secrets stored in plaintext")
+	}
+
+	// OAuth client credentials ride inside the same sealed blob.
+	svc := &Service{q: q, box: box, NewClientFn: NewClient, oauth: fakeGitHub(t, []int64{42})}
+	if _, verified, err := svc.OwnershipVerification(ctx); err != nil || verified {
+		t.Fatalf("before client creds: verified=%v err=%v", verified, err)
+	}
+	if ok, err := svc.VerifyInstallation(ctx, "", 42); err != nil || ok {
+		t.Fatalf("unverifiable app must fall back: ok=%v err=%v", ok, err)
+	}
+	if err := svc.SaveOAuthClient(ctx, "cid", ""); !errors.Is(err, ErrClientSecretRequired) {
+		t.Fatalf("new client id without secret: %v", err)
+	}
+	if err := svc.SaveOAuthClient(ctx, "cid", "csecret"); err != nil {
+		t.Fatal(err)
+	}
+	// Blank secret with the same client ID keeps the stored secret.
+	if err := svc.SaveOAuthClient(ctx, "cid", ""); err != nil {
+		t.Fatal(err)
+	}
+	clientID, verified, err := svc.OwnershipVerification(ctx)
+	if err != nil || !verified || clientID != "cid" {
+		t.Fatalf("after save: id=%q verified=%v err=%v", clientID, verified, err)
+	}
+	row, err = q.GetInstanceSetting(ctx, "github_app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(row.Value), "csecret") {
+		t.Fatal("client secret stored in plaintext")
+	}
+	// Re-saving the app credentials without OAuth fields keeps them.
+	if err := svc.SaveApp(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if _, verified, _ := svc.OwnershipVerification(ctx); !verified {
+		t.Fatal("re-saving app credentials dropped the OAuth client")
+	}
+	if ok, err := svc.VerifyInstallation(ctx, "good-code", 42); err != nil || !ok {
+		t.Fatalf("owned installation: ok=%v err=%v", ok, err)
+	}
+	if _, err := svc.VerifyInstallation(ctx, "good-code", 7); !errors.Is(err, ErrInstallationNotAccessible) {
+		t.Fatalf("foreign installation: %v", err)
+	}
+	if _, err := svc.VerifyInstallation(ctx, "", 42); !errors.Is(err, ErrAuthorizationRequired) {
+		t.Fatalf("missing code: %v", err)
 	}
 }

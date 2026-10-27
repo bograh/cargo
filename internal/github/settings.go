@@ -21,6 +21,12 @@ type AppConfig struct {
 	AppSlug       string `json:"app_slug"`
 	PrivateKey    string `json:"private_key"`
 	WebhookSecret string `json:"webhook_secret"`
+	// OAuth client credentials. With both set, the install callback proves
+	// the installing GitHub user controls the installation (see
+	// VerifyInstallationAccess). Optional: apps created before this existed
+	// have neither until an admin enters them.
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"`
 }
 
 // SaveAppConfig encrypts the whole config and stores it as {"enc": base64}.

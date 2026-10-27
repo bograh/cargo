@@ -34,11 +34,16 @@ type Service struct {
 	box *crypto.Box
 	// NewClientFn allows tests to intercept client construction.
 	NewClientFn func(cfg AppConfig) *Client
+	oauth       OAuthEndpoints
 }
 
 func NewService(pool *pgxpool.Pool, box *crypto.Box) *Service {
-	return &Service{q: sqlc.New(pool), box: box, NewClientFn: NewClient}
+	return &Service{q: sqlc.New(pool), box: box, NewClientFn: NewClient, oauth: defaultOAuthEndpoints()}
 }
+
+// SetOAuthEndpoints redirects the OAuth exchange and /user/installations
+// lookups (tests).
+func (s *Service) SetOAuthEndpoints(ep OAuthEndpoints) { s.oauth = ep }
 
 func (s *Service) client(ctx context.Context) (*Client, error) {
 	cfg, err := LoadAppConfig(ctx, s.q, s.box)
@@ -51,7 +56,24 @@ func (s *Service) client(ctx context.Context) (*Client, error) {
 	return s.NewClientFn(*cfg), nil
 }
 
+// SaveApp stores the app credentials. A config without OAuth client
+// credentials keeps the stored ones when the app ID is unchanged, so
+// re-entering the private key doesn't silently turn ownership checks off.
 func (s *Service) SaveApp(ctx context.Context, cfg AppConfig) error {
+	if cfg.ClientID == "" && cfg.ClientSecret == "" {
+		if prev, err := LoadAppConfig(ctx, s.q, s.box); err == nil && prev != nil && prev.AppID == cfg.AppID {
+			cfg.ClientID, cfg.ClientSecret = prev.ClientID, prev.ClientSecret
+		}
+	} else if cfg.ClientSecret == "" {
+		prev, err := LoadAppConfig(ctx, s.q, s.box)
+		if err != nil {
+			return err
+		}
+		if prev == nil || prev.ClientID != cfg.ClientID || prev.ClientSecret == "" {
+			return ErrClientSecretRequired
+		}
+		cfg.ClientSecret = prev.ClientSecret
+	}
 	return SaveAppConfig(ctx, s.q, s.box, cfg)
 }
 
@@ -124,11 +146,12 @@ func (s *Service) OrgStatus(ctx context.Context, orgID pgtype.UUID) (connected b
 // callback). The account login is fetched best-effort. An installation can
 // belong to only one org.
 //
-// Residual: the installation_id still comes from GitHub's redirect query
-// string. The nonce proves the *Cargo* user started the flow, not that they
-// control the GitHub installation. Full proof needs a GitHub user-to-server
-// OAuth exchange (GET /user/installations) at setup time; until then an org
-// admin who learns an unclaimed installation ID could still bind it.
+// The installation_id comes from GitHub's redirect query string. The setup
+// nonce proves which Cargo user started the flow; ownership of the
+// installation itself is proven by the caller via VerifyInstallation (OAuth
+// user-to-server exchange + GET /user/installations) before this runs. Apps
+// without OAuth client credentials can't be verified — the setup handler
+// logs that and the admin settings flag it (ownership_verified: false).
 func (s *Service) ConnectOrg(ctx context.Context, orgID pgtype.UUID, installationID int64) error {
 	if existing, err := s.q.GetGithubInstallationByInstallationID(ctx, installationID); err == nil {
 		if existing.OrgID != orgID {
