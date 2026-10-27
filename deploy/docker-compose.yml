@@ -74,6 +74,9 @@ services:
       CARGO_HTTP_ADDR: ":8080"
       CARGO_DATA_DIR: /var/lib/cargo
       CARGO_ENV: production
+      # The installer's apps-domain answer. Seeds the apps-domain setting on
+      # first boot only; after that the admin UI is the source of truth.
+      CARGO_APPS_SUFFIX: ${CARGO_APPS_SUFFIX:-}
       # Optional instance-wide default container caps for tenant apps (each app
       # can override in its Settings). Defaults shown; uncomment to change.
       # CARGO_DEFAULT_MEM_LIMIT: "512m"
@@ -134,7 +137,9 @@ services:
       # No tls/certresolver here: plain HTTP on web, default cert on
       # websecure. The TLS overlays override these labels wholesale.
       - traefik.enable=true
-      - traefik.http.routers.cargo.rule=Host(`${CARGO_PLATFORM_DOMAIN}`) || Host(`localhost`) || Host(`127.0.0.1`)
+      # Traefik disables a router whose rule has an empty Host(``), so an
+      # unset domain (a local install) falls back to localhost.
+      - traefik.http.routers.cargo.rule=Host(`${CARGO_PLATFORM_DOMAIN:-localhost}`) || Host(`localhost`) || Host(`127.0.0.1`)
       - traefik.http.routers.cargo.entrypoints=web,websecure
       - traefik.http.services.cargo.loadbalancer.server.port=8080
 

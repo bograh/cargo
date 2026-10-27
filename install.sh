@@ -88,6 +88,13 @@ main() {
   ensure_docker
   clone_or_update_repo
 
+  # Re-running the bootstrap on an existing install is an upgrade: keep the
+  # .env (its master key and DB password belong to the existing data) and
+  # just rebuild and restart. Explicit flags still pass through untouched.
+  if [ "$#" -eq 0 ] && [ -f "$INSTALL_DIR/deploy/.env" ]; then
+    set -- --update
+  fi
+
   if docker info >/dev/null 2>&1; then
     exec "$INSTALL_DIR/deploy/install.sh" "$@"
   fi

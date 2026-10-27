@@ -102,6 +102,9 @@ func main() {
 	dbSvc := databases.NewService(pool, box, provider, cfg.DataDir)
 	ghSvc := github.NewService(pool, box)
 	settingsSvc := settings.NewService(pool, box)
+	if _, err := settingsSvc.SeedSuffix(ctx, cfg.AppsSuffix); err != nil {
+		slog.Warn("seed apps suffix", "err", err)
+	}
 	notifySvc := notify.NewService(pool, box, func(ctx context.Context) *mailer.SMTP {
 		c, err := settingsSvc.SMTP(ctx)
 		if err != nil || c == nil {

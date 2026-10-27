@@ -60,7 +60,9 @@ func splitTopLevel(s string) []string {
 }
 
 // parseTraefikMetrics parses the Prometheus exposition text into per-service
-// counters. Non-traefik-service lines are ignored.
+// counters. Non-traefik-service lines are ignored. Traefik emits one series
+// per code/method/protocol combination, so every metric — including each
+// histogram bucket — is summed across the series of a service.
 func parseTraefikMetrics(body string) map[string]TrafficCounters {
 	out := map[string]TrafficCounters{}
 	get := func(svc string) TrafficCounters {
@@ -105,17 +107,17 @@ func parseTraefikMetrics(body string) map[string]TrafficCounters {
 			out[svc] = c
 		case "traefik_service_request_duration_seconds_sum":
 			c := get(svc)
-			c.DurationSum = val
+			c.DurationSum += val
 			out[svc] = c
 		case "traefik_service_request_duration_seconds_count":
 			c := get(svc)
-			c.DurationCount = val
+			c.DurationCount += val
 			out[svc] = c
 		case "traefik_service_request_duration_seconds_bucket":
 			c := get(svc)
 			le, err := strconv.ParseFloat(labels["le"], 64) // "+Inf" -> +Inf
 			if err == nil {
-				c.Buckets[le] = val
+				c.Buckets[le] += val
 			}
 			out[svc] = c
 		}

@@ -71,3 +71,25 @@ func TestHistogramQuantileInfClamp(t *testing.T) {
 		t.Errorf("histogramQuantile = %v, want 0.1 (highest finite le)", got)
 	}
 }
+
+// Traefik keeps one duration histogram per code/method/protocol, so a
+// service's buckets, sum and count are the sum of all its series.
+func TestParseTraefikMetricsSumsHistogramSeries(t *testing.T) {
+	body := `
+traefik_service_request_duration_seconds_bucket{code="200",method="GET",protocol="http",service="s@docker",le="0.1"} 40
+traefik_service_request_duration_seconds_bucket{code="200",method="GET",protocol="http",service="s@docker",le="+Inf"} 50
+traefik_service_request_duration_seconds_bucket{code="500",method="POST",protocol="http",service="s@docker",le="0.1"} 1
+traefik_service_request_duration_seconds_bucket{code="500",method="POST",protocol="http",service="s@docker",le="+Inf"} 10
+traefik_service_request_duration_seconds_sum{code="200",method="GET",protocol="http",service="s@docker"} 3
+traefik_service_request_duration_seconds_sum{code="500",method="POST",protocol="http",service="s@docker"} 7
+traefik_service_request_duration_seconds_count{code="200",method="GET",protocol="http",service="s@docker"} 50
+traefik_service_request_duration_seconds_count{code="500",method="POST",protocol="http",service="s@docker"} 10
+`
+	s := parseTraefikMetrics(body)["s@docker"]
+	if s.Buckets[0.1] != 41 || s.Buckets[math.Inf(1)] != 60 {
+		t.Errorf("buckets = %v, want 0.1→41 +Inf→60", s.Buckets)
+	}
+	if s.DurationSum != 10 || s.DurationCount != 60 {
+		t.Errorf("sum/count = %v/%v, want 10/60", s.DurationSum, s.DurationCount)
+	}
+}

@@ -29,7 +29,7 @@ services:
   controlplane:
     labels:
       - traefik.enable=true
-      - traefik.http.routers.cargo.rule=Host(`${CARGO_PLATFORM_DOMAIN}`)
+      - traefik.http.routers.cargo.rule=Host(`${CARGO_PLATFORM_DOMAIN:?CARGO_PLATFORM_DOMAIN is required for TLS}`)
       - traefik.http.routers.cargo.entrypoints=websecure
       - traefik.http.routers.cargo.tls=true
       - traefik.http.routers.cargo.tls.certresolver=le

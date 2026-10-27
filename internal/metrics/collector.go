@@ -97,8 +97,24 @@ func (c *Collector) sampleTraffic(prev, cur TrafficCounters, dt float64) (reqRat
 		errRate = dErr / dReq
 	}
 	if dReq > 0 && len(cur.Buckets) > 0 {
-		p50 = histogramQuantile(0.5, cur.Buckets, cur.DurationCount) * 1000
-		p95 = histogramQuantile(0.95, cur.Buckets, cur.DurationCount) * 1000
+		// Percentiles describe this interval only: subtract the previous
+		// cumulative histogram. A shrinking count means Traefik restarted,
+		// in which case the current histogram is the whole interval.
+		buckets, count := cur.Buckets, cur.DurationCount
+		if dCount := cur.DurationCount - prev.DurationCount; dCount >= 0 && prev.Buckets != nil {
+			buckets = make(map[float64]float64, len(cur.Buckets))
+			for le, v := range cur.Buckets {
+				d := v - prev.Buckets[le]
+				if d < 0 {
+					buckets, dCount = cur.Buckets, cur.DurationCount
+					break
+				}
+				buckets[le] = d
+			}
+			count = dCount
+		}
+		p50 = histogramQuantile(0.5, buckets, count) * 1000
+		p95 = histogramQuantile(0.95, buckets, count) * 1000
 	}
 	return finite(reqRate), finite(errRate), finite(p50), finite(p95)
 }

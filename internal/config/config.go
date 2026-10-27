@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // memLimitRe matches a docker memory value, e.g. "512m", "1g", "268435456".
@@ -56,6 +57,10 @@ type Config struct {
 	// anything else in reach. Turn it on for an install whose git server is on
 	// the same private network — an ordinary self-hosted setup.
 	AllowPrivateGitHosts bool
+	// AppsSuffix is the installer's apps-domain answer (CARGO_APPS_SUFFIX).
+	// It seeds the apps_domain_suffix instance setting on startup when no
+	// admin has set one yet; the setting stays the source of truth after.
+	AppsSuffix string
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -159,6 +164,7 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		cfg.AllowPrivateGitHosts = b
 	}
+	cfg.AppsSuffix = strings.ToLower(strings.TrimSpace(getenv("CARGO_APPS_SUFFIX")))
 	if v := getenv("CARGO_METRICS_ADDR"); v != "" {
 		cfg.MetricsAddr = v
 	}

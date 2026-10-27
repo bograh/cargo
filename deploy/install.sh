@@ -6,15 +6,19 @@
 # Non-interactive: set CARGO_PLATFORM_DOMAIN, CARGO_APPS_SUFFIX,
 # CARGO_ACME_EMAIL (and optionally CARGO_DNS_PROVIDER + its credentials)
 # in the environment; with none of them set you get a local install.
-# Flags: --force (overwrite .env), --no-up (skip launch).
+# Flags: --update (existing install: keep .env, rebuild and restart),
+#        --force (re-run the prompts and rewrite .env, keeping its secrets),
+#        --no-up (skip launch).
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 FORCE=0
 NO_UP=0
+UPDATE=0
 for arg in "$@"; do
   case "$arg" in
+    --update) UPDATE=1 ;;
     --force) FORCE=1 ;;
     --no-up) NO_UP=1 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -36,8 +40,17 @@ command -v docker >/dev/null 2>&1 || fail "docker is not installed (https://docs
 docker_cmd compose version >/dev/null 2>&1 || fail "the docker compose plugin is not installed"
 docker_cmd info >/dev/null 2>&1 || fail "cannot reach the docker daemon (is it running? do you need sudo?)"
 
-if [[ -f .env && $FORCE -ne 1 ]]; then
-  fail ".env already exists — this looks like an existing install. Re-run with --force to overwrite (this changes secrets!)"
+# env_get KEY — the value of KEY in the existing .env (read, never sourced).
+env_get() {
+  [[ -f .env ]] || return 0
+  sed -n "s/^$1=//p" .env | tail -n1
+}
+
+if [[ $UPDATE -ne 1 && -f .env && $FORCE -ne 1 ]]; then
+  fail ".env already exists — this looks like an existing install. Re-run with --update to upgrade it, or --force to redo the setup prompts (secrets are kept)."
+fi
+if [[ $UPDATE -eq 1 && ! -f .env ]]; then
+  fail "--update needs an existing install, but there is no .env here. Run without --update to install."
 fi
 
 # --- reverse-proxy coexistence detection ---------------------------------
@@ -103,6 +116,45 @@ is_local_host() {
     "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ || "$1" == *:* ]]
 }
 
+# compose_args MODE DNS_PROVIDER — the compose files for an install mode.
+compose_args() {
+  if [[ $1 == local ]]; then
+    COMPOSE_ARGS=(-f docker-compose.yml)
+  elif [[ -n "$2" ]]; then
+    COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.dns01.yml)
+  else
+    COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.tls.yml)
+  fi
+}
+
+ensure_proxy_network() {
+  # cargo-proxy is a shared external network (app containers attach to it
+  # too); create it if this is the first install on this host.
+  docker_cmd network inspect cargo-proxy >/dev/null 2>&1 || docker_cmd network create cargo-proxy >/dev/null
+}
+
+# --- update an existing install -------------------------------------------
+# The .env holds the master key every stored secret is sealed with and the
+# password the existing Postgres volume was initialised with, so an update
+# must never regenerate it: rebuild and restart with the same settings.
+if [[ $UPDATE -eq 1 ]]; then
+  existing_domain="$(env_get CARGO_PLATFORM_DOMAIN)"
+  existing_mode=production
+  if [[ -z "$existing_domain" ]] || is_local_host "$existing_domain"; then
+    existing_mode=local
+  fi
+  compose_args "$existing_mode" "$(env_get CARGO_DNS_PROVIDER)"
+  if [[ $NO_UP -eq 1 ]]; then
+    say "skipping launch (--no-up). Apply the update with: docker compose ${COMPOSE_ARGS[*]} up -d --build"
+    exit 0
+  fi
+  say "updating Cargo (existing .env kept)…"
+  ensure_proxy_network
+  docker_cmd compose "${COMPOSE_ARGS[@]}" up -d --build
+  say "done. Cargo is running the updated version."
+  exit 0
+fi
+
 ask CARGO_PLATFORM_DOMAIN "Platform domain (where the Cargo UI lives, e.g. cargo.example.com; empty = localhost/this server's IP)" ""
 
 MODE=production
@@ -129,8 +181,13 @@ gen_hex() { # gen_hex BYTES
   if command -v openssl >/dev/null 2>&1; then openssl rand -hex "$1"; else
     od -vN "$1" -An -tx1 /dev/urandom | tr -d ' \n'; fi
 }
-MASTER_KEY="$(gen_hex 32)"
-DB_PASSWORD="$(gen_hex 16)"
+# --force on an existing install keeps its secrets: a new master key would
+# make every stored secret unreadable, and Postgres ignores a new password on
+# a data volume it has already initialised.
+MASTER_KEY="$(env_get CARGO_MASTER_KEY)"
+DB_PASSWORD="$(env_get CARGO_DB_PASSWORD)"
+[[ -n "$MASTER_KEY" ]] || MASTER_KEY="$(gen_hex 32)"
+[[ -n "$DB_PASSWORD" ]] || DB_PASSWORD="$(gen_hex 16)"
 
 umask 077
 cat > .env <<EOF
@@ -169,14 +226,10 @@ if [[ $MODE == production ]]; then
   echo "    *.${CARGO_APPS_SUFFIX}    → this server's IP"
 fi
 
-if [[ $MODE == local ]]; then
-  COMPOSE_ARGS=(-f docker-compose.yml)
-elif [[ -n "$CARGO_DNS_PROVIDER" ]]; then
+if [[ $MODE != local && -n "$CARGO_DNS_PROVIDER" ]]; then
   say "wildcard DNS-01 mode: remember to add ${CARGO_DNS_PROVIDER}'s credential env vars to .env (see docker-compose.dns01.yml)"
-  COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.dns01.yml)
-else
-  COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.tls.yml)
 fi
+compose_args "$MODE" "$CARGO_DNS_PROVIDER"
 
 if [[ $NO_UP -eq 1 ]]; then
   say "skipping launch (--no-up). Start later with: docker compose ${COMPOSE_ARGS[*]} up -d"
@@ -184,9 +237,7 @@ if [[ $NO_UP -eq 1 ]]; then
 fi
 
 say "starting Cargo…"
-# cargo-proxy is a shared external network (app containers attach to it
-# too); create it if this is the first install on this host.
-docker_cmd network inspect cargo-proxy >/dev/null 2>&1 || docker_cmd network create cargo-proxy >/dev/null
+ensure_proxy_network
 docker_cmd compose "${COMPOSE_ARGS[@]}" up -d
 if [[ $MODE == local ]]; then
   say "done. Open http://${CARGO_PLATFORM_DOMAIN} (or http://localhost) and register — the first account becomes the instance admin."
