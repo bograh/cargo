@@ -52,24 +52,47 @@ func (s *Service) membership(ctx context.Context, orgID, userID pgtype.UUID) (sq
 }
 
 func (s *Service) Create(ctx context.Context, name string, creator pgtype.UUID) (sqlc.Organization, error) {
+	// The org and its owner membership land together: an org with no members
+	// is invisible to everyone and can never be deleted.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return sqlc.Organization{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
 	slug := slugify(name)
-	org, err := s.q.CreateOrganization(ctx, sqlc.CreateOrganizationParams{Name: name, Slug: slug})
+	org, err := createOrgSavepoint(ctx, tx, q, name, slug)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		org, err = s.q.CreateOrganization(ctx, sqlc.CreateOrganizationParams{
+		org, err = q.CreateOrganization(ctx, sqlc.CreateOrganizationParams{
 			Name: name, Slug: fmt.Sprintf("%s-%s", slug, randomSuffix()),
 		})
 	}
 	if err != nil {
 		return sqlc.Organization{}, err
 	}
-	_, err = s.q.CreateMembership(ctx, sqlc.CreateMembershipParams{
+	if _, err := q.CreateMembership(ctx, sqlc.CreateMembershipParams{
 		OrgID: org.ID, UserID: creator, Role: "owner",
-	})
+	}); err != nil {
+		return sqlc.Organization{}, err
+	}
+	return org, tx.Commit(ctx)
+}
+
+// createOrgSavepoint attempts the insert under a savepoint so a slug collision
+// doesn't abort the surrounding transaction before the suffixed retry.
+func createOrgSavepoint(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, name, slug string) (sqlc.Organization, error) {
+	sp, err := tx.Begin(ctx)
 	if err != nil {
 		return sqlc.Organization{}, err
 	}
-	return org, nil
+	org, err := q.CreateOrganization(ctx, sqlc.CreateOrganizationParams{Name: name, Slug: slug})
+	if err != nil {
+		_ = sp.Rollback(ctx)
+		return sqlc.Organization{}, err
+	}
+	return org, sp.Commit(ctx)
 }
 
 func (s *Service) ListForUser(ctx context.Context, userID pgtype.UUID) ([]sqlc.ListOrganizationsForUserRow, error) {
@@ -127,59 +150,115 @@ func (s *Service) ListMembers(ctx context.Context, orgID, userID pgtype.UUID) ([
 	return rows, err
 }
 
+// canGrant reports whether an actor holding actorRole may hand out role.
+// Nobody grants above their own role, and only owners create owners.
+func canGrant(actorRole, role string) bool {
+	return roleRank[role] <= roleRank[actorRole]
+}
+
 func (s *Service) UpdateRole(ctx context.Context, orgID, actor, target pgtype.UUID, role string) (sqlc.Membership, error) {
 	if !ValidRole(role) {
 		return sqlc.Membership{}, ErrBadRole
 	}
-	am, err := s.membership(ctx, orgID, actor)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return sqlc.Membership{}, err
 	}
-	if !RoleAtLeast(am.Role, "admin") {
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	ms, err := lockMembers(ctx, q, orgID)
+	if err != nil {
+		return sqlc.Membership{}, err
+	}
+	am, ok := ms.find(actor)
+	if !ok {
+		return sqlc.Membership{}, ErrNotFound
+	}
+	if !RoleAtLeast(am.Role, "admin") || !canGrant(am.Role, role) {
 		return sqlc.Membership{}, ErrForbidden
 	}
-	tm, err := s.membership(ctx, orgID, target)
+	tm, ok := ms.find(target)
+	if !ok {
+		return sqlc.Membership{}, ErrNotFound
+	}
+	// Only an owner may change an owner's role.
+	if tm.Role == "owner" && am.Role != "owner" {
+		return sqlc.Membership{}, ErrForbidden
+	}
+	if tm.Role == "owner" && role != "owner" && ms.owners() <= 1 {
+		return sqlc.Membership{}, ErrLastOwner
+	}
+	m, err := q.UpdateMembershipRole(ctx, sqlc.UpdateMembershipRoleParams{
+		OrgID: orgID, UserID: target, Role: role,
+	})
 	if err != nil {
 		return sqlc.Membership{}, err
 	}
-	if tm.Role == "owner" && role != "owner" {
-		if err := s.ensureNotLastOwner(ctx, orgID); err != nil {
-			return sqlc.Membership{}, err
-		}
-	}
-	return s.q.UpdateMembershipRole(ctx, sqlc.UpdateMembershipRoleParams{
-		OrgID: orgID, UserID: target, Role: role,
-	})
+	return m, tx.Commit(ctx)
 }
 
 func (s *Service) RemoveMember(ctx context.Context, orgID, actor, target pgtype.UUID) error {
-	am, err := s.membership(ctx, orgID, actor)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	ms, err := lockMembers(ctx, q, orgID)
+	if err != nil {
+		return err
+	}
+	am, ok := ms.find(actor)
+	if !ok {
+		return ErrNotFound
 	}
 	// Admins can remove others; anyone can remove themselves (leave).
 	if actor != target && !RoleAtLeast(am.Role, "admin") {
 		return ErrForbidden
 	}
-	tm, err := s.membership(ctx, orgID, target)
-	if err != nil {
-		return err
+	tm, ok := ms.find(target)
+	if !ok {
+		return ErrNotFound
 	}
 	if tm.Role == "owner" {
-		if err := s.ensureNotLastOwner(ctx, orgID); err != nil {
-			return err
+		// Only an owner may remove another owner.
+		if actor != target && am.Role != "owner" {
+			return ErrForbidden
+		}
+		if ms.owners() <= 1 {
+			return ErrLastOwner
 		}
 	}
-	return s.q.DeleteMembership(ctx, sqlc.DeleteMembershipParams{OrgID: orgID, UserID: target})
-}
-
-func (s *Service) ensureNotLastOwner(ctx context.Context, orgID pgtype.UUID) error {
-	n, err := s.q.CountOwners(ctx, orgID)
-	if err != nil {
+	if err := q.DeleteMembership(ctx, sqlc.DeleteMembershipParams{OrgID: orgID, UserID: target}); err != nil {
 		return err
 	}
-	if n <= 1 {
-		return ErrLastOwner
+	return tx.Commit(ctx)
+}
+
+type lockedMembers []sqlc.Membership
+
+func lockMembers(ctx context.Context, q *sqlc.Queries, orgID pgtype.UUID) (lockedMembers, error) {
+	ms, err := q.LockOrgMemberships(ctx, orgID)
+	return lockedMembers(ms), err
+}
+
+func (ms lockedMembers) find(userID pgtype.UUID) (sqlc.Membership, bool) {
+	for _, m := range ms {
+		if m.UserID == userID {
+			return m, true
+		}
 	}
-	return nil
+	return sqlc.Membership{}, false
+}
+
+func (ms lockedMembers) owners() int {
+	n := 0
+	for _, m := range ms {
+		if m.Role == "owner" {
+			n++
+		}
+	}
+	return n
 }

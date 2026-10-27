@@ -32,7 +32,7 @@ type AuthService interface {
 	Register(ctx context.Context, email, password string) (sqlc.User, auth.Tokens, error)
 	Login(ctx context.Context, email, password string) (sqlc.User, auth.Tokens, error)
 	Refresh(ctx context.Context, refreshToken string) (auth.Tokens, error)
-	Logout(ctx context.Context, accessToken string) error
+	Logout(ctx context.Context, accessToken, refreshToken string) error
 	UserForAccessToken(ctx context.Context, accessToken string) (sqlc.User, error)
 	IssueSession(ctx context.Context, userID pgtype.UUID) (auth.Tokens, error)
 }
@@ -122,6 +122,7 @@ type Server struct {
 // AuditService is satisfied by *audit.Service.
 type AuditService interface {
 	Record(ctx context.Context, actorID, orgID pgtype.UUID, action, targetType, targetID string, detail map[string]any)
+	ResolveOrg(ctx context.Context, targetType string, targetID pgtype.UUID) pgtype.UUID
 	ListAll(ctx context.Context, limit int32) ([]sqlc.ListAuditAllRow, error)
 	ListByOrg(ctx context.Context, orgID pgtype.UUID, limit int32) ([]sqlc.ListAuditByOrgRow, error)
 }
@@ -190,7 +191,8 @@ type GitHubService interface {
 	SaveApp(ctx context.Context, cfg github.AppConfig) error
 	CreateFromManifest(ctx context.Context, code string) (string, error)
 	WebhookSecret(ctx context.Context) (string, error)
-	InstallURL(ctx context.Context, state string) (string, error)
+	InstallURL(ctx context.Context, orgID, userID pgtype.UUID) (string, error)
+	ConsumeSetupState(ctx context.Context, nonce string, userID pgtype.UUID) (pgtype.UUID, error)
 	OrgStatus(ctx context.Context, orgID pgtype.UUID) (connected bool, accountLogin string, err error)
 	ConnectOrg(ctx context.Context, orgID pgtype.UUID, installationID int64) error
 	Repos(ctx context.Context, orgID pgtype.UUID) ([]github.Repo, error)

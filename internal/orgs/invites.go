@@ -50,7 +50,7 @@ func (s *Service) CreateInvite(ctx context.Context, orgID, actor pgtype.UUID, ro
 	if err != nil {
 		return "", sqlc.Invite{}, err
 	}
-	if !RoleAtLeast(m.Role, "admin") {
+	if !RoleAtLeast(m.Role, "admin") || !canGrant(m.Role, role) {
 		return "", sqlc.Invite{}, ErrForbidden
 	}
 	token, hash, err := newInviteToken()

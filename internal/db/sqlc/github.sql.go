@@ -11,6 +11,55 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const consumeGithubSetupState = `-- name: ConsumeGithubSetupState :one
+DELETE FROM github_setup_states
+WHERE nonce = $1 AND user_id = $2 AND expires_at > now()
+RETURNING org_id
+`
+
+type ConsumeGithubSetupStateParams struct {
+	Nonce  string
+	UserID pgtype.UUID
+}
+
+func (q *Queries) ConsumeGithubSetupState(ctx context.Context, arg ConsumeGithubSetupStateParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, consumeGithubSetupState, arg.Nonce, arg.UserID)
+	var org_id pgtype.UUID
+	err := row.Scan(&org_id)
+	return org_id, err
+}
+
+const createGithubSetupState = `-- name: CreateGithubSetupState :exec
+INSERT INTO github_setup_states (nonce, org_id, user_id, expires_at)
+VALUES ($1, $2, $3, $4)
+`
+
+type CreateGithubSetupStateParams struct {
+	Nonce     string
+	OrgID     pgtype.UUID
+	UserID    pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) CreateGithubSetupState(ctx context.Context, arg CreateGithubSetupStateParams) error {
+	_, err := q.db.Exec(ctx, createGithubSetupState,
+		arg.Nonce,
+		arg.OrgID,
+		arg.UserID,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const deleteExpiredGithubSetupStates = `-- name: DeleteExpiredGithubSetupStates :exec
+DELETE FROM github_setup_states WHERE expires_at <= now()
+`
+
+func (q *Queries) DeleteExpiredGithubSetupStates(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteExpiredGithubSetupStates)
+	return err
+}
+
 const deleteGithubInstallation = `-- name: DeleteGithubInstallation :exec
 DELETE FROM github_installations WHERE org_id = $1
 `
@@ -26,6 +75,22 @@ SELECT org_id, installation_id, account_login, created_at FROM github_installati
 
 func (q *Queries) GetGithubInstallation(ctx context.Context, orgID pgtype.UUID) (GithubInstallation, error) {
 	row := q.db.QueryRow(ctx, getGithubInstallation, orgID)
+	var i GithubInstallation
+	err := row.Scan(
+		&i.OrgID,
+		&i.InstallationID,
+		&i.AccountLogin,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getGithubInstallationByInstallationID = `-- name: GetGithubInstallationByInstallationID :one
+SELECT org_id, installation_id, account_login, created_at FROM github_installations WHERE installation_id = $1
+`
+
+func (q *Queries) GetGithubInstallationByInstallationID(ctx context.Context, installationID int64) (GithubInstallation, error) {
+	row := q.db.QueryRow(ctx, getGithubInstallationByInstallationID, installationID)
 	var i GithubInstallation
 	err := row.Scan(
 		&i.OrgID,

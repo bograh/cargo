@@ -130,3 +130,34 @@ func TestDeploymentLogsSSEReplay(t *testing.T) {
 		t.Fatalf("missing terminal marker: %q", body)
 	}
 }
+
+// logTail reads each byte of a growing log exactly once and only emits whole
+// lines until the stream is finishing — the basis for the deploy log stream
+// not duplicating lines written while it replays.
+func TestLogTailReadsEachLineOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "d.log")
+	tail := &logTail{path: path}
+	defer tail.close()
+	if got := tail.read(false); len(got) != 0 {
+		t.Fatalf("missing file yielded %v", got)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	_, _ = f.WriteString("one\ntw")
+	if got := tail.read(false); len(got) != 1 || got[0] != "one" {
+		t.Fatalf("first read = %q", got)
+	}
+	_, _ = f.WriteString("o\nthree")
+	if got := tail.read(false); len(got) != 1 || got[0] != "two" {
+		t.Fatalf("second read = %q", got)
+	}
+	if got := tail.read(true); len(got) != 1 || got[0] != "three" {
+		t.Fatalf("final read = %q", got)
+	}
+	if got := tail.read(true); len(got) != 0 {
+		t.Fatalf("re-read duplicated %q", got)
+	}
+}

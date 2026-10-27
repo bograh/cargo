@@ -154,3 +154,28 @@ func (q *Queries) PurgeAuditLog(ctx context.Context, createdAt pgtype.Timestampt
 	}
 	return result.RowsAffected(), nil
 }
+
+const resolveAuditOrg = `-- name: ResolveAuditOrg :one
+SELECT COALESCE(
+    (SELECT a.org_id FROM applications a
+      WHERE $1::text = 'apps' AND a.id = $2::uuid),
+    (SELECT a.org_id FROM deployments d JOIN applications a ON a.id = d.app_id
+      WHERE $1::text = 'deployments' AND d.id = $2::uuid),
+    (SELECT i.org_id FROM database_instances i
+      WHERE $1::text = 'databases' AND i.id = $2::uuid)
+)::uuid AS org_id
+`
+
+type ResolveAuditOrgParams struct {
+	TargetType string
+	TargetID   pgtype.UUID
+}
+
+// Maps a resource addressed outside /orgs/{orgID} to its owning org, so
+// mutations on apps, deployments and databases appear in the org audit view.
+func (q *Queries) ResolveAuditOrg(ctx context.Context, arg ResolveAuditOrgParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, resolveAuditOrg, arg.TargetType, arg.TargetID)
+	var org_id pgtype.UUID
+	err := row.Scan(&org_id)
+	return org_id, err
+}

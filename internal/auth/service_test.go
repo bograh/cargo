@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 )
 
@@ -82,6 +83,7 @@ func TestLoginAndAccessToken(t *testing.T) {
 
 func TestRefreshRotationAndReuseDetection(t *testing.T) {
 	svc := NewService(startPool(t))
+	svc.reuseGrace = 0 // reuse is outside the concurrent-refresh window
 	ctx := context.Background()
 	_, tok1, err := svc.Register(ctx, "a@b.co", "password-123")
 	if err != nil {
@@ -108,6 +110,58 @@ func TestRefreshRotationAndReuseDetection(t *testing.T) {
 	}
 }
 
+// Several requests that 401 at once each refresh with the same cookie. Those
+// arriving within the grace window are a concurrent client, not theft: all of
+// them must succeed and none may revoke the family.
+func TestConcurrentRefreshWithinGraceKeepsSession(t *testing.T) {
+	svc := NewService(startPool(t))
+	ctx := context.Background()
+	_, tok, err := svc.Register(ctx, "a@b.co", "password-123")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	const n = 6
+	var wg sync.WaitGroup
+	results := make([]Tokens, n)
+	errs := make([]error, n)
+	for i := range n {
+		wg.Go(func() { results[i], errs[i] = svc.Refresh(ctx, tok.Refresh) })
+	}
+	wg.Wait()
+	for i := range n {
+		if errs[i] != nil {
+			t.Fatalf("refresh %d: %v", i, errs[i])
+		}
+		if _, err := svc.UserForAccessToken(ctx, results[i].Access); err != nil {
+			t.Fatalf("session %d revoked by a concurrent refresh: %v", i, err)
+		}
+	}
+	// Each issued refresh token rotates normally afterwards.
+	if _, err := svc.Refresh(ctx, results[0].Refresh); err != nil {
+		t.Fatalf("follow-up refresh: %v", err)
+	}
+}
+
+// After the access cookie lapses only the refresh cookie names the session;
+// logging out with it alone must still end the session.
+func TestLogoutByRefreshTokenRevokesFamily(t *testing.T) {
+	svc := NewService(startPool(t))
+	ctx := context.Background()
+	_, tok, err := svc.Register(ctx, "a@b.co", "password-123")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := svc.Logout(ctx, "", tok.Refresh); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if _, err := svc.Refresh(ctx, tok.Refresh); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("refresh usable after logout: %v", err)
+	}
+	if _, err := svc.UserForAccessToken(ctx, tok.Access); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("access usable after logout: %v", err)
+	}
+}
+
 func TestLogoutRevokesFamily(t *testing.T) {
 	svc := NewService(startPool(t))
 	ctx := context.Background()
@@ -115,7 +169,7 @@ func TestLogoutRevokesFamily(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	if err := svc.Logout(ctx, tok.Access); err != nil {
+	if err := svc.Logout(ctx, tok.Access, ""); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
 	if _, err := svc.UserForAccessToken(ctx, tok.Access); !errors.Is(err, ErrUnauthenticated) {

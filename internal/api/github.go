@@ -99,28 +99,36 @@ func (s *Server) handleOrgGithubStatus(w http.ResponseWriter, r *http.Request) {
 		"account_login": account,
 	}
 	if configured && orgs.RoleAtLeast(role, "admin") {
-		idStr, _ := orgID.Value()
-		if state, ok := idStr.(string); ok {
-			if u, err := s.gh.InstallURL(r.Context(), state); err == nil {
-				out["install_url"] = u
-			}
+		if u, err := s.gh.InstallURL(r.Context(), orgID, userFrom(r.Context()).ID); err == nil {
+			out["install_url"] = u
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleGithubSetup is GitHub's post-install redirect target.
+// handleGithubSetup is GitHub's post-install redirect target. `state` is the
+// single-use nonce minted by InstallURL for this user; it — not anything the
+// caller can name — decides which org the installation binds to.
 func (s *Server) handleGithubSetup(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	instIDStr := r.URL.Query().Get("installation_id")
 	instID, err := strconv.ParseInt(instIDStr, 10, 64)
-	var orgID pgtype.UUID
-	if err != nil || state == "" || orgID.Scan(state) != nil {
+	if err != nil || state == "" {
 		Error(w, http.StatusBadRequest, "validation_failed", "state and installation_id are required")
 		return
 	}
-	// Only an admin+ of the org named in state may bind the installation.
-	_, role, err := s.orgs.Get(r.Context(), orgID, userFrom(r.Context()).ID)
+	ctx := r.Context()
+	orgID, err := s.gh.ConsumeSetupState(ctx, state, userFrom(ctx).ID)
+	if errors.Is(err, github.ErrInvalidSetupState) {
+		Error(w, http.StatusBadRequest, "invalid_state", "this install link is invalid or has expired; start again from organization settings")
+		return
+	}
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "internal", "setup state lookup failed")
+		return
+	}
+	// Re-check the role now: it may have changed since the link was minted.
+	_, role, err := s.orgs.Get(ctx, orgID, userFrom(ctx).ID)
 	if err != nil {
 		orgError(w, err)
 		return
@@ -129,11 +137,15 @@ func (s *Server) handleGithubSetup(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusForbidden, "forbidden", "org admin required")
 		return
 	}
-	if err := s.gh.ConnectOrg(r.Context(), orgID, instID); err != nil {
+	if err := s.gh.ConnectOrg(ctx, orgID, instID); err != nil {
+		if errors.Is(err, github.ErrInstallationTaken) {
+			Error(w, http.StatusConflict, "installation_taken", "this GitHub installation is already connected to another organization")
+			return
+		}
 		Error(w, http.StatusInternalServerError, "internal", "saving installation failed")
 		return
 	}
-	http.Redirect(w, r, "/orgs/"+state+"/settings", http.StatusFound)
+	http.Redirect(w, r, "/orgs/"+uuidString(orgID)+"/settings", http.StatusFound)
 }
 
 func (s *Server) handleGithubRepos(w http.ResponseWriter, r *http.Request) {

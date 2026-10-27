@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"time"
@@ -231,8 +232,9 @@ func (s *Service) sendEmail(ctx context.Context, ev Event) {
 	if send == nil {
 		send = mailer.Send
 	}
-	html := "<p>" + ev.Message + "</p>"
-	if err := send(*cfg, to, ev.Title, html, ev.Message+"\n"); err != nil {
+	// Message embeds tenant-controlled names (apps, orgs): escape it.
+	body := "<p>" + html.EscapeString(ev.Message) + "</p>"
+	if err := send(*cfg, to, ev.Title, body, ev.Message+"\n"); err != nil {
 		slog.Warn("notify email failed", "kind", ev.Kind, "err", err)
 	}
 }

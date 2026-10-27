@@ -138,6 +138,13 @@ type GithubInstallation struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type GithubSetupState struct {
+	Nonce     string
+	OrgID     pgtype.UUID
+	UserID    pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+}
+
 type Host struct {
 	ID                 pgtype.UUID
 	Name               string

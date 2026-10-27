@@ -19,6 +19,13 @@ import (
 	"github.com/bograh/cargo/internal/settings"
 )
 
+func setRegistration(t *testing.T, svc *Service, mode string) {
+	t.Helper()
+	if err := svc.settings.SetRegistration(context.Background(), mode); err != nil {
+		t.Fatalf("set registration: %v", err)
+	}
+}
+
 func startService(t *testing.T) (*Service, *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
@@ -136,6 +143,7 @@ func TestResolveCallbackProvisionAndIdentity(t *testing.T) {
 		t.Fatalf("first user = %+v", first)
 	}
 
+	setRegistration(t, svc, settings.RegistrationOpen)
 	idp.Sub, idp.Email, idp.Nonce = "sub-2", "second@example.com", "n2"
 	second, err := svc.ResolveCallback(ctx, redirectURL, "code", "n2")
 	if err != nil {
@@ -153,6 +161,42 @@ func TestResolveCallbackProvisionAndIdentity(t *testing.T) {
 	}
 	if again.ID != first.ID {
 		t.Fatal("identity did not resolve to the original user")
+	}
+}
+
+// SSO must not be a side door around the registration policy: once the first
+// (bootstrap) account exists, an unknown identity is only provisioned when
+// registration is open. Existing accounts still sign in regardless.
+func TestResolveCallbackHonoursRegistrationPolicy(t *testing.T) {
+	svc, _ := startService(t)
+	idp := newMockIDP(t)
+	configure(t, svc, idp)
+	ctx := context.Background()
+
+	idp.Sub, idp.Email, idp.Nonce = "sub-admin", "admin@example.com", "n1"
+	admin, err := svc.ResolveCallback(ctx, redirectURL, "code", "n1")
+	if err != nil {
+		t.Fatalf("bootstrap callback: %v", err)
+	}
+
+	for _, mode := range []string{settings.RegistrationClosed, settings.RegistrationInvite} {
+		setRegistration(t, svc, mode)
+		idp.Sub, idp.Email, idp.Nonce = "sub-stranger", "stranger@example.com", "n2"
+		if _, err := svc.ResolveCallback(ctx, redirectURL, "code", "n2"); !errors.Is(err, ErrRegistrationClosed) {
+			t.Fatalf("mode %s: stranger err = %v, want ErrRegistrationClosed", mode, err)
+		}
+	}
+
+	idp.Sub, idp.Email, idp.Nonce = "sub-admin", "admin@example.com", "n3"
+	again, err := svc.ResolveCallback(ctx, redirectURL, "code", "n3")
+	if err != nil || again.ID != admin.ID {
+		t.Fatalf("existing user blocked by closed registration: %v", err)
+	}
+
+	setRegistration(t, svc, settings.RegistrationOpen)
+	idp.Sub, idp.Email, idp.Nonce = "sub-stranger", "stranger@example.com", "n4"
+	if _, err := svc.ResolveCallback(ctx, redirectURL, "code", "n4"); err != nil {
+		t.Fatalf("open registration refused: %v", err)
 	}
 }
 

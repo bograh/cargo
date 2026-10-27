@@ -90,6 +90,15 @@ func TestSMTPRoundTripEncrypted(t *testing.T) {
 	if strings.Contains(string(row.Value), "mail-secret") {
 		t.Fatal("smtp password stored in plaintext")
 	}
+	// Editing another field without retyping the write-only password keeps it.
+	edited := in
+	edited.From, edited.Password = "noreply@example.com", ""
+	if err := svc.SetSMTP(ctx, edited); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if out, err := svc.SMTP(ctx); err != nil || out.Password != "mail-secret" || out.From != "noreply@example.com" {
+		t.Fatalf("after edit = %+v, %v", out, err)
+	}
 	if err := svc.ClearSMTP(ctx); err != nil {
 		t.Fatal(err)
 	}

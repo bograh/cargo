@@ -19,3 +19,15 @@ LIMIT $2;
 
 -- name: PurgeAuditLog :execrows
 DELETE FROM audit_log WHERE created_at < $1;
+
+-- name: ResolveAuditOrg :one
+-- Maps a resource addressed outside /orgs/{orgID} to its owning org, so
+-- mutations on apps, deployments and databases appear in the org audit view.
+SELECT COALESCE(
+    (SELECT a.org_id FROM applications a
+      WHERE sqlc.arg(target_type)::text = 'apps' AND a.id = sqlc.arg(target_id)::uuid),
+    (SELECT a.org_id FROM deployments d JOIN applications a ON a.id = d.app_id
+      WHERE sqlc.arg(target_type)::text = 'deployments' AND d.id = sqlc.arg(target_id)::uuid),
+    (SELECT i.org_id FROM database_instances i
+      WHERE sqlc.arg(target_type)::text = 'databases' AND i.id = sqlc.arg(target_id)::uuid)
+)::uuid AS org_id;

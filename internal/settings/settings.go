@@ -167,6 +167,18 @@ func (s *Service) SetSMTP(ctx context.Context, cfg SMTPConfig) error {
 	if cfg.Host == "" || cfg.Port < 1 || cfg.Port > 65535 || cfg.From == "" {
 		return fmt.Errorf("%w: host, port (1-65535), and from are required", ErrValidation)
 	}
+	// The password is write-only: reads never return it, so a form that edits
+	// any other field submits it empty. Treat empty as "unchanged" rather than
+	// silently wiping the stored credential. ClearSMTP removes it outright.
+	if cfg.Password == "" {
+		prev, err := s.SMTP(ctx)
+		if err != nil {
+			return err
+		}
+		if prev != nil {
+			cfg.Password = prev.Password
+		}
+	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		return err

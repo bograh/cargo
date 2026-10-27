@@ -31,7 +31,7 @@ func (s stubAuth) Login(_ context.Context, _, _ string) (sqlc.User, auth.Tokens,
 func (s stubAuth) Refresh(_ context.Context, _ string) (auth.Tokens, error) {
 	return s.tokens, s.err
 }
-func (s stubAuth) Logout(_ context.Context, _ string) error { return s.err }
+func (s stubAuth) Logout(_ context.Context, _, _ string) error { return s.err }
 func (s stubAuth) IssueSession(_ context.Context, _ pgtype.UUID) (auth.Tokens, error) {
 	return s.tokens, s.err
 }

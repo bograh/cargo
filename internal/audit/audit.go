@@ -47,6 +47,19 @@ func (s *Service) Record(ctx context.Context, actorID, orgID pgtype.UUID, action
 	}
 }
 
+// ResolveOrg returns the org owning an app, deployment or database, or an
+// invalid UUID when the target isn't one of those or doesn't exist.
+func (s *Service) ResolveOrg(ctx context.Context, targetType string, targetID pgtype.UUID) pgtype.UUID {
+	if s == nil {
+		return pgtype.UUID{}
+	}
+	id, err := s.q.ResolveAuditOrg(ctx, sqlc.ResolveAuditOrgParams{TargetType: targetType, TargetID: targetID})
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return id
+}
+
 // ListAll returns the newest entries across the instance (instance admin).
 func (s *Service) ListAll(ctx context.Context, limit int32) ([]sqlc.ListAuditAllRow, error) {
 	return s.q.ListAuditAll(ctx, limit)
